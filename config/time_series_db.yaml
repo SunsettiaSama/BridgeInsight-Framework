@@ -1,0 +1,5 @@
+
+# 文件类型映射配置示例
+extension_mapping:
+  .uan: wind_speed
+  .vic: cable_vibration

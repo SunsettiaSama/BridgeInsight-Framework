@@ -1,0 +1,42 @@
+# 全局配置
+global:
+  seed: 42                    # 随机种子
+  device: "cuda"              # 训练设备（cpu/cuda/cuda:0）
+  output_dir: "./outputs/sft_train"  # 模型和日志输出目录
+  resume_from_checkpoint: null # 断点续训路径（null表示从头训练）
+
+# 数据配置
+data:
+  dataset_name: "VibrationSignalDataset"  # 数据集名称（对应dataset_manager）
+  data_path: "./data/train_data.npy"       # 数据路径
+  val_data_path: "./data/val_data.npy"     # 验证集路径
+  batch_size: 32                           # 批次大小
+  num_workers: 4                           # 数据加载进程数
+  shuffle: true                            # 训练集是否打乱
+  pin_memory: true                         # 是否开启内存锁定（加速GPU传输）
+
+# 模型配置
+model:
+  model_name: "VibrationClassifier"  # 模型名称（对应model_manager）
+  hidden_dim: 256                     # 模型隐藏层维度
+  num_classes: 10                     # 类别数
+  pretrained_path: null               # 预训练模型路径
+
+# SFT训练配置
+training:
+  trainer_type: "SFTTrainer"          # 训练器类型
+  epochs: 100                         # 训练轮数
+  learning_rate: 1e-4                 # 学习率
+  weight_decay: 1e-5                  # 权重衰减
+  optimizer: "AdamW"                  # 优化器类型
+  scheduler: "StepLR"                 # 学习率调度器
+  scheduler_params:                   # 调度器参数
+    step_size: 30
+    gamma: 0.8
+  gradient_clip_norm: 1.0             # 梯度裁剪阈值
+
+# TensorBoard可视化配置
+visualization:
+  tensorboard_log_dir: "./logs/tensorboard"  # 日志保存目录
+  log_interval: 10                           # 每10个step记录一次日志
+  val_log_interval: 1                        # 每1个epoch记录一次验证集日志

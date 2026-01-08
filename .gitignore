@@ -1,0 +1,56 @@
+# 忽略所有非源代码目录
+data/
+models/
+logs/
+AfterTraining/ 
+BGE_model/
+eval/
+evaluation/
+output/
+QA_Evaluation/
+Qwen3-1.7B/
+Qwen3-8B/
+TrainingLogs/
+.autodl/ 
+.Trash-0/
+.vscode/
+Ansys_Mode_Analysis/
+data/
+example/
+outputs/
+results/
+Samples/
+Software/
+之前的代码/
+文字工作/
+
+
+*.log
+*.tmp
+*.bak
+*.swp
+*.DS_Store
+__pycache__/
+*.pyc
+*.ipynb_checkpoints
+
+
+# 忽略特定文件类型
+*.tsv
+*.whl
+*.png
+*.contriever
+*.csv
+*.xlsx
+*.xls
+*.db
+*.h5
+*.pkl
+*.pt
+*.model
+*.txt
+
+# 只跟踪src目录
+# /src/
+# /
+# ! /src/ 

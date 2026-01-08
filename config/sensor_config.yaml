@@ -1,0 +1,136 @@
+version: '1.0'
+base_save_dir: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db
+base_time_columns: &id001
+- timestamp
+- month
+- day
+- hour
+- minute
+sensor_groups:
+  wind_sensor_ids:
+  - ST-UAN-G04-001-01
+  - ST-UAN-T01-003-01
+  C34_floor1_group01:
+  - ST-VIC-C34-101-01
+  - ST-VIC-C34-101-02
+  C34_floor1_group02:
+  - ST-VIC-C34-102-01
+  - ST-VIC-C34-102-02
+  C18_floor1_group01:
+  - ST-VIC-C18-101-01
+  - ST-VIC-C18-101-02
+  C18_floor1_group02:
+  - ST-VIC-C18-102-01
+  - ST-VIC-C18-102-02
+  C34_floor2_group01:
+  - ST-VIC-C34-201-01
+  - ST-VIC-C34-201-02
+  C34_floor2_group02:
+  - ST-VIC-C34-202-01
+  - ST-VIC-C34-202-02
+  C18_floor2_group01:
+  - ST-VIC-C18-201-01
+  - ST-VIC-C18-201-02
+  C18_floor2_group02:
+  - ST-VIC-C18-202-01
+  - ST-VIC-C18-202-02
+  C34_floor3_group01:
+  - ST-VIC-C34-301-01
+  - ST-VIC-C34-301-02
+  C34_floor3_group02:
+  - ST-VIC-C34-302-01
+  - ST-VIC-C34-302-02
+  C18_floor3_group01:
+  - ST-VIC-C18-301-01
+  - ST-VIC-C18-301-02
+  C18_floor3_group02:
+  - ST-VIC-C18-302-01
+  - ST-VIC-C18-302-02
+  C34_floor4_group01:
+  - ST-VIC-C34-401-01
+  - ST-VIC-C34-401-02
+  C34_floor4_group02:
+  - ST-VIC-C34-402-01
+  - ST-VIC-C34-402-02
+  C18_floor4_group01:
+  - ST-VIC-C18-401-01
+  - ST-VIC-C18-401-02
+  C18_floor4_group02:
+  - ST-VIC-C18-402-01
+  - ST-VIC-C18-402-02
+all_sensor_ids:
+- ST-UAN-G04-001-01
+- ST-UAN-T01-003-01
+- ST-VIC-C34-101-01
+- ST-VIC-C34-101-02
+- ST-VIC-C34-102-01
+- ST-VIC-C34-102-02
+- ST-VIC-C18-101-01
+- ST-VIC-C18-101-02
+- ST-VIC-C18-102-01
+- ST-VIC-C18-102-02
+- ST-VIC-C34-201-01
+- ST-VIC-C34-201-02
+- ST-VIC-C34-202-01
+- ST-VIC-C34-202-02
+- ST-VIC-C18-201-01
+- ST-VIC-C18-201-02
+- ST-VIC-C18-202-01
+- ST-VIC-C18-202-02
+- ST-VIC-C34-301-01
+- ST-VIC-C34-301-02
+- ST-VIC-C34-302-01
+- ST-VIC-C34-302-02
+- ST-VIC-C18-301-01
+- ST-VIC-C18-301-02
+- ST-VIC-C18-302-01
+- ST-VIC-C18-302-02
+- ST-VIC-C34-401-01
+- ST-VIC-C34-401-02
+- ST-VIC-C34-402-01
+- ST-VIC-C34-402-02
+- ST-VIC-C18-401-01
+- ST-VIC-C18-401-02
+- ST-VIC-C18-402-01
+- ST-VIC-C18-402-02
+metadata:
+  created_at: '2025-11-24T16:32:52.810189'
+  description: Auto-generated sensor configuration
+  source: auto-generated
+  last_updated: '2025-11-30 12:46:05'
+  last_chunked: '2025-11-24T19:05:41.024183'
+  interval_nums: 60
+  chunk_size_hours: 24
+  total_core_files: 1
+  total_vibration_groups: 0
+  total_vibration_files: 0
+  base_time_columns: *id001
+  time_coverage:
+    start_time: '2024-01-01 00:00:00'
+    end_time: '2024-01-01 23:59:00'
+    total_records_estimate: 1440
+  total_groups: 17
+  base_save_dir: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db
+  build_status: success
+  time_range:
+    start_time: '2025-01-01 00:00:00'
+    end_time: '2025-09-30 23:59:00'
+    total_records: 43260
+file_mappings:
+  wind_sensor_ids: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\wind_sensor_ids_data_20251130_123306.parquet
+  C34_floor1_group01: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C34_floor1_group01_data_20251130_123306.parquet
+  C34_floor1_group02: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C34_floor1_group02_data_20251130_123306.parquet
+  C18_floor1_group01: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C18_floor1_group01_data_20251130_123306.parquet
+  C18_floor1_group02: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C18_floor1_group02_data_20251130_123306.parquet
+  C34_floor2_group01: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C34_floor2_group01_data_20251130_123306.parquet
+  C34_floor2_group02: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C34_floor2_group02_data_20251130_123306.parquet
+  C18_floor2_group01: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C18_floor2_group01_data_20251130_123306.parquet
+  C18_floor2_group02: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C18_floor2_group02_data_20251130_123306.parquet
+  C34_floor3_group01: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C34_floor3_group01_data_20251130_123306.parquet
+  C34_floor3_group02: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C34_floor3_group02_data_20251130_123306.parquet
+  C18_floor3_group01: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C18_floor3_group01_data_20251130_123306.parquet
+  C18_floor3_group02: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C18_floor3_group02_data_20251130_123306.parquet
+  C34_floor4_group01: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C34_floor4_group01_data_20251130_123306.parquet
+  C34_floor4_group02: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C34_floor4_group02_data_20251130_123306.parquet
+  C18_floor4_group01: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C18_floor4_group01_data_20251130_123306.parquet
+  C18_floor4_group02: F:\Research\Vibration Characteristics In Cable Vibration\data\202409db\C18_floor4_group02_data_20251130_123306.parquet

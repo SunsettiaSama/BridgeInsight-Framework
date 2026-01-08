@@ -1,0 +1,47 @@
+# SimpleMLP 模型YAML配置文件（对齐SimpleCNN输入输出）
+# 适配输入：(B, 1, 50, 60) 类灰度图像（VIV数据集网格模式输出，与SimpleCNN完全一致）
+# 输出：分类任务为(B, num_classes) logits，与SimpleCNN分类输出格式对齐
+
+# --------------------------
+# 基础配置（与SimpleCNN完全对齐，保证输入/任务一致性）
+# --------------------------
+# 网络类型标识：固定为simple_mlp，与网络注册表对应
+network_type: "simple_mlp"
+# 输入通道数：1（类灰度图，单通道，与SimpleCNN一致）
+in_channels: 1
+# 类别数：与SimpleCNN保持一致（示例为3分类，可按需调整）
+num_classes: 3
+# 输入形状：严格对应数据集输出 (C, H, W) = (1, 50, 60)，MLP自动扁平化处理
+input_shape: [1, 50, 60]
+# 输出尺寸：分类任务设为null，与SimpleCNN分类配置对齐，无需指定
+output_size: null
+# 任务类型：classification（分类，与SimpleCNN一致）/ regression（回归）
+task_type: "classification"
+# 回归任务输出维度：分类任务可忽略，保持配置完整性（与SimpleCNN冗余字段对齐）
+regression_output_dim: 1
+
+# --------------------------
+# 隐藏层配置（对应SimpleCNN编码器，承担特征提取功能）
+# 设计思路：维度逐层递增再递减，平衡特征表达与计算量，与CNN编码器对称
+# --------------------------
+hidden_layer:
+  # 隐藏层维度列表：模拟CNN编码器通道数变化（64→128→64），轻量化设计
+  # 长度对应隐藏层数量（3层，与SimpleCNN编码器块数量一致）
+  hidden_dims: [64, 128, 64]
+  # 激活函数类型：与SimpleCNN隐含激活函数对齐，保证特征提取能力
+  activation_type: "ReLU"
+
+# --------------------------
+# Dropout 配置（正则化，与SimpleCNN完全对齐，防止过拟合）
+# --------------------------
+dropout:
+  # 是否启用Dropout：true（与SimpleCNN一致，轻量化模型建议启用）
+  enable: true
+  # Dropout概率：0.2（与SimpleCNN完全相同，避免特征丢失过多）
+  prob: 0.2
+
+# --------------------------
+# 预训练配置（与SimpleCNN体系统一，保留扩展能力）
+# --------------------------
+pretrained: false
+pretrained_path: null

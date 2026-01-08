@@ -1,0 +1,94 @@
+
+
+
+
+# 传统深度学习SFT训练器完整配置文件
+# 整合BaseTrainerConfig（通用参数）与DLSFTTrainerConfig（SFT专属参数）
+# 适配场景：时序分类/图像分类/回归任务，支持CNN/LSTM/MLP等传统模型微调
+
+
+# --------------------------
+# 1. 训练器基础标识（关联注册表，不可随意修改）
+# --------------------------
+type: 'sft_trainer'
+
+# --------------------------
+# 2. 核心训练参数（通用配置，SFT专属覆盖基类默认值）
+# --------------------------
+epochs: 100                          # 训练总轮数
+batch_size: 16                       # SFT专属默认值，适配传统深度学习模型显存需求
+learning_rate: 1e-3                  # SFT专属默认值，高于LLM微调学习率
+weight_decay: 1e-5                   # 权重衰减，防止过拟合
+
+# --------------------------
+# 3. 优化器&学习率调度器配置（通用优化配置）
+# --------------------------
+optimizer: 'AdamW'                   # 主流优化器，收敛稳定
+scheduler: 'StepLR'                  # 步长衰减调度器
+scheduler_params:                    # 调度器配套参数，与StepLR匹配
+  step_size: 30
+  gamma: 0.8
+optimizer_params: {}                 # 优化器额外参数，默认空字典（可补充{'betas': [0.9, 0.999]}）
+
+# --------------------------
+# 4. 设备配置（兼容单卡/多卡）
+# --------------------------
+device: 'cuda'                       # 自动适配为'cuda'或'cpu'，多卡可配置为['cuda:0', 'cuda:1']
+use_distributed: False               # 是否启用分布式训练，多卡场景开启
+dist_port: '29500'                   # 分布式通信端口，无需修改（未占用即可）
+
+# --------------------------
+# 5. 输出&模型保存配置（结果持久化）
+# --------------------------
+output_dir: './outputs/lstm'  # SFT任务专属输出目录
+save_freq: 0                         # 仅保存最优模型和最后一轮模型，按需改为10/20等
+save_best_model: True                # 保存验证集最优模型
+best_model_metric: 'accuracy'        # SFT专属默认值，分类任务用，回归任务可改为'mse'
+resume_from_checkpoint: null         # 断点续训路径，null表示从头训练
+
+# --------------------------
+# 6. 日志&可视化配置（训练监控）
+# --------------------------
+use_tensorboard: True                # 启用TensorBoard可视化
+tensorboard_log_dir: null            # 自动在output_dir下创建tensorboard_logs目录
+log_freq: 10                         # 每10步打印一次训练日志
+save_log_file: True                  # 保存训练日志为txt文件
+
+# --------------------------
+# 7. 梯度优化配置（防止梯度爆炸）
+# --------------------------
+gradient_clip_norm: 1.0             # 梯度裁剪阈值，按需调整
+gradient_accumulation_steps: 1       # 梯度累积步数，显存不足时增大（如2/4）
+
+# --------------------------
+# 8. 训练模式配置（精度优化）
+# --------------------------
+use_mixed_precision: False           # SFT专属默认值，传统模型显存压力小，默认关闭
+mixed_precision_type: 'fp16'         # 混合精度类型，仅开启混合精度时生效
+
+# --------------------------
+# 9. 调试配置（快速验证流程）
+# --------------------------
+debug_mode: False                    # 关闭调试模式，正式训练用
+debug_max_steps: 100                 # 调试模式最大步数
+debug_val_freq: 10                   # 调试模式验证频率
+
+# --------------------------
+# 10. 深度学习SFT基础专属配置（核心SFT参数）
+# --------------------------
+sft_task_type: 'classification'  # 时序分类任务，可改为classification/regression等
+fix_feature_extractor: False         # 不冻结特征提取层，全量微调；小样本场景可改为True
+
+# --------------------------
+# 11. 深度学习模型微调专属配置（预训练/冻结）
+# --------------------------
+pretrained_weight_path: null         # 预训练权重路径，SFT微调建议指定（如'./pretrained/cnn_timeseries.pth'）
+freeze_layer_prefixes: []            # 精细化冻结层前缀，示例：['backbone.conv1', 'encoder.layer.0']
+head_lr_scale: 10.0                 # 预测头学习率为基础学习率的10倍
+load_pretrained_head: False          # 不加载预训练预测头，新任务适配
+
+# --------------------------
+# 12. 深度学习SFT损失函数专属配置
+# --------------------------
+loss_type: 'CrossEntropyLoss'        # 分类任务默认损失，类别不平衡可改为'FocalLoss'
+focal_gamma: 2.0                     # Focal Loss聚焦参数，仅loss_type为'FocalLoss'时生效

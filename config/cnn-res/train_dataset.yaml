@@ -1,0 +1,26 @@
+# VIVTimeSeriesClassificationDataset 数据集配置文件
+# 兼容时序输出（LSTM）/50×60网格输出（视觉CNN）双模式
+
+# --------------------------
+# 1. 基类通用配置（继承BaseDataset）
+# --------------------------
+# 数据根路径（存放所有.mat样本文件）
+data_dir: F:/Research/Vibration Characteristics In Cable Vibration/data/NN_data/train/data
+# 是否递归查找子目录中的.mat文件
+recursive: False
+
+# --------------------------
+# 2. 数据集专属配置（原LSTM适配参数）
+# --------------------------
+# 序列补全模式：zero（补0）/repeat（重复最后一个值）/mean（补特征均值）
+pad_mode: "zero"
+# 序列截断模式：head（截头部）/tail（截尾部，保留最新时序）
+trunc_mode: "tail"
+# 强制特征维度（单特征时序设为1，网格模式暂仅支持1）
+feat_dim: 1
+
+# --------------------------
+# 3. 新增：输出模式配置（核心切换项）
+# --------------------------
+# 输出模式：time_series（时序格式，适配LSTM）/grid_2d（50×60网格，适配视觉CNN）
+output_mode: "grid_2d"
