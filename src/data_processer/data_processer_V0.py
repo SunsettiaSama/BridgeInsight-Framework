@@ -568,7 +568,7 @@ class DataManager():
         cleaned = [arr[mask] for arr in arrays]
         return [lst.tolist() for lst in cleaned]
 
-    def get_wind_data_from_root(self, wind_dir, mode = "mean", sensor_id = None):
+    def get_wind_data_from_root(self, wind_dir, mode = "mean", sensor_id = None, bin_nums = 10):
         """从风速路径下取出结果"""
 
         file_paths_lis = self.unpacker.File_Read_Paths(wind_dir)
@@ -595,13 +595,11 @@ class DataManager():
                 wind_directions.extend(wind_direction)
                 wind_angles.extend(wind_angle)
             if mode == "interval":
-                bin_nums = 10
                 interval_length = len(wind_velocity) // bin_nums
                 wind_velocities.extend([np.mean(wind_velocity[i * interval_length: (i + 1) * interval_length]) for i in range(bin_nums)])
                 wind_directions.extend([np.mean(wind_direction[i * interval_length: (i + 1) * interval_length]) for i in range(bin_nums)])
                 wind_angles.extend([np.mean(wind_angle[i * interval_length: (i + 1) * interval_length]) for i in range(bin_nums)])
             if mode == "turbulence":
-                bin_nums = 10
                 interval_length = len(wind_velocity) // bin_nums
                 # 先把正常的加上
                 wind_velocities.extend([np.mean(wind_velocity[i * interval_length: (i + 1) * interval_length]) for i in range(bin_nums)])

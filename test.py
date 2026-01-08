@@ -4,9 +4,9 @@
 
 
 
-from src.figs.fig7_mecc_result import evaluate_best_params, run_pareto_verification_and_plot
+# from src.figs.fig7_mecc_result import evaluate_best_params, run_pareto_verification_and_plot
 
-run_pareto_verification_and_plot()
+# run_pareto_verification_and_plot()
 
 
 # from src.figs.fig7_ecc_result import run_ecc_param_search_and_plot
@@ -20,7 +20,9 @@ run_pareto_verification_and_plot()
 
 # fig.plot()
 
+from src.figs.fig3_wind_velocity_distribution import Wind_Speed_Histogram
 
+Wind_Speed_Histogram()
 
 
 
