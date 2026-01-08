@@ -12,9 +12,9 @@ import matplotlib.ticker as ticker
 
 # --------------- 全局绘图配置（统一设置，优化字体配置）---------------
 plt.style.use('default')
-font_size = 12
+font_size = 16
 label_font_size = 20
-
+FIG_SIZE = (12, 4)
 plt.rcParams['font.sans-serif'] = ['Times New Roman', 'SimHei']
 plt.rcParams['font.size'] = font_size
 plt.rcParams['axes.unicode_minus'] = False
@@ -71,7 +71,7 @@ class Fig5:
             return plt.figure(), None # 返回一个空的fig和ax以避免错误
 
         # 3. 创建2D图形
-        fig = plt.figure(figsize=(12, 7))
+        fig = plt.figure(figsize = FIG_SIZE)
         ax = fig.add_subplot(111)
         
         # 4. 构建新的时间轴，从0开始
