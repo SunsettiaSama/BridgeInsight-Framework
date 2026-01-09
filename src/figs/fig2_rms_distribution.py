@@ -53,14 +53,286 @@ CN_FONT = FontProperties(
 MECC0 = 0.02
 K = 11
 
-
 NORMAL_VIB_COLOR = '#D0D0D0'
 NORMAL_EDGE_COLOR = '#A0A0A0'
-
 VIV_VIB_COLOR = '#606060'
 VIV_EDGE_COLOR = '#303030'
-
 THRESHOLD_COLOR = '#202020'   # 深灰色
+
+# ✅ 新增：封装绘制对数Y轴的RMS直方图函数（原核心逻辑）
+def plot_rms_hist_log_y(random_vibration_rms, viv_rms, rms_threshold, n_bins, font_size, ENG_FONT, CN_FONT, viv_alpha):
+    """
+    绘制RMS直方图（Y轴为对数坐标，原核心逻辑完整封装）
+    :param random_vibration_rms: 随机振动RMS数组
+    :param viv_rms: VIV振动RMS数组
+    :param rms_threshold: RMS阈值
+    :param n_bins: 分箱数
+    :param font_size: 字体大小
+    :param ENG_FONT: 英文字体配置
+    :param CN_FONT: 中文字体配置
+    :param viv_alpha: VIV样本透明度
+    :return: fig: 绘制好的matplotlib figure对象
+    """
+    # 1. 确定直方图分箱范围（包含两组样本）
+    all_valid_rms = []
+    if len(random_vibration_rms) > 0:
+        all_valid_rms.extend(random_vibration_rms)
+    if len(viv_rms) > 0:
+        all_valid_rms.extend(viv_rms)
+    all_valid_rms = np.array(all_valid_rms)
+    bin_min = np.min(all_valid_rms)
+    bin_max = np.max(all_valid_rms)
+    bins = np.linspace(bin_min, bin_max, n_bins + 1)
+
+    # 2. 创建画布（与原配置一致）
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # 3. 绘制随机振动样本直方图（先绘制，作为底层）
+    if len(random_vibration_rms) > 0:
+        ax.hist(
+            random_vibration_rms,
+            bins=bins,
+            color=NORMAL_VIB_COLOR,
+            edgecolor= NORMAL_EDGE_COLOR, # 使用一个较深灰色作为边框
+            linewidth=0.8,
+            label=f'随机振动',
+            alpha=1.0  # 随机振动不透明
+        )
+
+    # 4. 绘制VIV样本直方图（后绘制，叠加在随机振动上层，带透明度）
+    if len(viv_rms) > 0:
+        # 分离VIV的低/高RMS（此处VIV已过全局RMS阈值，可按需细分，也可直接绘制整体）
+        viv_high_rms = viv_rms[viv_rms >= rms_threshold]
+        
+        # VIV-高RMS（核心VIV样本）
+        if len(viv_high_rms) > 0:
+            ax.hist(
+                viv_high_rms,
+                bins=bins,
+                color=VIV_VIB_COLOR,
+                edgecolor=VIV_EDGE_COLOR,
+                linestyle='--',
+                linewidth=1.0,
+                label=f'涡激共振',
+                alpha=viv_alpha
+            )
+
+    # 5. 添加阈值垂直虚线
+    ax.axvline(x=rms_threshold, color=THRESHOLD_COLOR, linestyle='--', linewidth=1.8, label=r'标准差阈值$\sigma_0$' + f'（{rms_threshold}）')
+    # 基础标注：在X轴附近标注RMS阈值文本（仅保留在第一张图）
+    ax.text(
+        rms_threshold,  # X坐标：阈值位置
+        ax.get_ylim()[0] * 1.1,  # Y坐标：X轴上方少许，避免遮挡
+        f'RMS Threshold: {rms_threshold}',  # 标注文本
+        fontproperties=ENG_FONT,  # 使用英文字体
+        fontsize=font_size,
+        color=THRESHOLD_COLOR,
+        ha='center',  # 水平居中对齐阈值
+        va='bottom'   # 垂直底部对齐（贴近X轴）
+    )
+
+    # 6. 坐标轴配置（原对数坐标逻辑）
+    # X轴：RMS
+    ax.set_xlabel('标准差', fontproperties=CN_FONT)
+    ax.set_xticklabels([f'{x:.2f}' for x in ax.get_xticks()], fontproperties=ENG_FONT)
+    
+    # Y轴：样本数量（对数坐标）
+    ax.set_yscale('log')
+    ax.set_ylabel('样本数量', fontproperties=CN_FONT)
+    ax.yaxis.set_major_formatter(mticker.LogFormatterSciNotation())
+    ax.yaxis.set_minor_formatter(mticker.NullFormatter())
+    ax.set_yticklabels(ax.get_yticks(), fontproperties=ENG_FONT)
+
+    # 7. 图例配置
+    ax.legend(
+        prop=CN_FONT,
+        loc='upper right',
+        frameon=True,
+        fancybox=True,
+        shadow=False
+    )
+
+    # 8. 网格配置
+    ax.grid(axis='y', which='major', alpha=0.5, linestyle='-', linewidth=0.5)
+    ax.grid(axis='y', which='minor', alpha=0.2, linestyle='--', linewidth=0.3)
+    ax.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
+    ax.set_axisbelow(True)
+
+    # 9. 调整布局
+    plt.tight_layout()
+    
+    return fig
+
+# ✅ 原有新增：封装绘制线性Y轴（直角坐标）的RMS直方图函数
+def plot_rms_hist_linear_y(random_vibration_rms, viv_rms, rms_threshold, n_bins, font_size, ENG_FONT, CN_FONT):
+    """
+    绘制RMS直方图（Y轴为线性直角坐标，其他配置与原对数版本一致）
+    :param random_vibration_rms: 随机振动RMS数组
+    :param viv_rms: VIV振动RMS数组
+    :param rms_threshold: RMS阈值
+    :param n_bins: 分箱数
+    :param font_size: 字体大小
+    :param ENG_FONT: 英文字体配置
+    :param CN_FONT: 中文字体配置
+    :return: fig: 绘制好的matplotlib figure对象
+    """
+    # 1. 确定直方图分箱范围（与原逻辑一致）
+    all_valid_rms = []
+    if len(random_vibration_rms) > 0:
+        all_valid_rms.extend(random_vibration_rms)
+    if len(viv_rms) > 0:
+        all_valid_rms.extend(viv_rms)
+    all_valid_rms = np.array(all_valid_rms)
+    bin_min = np.min(all_valid_rms)
+    bin_max = np.max(all_valid_rms)
+    bins = np.linspace(bin_min, bin_max, n_bins + 1)
+    
+    # 2. 创建画布（与原配置一致）
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # 3. 绘制随机振动样本直方图（与原逻辑一致）
+    if len(random_vibration_rms) > 0:
+        ax.hist(
+            random_vibration_rms,
+            bins=bins,
+            color=NORMAL_VIB_COLOR,
+            edgecolor= NORMAL_EDGE_COLOR,
+            linewidth=0.8,
+            label=f'随机振动',
+            alpha=1.0
+        )
+    
+    # 4. 绘制VIV样本直方图（与原逻辑一致）
+    if len(viv_rms) > 0:
+        viv_high_rms = viv_rms[viv_rms >= rms_threshold]
+        if len(viv_high_rms) > 0:
+            ax.hist(
+                viv_high_rms,
+                bins=bins,
+                color=VIV_VIB_COLOR,
+                edgecolor=VIV_EDGE_COLOR,
+                linestyle='--',
+                linewidth=1.0,
+                label=f'涡激共振',
+                alpha=0.6
+            )
+    
+    # 5. 添加阈值垂直虚线（保留虚线，✅ 移除文本标注）
+    ax.axvline(x=rms_threshold, color=THRESHOLD_COLOR, linestyle='--', linewidth=1.8, label=r'标准差阈值$\sigma_0$' + f'（{rms_threshold}）')
+    # ✅ 删除：移除RMS Threshold的annotation文本
+    # ax.text(...) 这部分代码已删除
+    
+    # 6. 坐标轴配置（✅ 修改：Y轴改为线性直角坐标）
+    # X轴配置（与原逻辑一致）
+    ax.set_xlabel('标准差', fontproperties=CN_FONT)
+    ax.set_xticklabels([f'{x:.2f}' for x in ax.get_xticks()], fontproperties=ENG_FONT)
+    
+    # Y轴配置（✅ 核心修改：移除对数，使用线性坐标）
+    ax.set_yscale('linear')  # 线性直角坐标
+    ax.set_ylabel('样本数量', fontproperties=CN_FONT)
+    # 线性坐标刻度格式化（替换原对数格式化）
+    ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
+    ax.yaxis.set_minor_formatter(mticker.NullFormatter())
+    ax.set_yticklabels([f'{int(x)}' if x.is_integer() else f'{x:.1f}' for x in ax.get_yticks()], fontproperties=ENG_FONT)
+    
+    # 7. 图例配置（与原逻辑一致）
+    ax.legend(
+        prop=CN_FONT,
+        loc='upper right',
+        frameon=True,
+        fancybox=True,
+        shadow=False
+    )
+    
+    # 8. 网格配置（与原逻辑一致）
+    ax.grid(axis='y', which='major', alpha=0.5, linestyle='-', linewidth=0.5)
+    ax.grid(axis='y', which='minor', alpha=0.2, linestyle='--', linewidth=0.3)
+    ax.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
+    ax.set_axisbelow(True)
+    
+    # 9. 调整布局（与原逻辑一致）
+    plt.tight_layout()
+    
+    return fig
+
+# ✅ 原有新增：封装绘制X>阈值的线性Y轴RMS直方图函数
+def plot_rms_hist_linear_y_above_threshold(random_vibration_rms, viv_rms, rms_threshold, n_bins, font_size, ENG_FONT, CN_FONT):
+    """
+    绘制RMS直方图（X>阈值部分 + Y轴线性直角坐标，其他配置与原版本一致）
+    :param random_vibration_rms: 随机振动RMS数组
+    :param viv_rms: VIV振动RMS数组
+    :param rms_threshold: RMS阈值
+    :param n_bins: 分箱数
+    :param font_size: 字体大小
+    :param ENG_FONT: 英文字体配置
+    :param CN_FONT: 中文字体配置
+    :return: fig: 绘制好的matplotlib figure对象
+    """
+    # 3.1 截取X大于阈值的部分（✅ 核心新增逻辑）
+    random_vibration_rms_above = random_vibration_rms[random_vibration_rms > rms_threshold]
+    viv_rms_above = viv_rms[viv_rms > rms_threshold]
+    
+    # 有效性校验
+    if len(random_vibration_rms_above) == 0 and len(viv_rms_above) == 0:
+        print("警告：无X>阈值的RMS样本数据")
+        return None
+    
+    # 1. 确定直方图分箱范围（仅针对X>阈值部分）
+    all_valid_rms_above = []
+    if len(random_vibration_rms_above) > 0:
+        all_valid_rms_above.extend(random_vibration_rms_above)
+    if len(viv_rms_above) > 0:
+        all_valid_rms_above.extend(viv_rms_above)
+    all_valid_rms_above = np.array(all_valid_rms_above)
+    bin_min = rms_threshold  # 分箱起始为阈值（使用变量，非硬编码）
+    bin_max = np.max(all_valid_rms_above)
+    bins = np.linspace(bin_min, bin_max, n_bins + 1)
+    
+    # 2. 创建画布（与原配置一致）
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # 3. 绘制随机振动样本直方图（仅X>阈值部分）
+    if len(random_vibration_rms_above) > 0:
+        ax.hist(
+            random_vibration_rms_above,
+            bins=bins,
+            color=NORMAL_VIB_COLOR,
+            edgecolor= NORMAL_EDGE_COLOR,
+            linewidth=0.8,
+            label=f'随机振动（X>{rms_threshold}）',
+            alpha=1.0
+        )
+    
+    # 4. 绘制VIV样本直方图（仅X>阈值部分）
+    if len(viv_rms_above) > 0:
+        ax.hist(
+            viv_rms_above,
+            bins=bins,
+            color=VIV_VIB_COLOR,
+            edgecolor=VIV_EDGE_COLOR,
+            linestyle='--',
+            linewidth=1.0,
+            label=f'涡激共振（X>{rms_threshold}）',
+            alpha=0.6
+        )
+    
+
+    ax.set_xlim(left=rms_threshold)  # X轴起始为阈值（使用变量，非硬编码）
+
+    ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
+    ax.yaxis.set_minor_formatter(mticker.NullFormatter())
+    ax.set_yticklabels([f'{int(x)}' if x.is_integer() else f'{x:.1f}' for x in ax.get_yticks()], fontproperties=ENG_FONT)
+    
+    # 8. 网格配置（与原逻辑一致）
+    ax.grid(axis='y', which='major', alpha=0.5, linestyle='-', linewidth=0.5)
+    ax.grid(axis='y', which='minor', alpha=0.2, linestyle='--', linewidth=0.3)
+    ax.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
+    ax.set_axisbelow(True)
+    
+    # 9. 调整布局（与原逻辑一致）
+    plt.tight_layout()
+    
+    return fig
 
 def RMS_Statistics_Histogram():
     # ########################### 核心参数配置 ###########################
@@ -72,6 +344,9 @@ def RMS_Statistics_Histogram():
     # 可视化相关
     n_bins = 100  # 高粒度分箱
     viv_alpha = 0.6  # VIV样本透明度（区分于随机振动的不透明）
+    
+    # ✅ 新增：结果保存路径配置（可根据需要修改）
+    result_save_path = r'F:\Research\Vibration Characteristics In Cable Vibration\results\rms_statistics.txt'
 
     # ###################################################################
     # 目标传感器（保持原有配置，可根据振动传感器筛选文件）
@@ -201,100 +476,95 @@ def RMS_Statistics_Histogram():
     print(f"随机振动样本数量：{len(random_vibration_rms)}")
     print(f"VIV样本数量（MECC+RMS阈值筛选）：{len(viv_rms)}")
 
-    # ########################### 第二步：绘制直方图（分离两组样本，不同颜色） ###########################
-    fig, ax = plt.subplots(figsize=(10, 6))
+    # ✅ 新增：样本数量统计
+    # 1. 基础统计
+    total_samples = len(random_vibration_rms) + len(viv_rms)  # 总样本数
+    # 2. 随机振动样本统计
+    random_below_threshold = len(random_vibration_rms[random_vibration_rms < rms_threshold])
+    random_above_threshold = len(random_vibration_rms[random_vibration_rms >= rms_threshold])
+    # 3. 涡激共振样本统计
+    viv_below_threshold = len(viv_rms[viv_rms < rms_threshold]) if len(viv_rms) > 0 else 0
+    viv_above_threshold = len(viv_rms[viv_rms >= rms_threshold]) if len(viv_rms) > 0 else 0
+    # 4. 按阈值汇总
+    total_below_threshold = random_below_threshold + viv_below_threshold
+    total_above_threshold = random_above_threshold + viv_above_threshold
 
-    # 1. 确定直方图分箱范围（包含两组样本）
-    all_valid_rms = []
-    if len(random_vibration_rms) > 0:
-        all_valid_rms.extend(random_vibration_rms)
-    if len(viv_rms) > 0:
-        all_valid_rms.extend(viv_rms)
-    all_valid_rms = np.array(all_valid_rms)
-    bin_min = np.min(all_valid_rms)
-    bin_max = np.max(all_valid_rms)
-    bins = np.linspace(bin_min, bin_max, n_bins + 1)
-
-    # 2. 绘制随机振动样本直方图（先绘制，作为底层）
-    if len(random_vibration_rms) > 0:
-        ax.hist(
-            random_vibration_rms,
-            bins=bins,
-            color=NORMAL_VIB_COLOR,
-            edgecolor= NORMAL_EDGE_COLOR, # 使用一个较深灰色作为边框
-            linewidth=0.8,
-            label=f'随机振动',
-            alpha=1.0  # 随机振动不透明
-        )
-
-    # 3. 绘制VIV样本直方图（后绘制，叠加在随机振动上层，带透明度）
-    if len(viv_rms) > 0:
-        # 分离VIV的低/高RMS（此处VIV已过全局RMS阈值，可按需细分，也可直接绘制整体）
-        viv_high_rms = viv_rms[viv_rms >= rms_threshold]
+    # ✅ 新增：保存统计结果到文件
+    try:
+        # 创建保存目录（如果不存在）
+        save_dir = os.path.dirname(result_save_path)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
         
-        # VIV-高RMS（核心VIV样本）
-        if len(viv_high_rms) > 0:
-            ax.hist(
-                viv_high_rms,
-                bins=bins,
-                color=VIV_VIB_COLOR,
-                edgecolor=VIV_EDGE_COLOR,
-                linestyle='--',
-                linewidth=1.0,
-                label=f'涡激共振',
-                alpha=viv_alpha
-            )
+        # 写入统计信息
+        with open(result_save_path, 'w', encoding='utf-8') as f:
+            f.write("="*50 + "\n")
+            f.write("RMS样本数量统计结果\n")
+            f.write("="*50 + "\n")
+            f.write(f"RMS阈值：{rms_threshold}\n")
+            f.write(f"总样本数量：{total_samples}\n")
+            f.write(f"小于阈值的总样本数量：{total_below_threshold}\n")
+            f.write(f"大于等于阈值的总样本数量：{total_above_threshold}\n")
+            f.write("-"*30 + "\n")
+            f.write(f"随机振动 - 小于阈值：{random_below_threshold}\n")
+            f.write(f"随机振动 - 大于等于阈值：{random_above_threshold}\n")
+            f.write("-"*30 + "\n")
+            f.write(f"涡激共振 - 小于阈值：{viv_below_threshold}\n")
+            f.write(f"涡激共振 - 大于等于阈值：{viv_above_threshold}\n")
+            f.write("="*50 + "\n")
+        print(f"统计结果已保存至：{result_save_path}")
+    except Exception as e:
+        print(f"保存统计结果失败：{e}")
 
-    # 4. 添加阈值垂直虚线
-    ax.axvline(x=rms_threshold, color=THRESHOLD_COLOR, linestyle='--', linewidth=1.8, label=r'标准差阈值$\sigma_0$' + f'（{rms_threshold}）')
-    # 1. 基础标注：在X轴附近标注RMS阈值文本
-    ax.text(
-        rms_threshold,  # X坐标：阈值位置
-        ax.get_ylim()[0] * 1.1,  # Y坐标：X轴上方少许，避免遮挡
-        f'RMS Threshold: {rms_threshold}',  # 标注文本
-        fontproperties=ENG_FONT,  # 使用英文字体
-        fontsize=font_size,
-        color=THRESHOLD_COLOR,
-        ha='center',  # 水平居中对齐阈值
-        va='bottom'   # 垂直底部对齐（贴近X轴）
+    # ########################### 第二步：调用封装函数绘制所有直方图 ###########################
+    # ✅ 修改：调用对数坐标封装函数（替换原直接绘制逻辑）
+    print("\n开始绘制对数Y轴RMS直方图...")
+    fig_log_y = plot_rms_hist_log_y(
+        random_vibration_rms=random_vibration_rms,
+        viv_rms=viv_rms,
+        rms_threshold=rms_threshold,
+        n_bins=n_bins,
+        font_size=font_size,
+        ENG_FONT=ENG_FONT,
+        CN_FONT=CN_FONT,
+        viv_alpha=viv_alpha
     )
+    if fig_log_y:
+        figs.append(fig_log_y)  # 添加对数坐标图表
+        plt.close(fig_log_y)
 
-    # 5. 坐标轴配置
-    # X轴：RMS
-    ax.set_xlabel('标准差', fontproperties=CN_FONT)
-    # --- 修改点 2: 确保刻度标签使用英文字体 ---
-    ax.set_xticklabels([f'{x:.2f}' for x in ax.get_xticks()], fontproperties=ENG_FONT)
+    # ✅ 原有新增：调用线性Y轴直方图绘制函数
+    print("\n开始绘制线性Y轴RMS直方图...")
+    fig_linear_y = plot_rms_hist_linear_y(
+        random_vibration_rms=random_vibration_rms,
+        viv_rms=viv_rms,
+        rms_threshold=rms_threshold,
+        n_bins=n_bins,
+        font_size=font_size,
+        ENG_FONT=ENG_FONT,
+        CN_FONT=CN_FONT
+    )
+    if fig_linear_y:
+        figs.append(fig_linear_y)  # 添加线性坐标图表
+        plt.close(fig_linear_y)
     
-    # Y轴：样本数量（对数坐标）
-    ax.set_yscale('log')
-    ax.set_ylabel('样本数量', fontproperties=CN_FONT)
-    ax.yaxis.set_major_formatter(mticker.LogFormatterSciNotation())
-    ax.yaxis.set_minor_formatter(mticker.NullFormatter())
-    # --- 修改点 3: 确保刻度标签使用英文字体 ---
-    ax.set_yticklabels(ax.get_yticks(), fontproperties=ENG_FONT)
-
-    # 6. 图例配置
-    ax.legend(
-        prop=CN_FONT,
-        loc='upper right',
-        frameon=True,
-        fancybox=True,
-        shadow=False
+    # ✅ 原有新增：调用X>阈值的线性Y轴直方图绘制函数
+    print("\n开始绘制X>阈值的线性Y轴RMS直方图...")
+    fig_linear_y_above = plot_rms_hist_linear_y_above_threshold(
+        random_vibration_rms=random_vibration_rms,
+        viv_rms=viv_rms,
+        rms_threshold=rms_threshold,
+        n_bins=n_bins,
+        font_size=font_size,
+        ENG_FONT=ENG_FONT,
+        CN_FONT=CN_FONT
     )
-
-    # 8. 网格配置
-    ax.grid(axis='y', which='major', alpha=0.5, linestyle='-', linewidth=0.5)
-    ax.grid(axis='y', which='minor', alpha=0.2, linestyle='--', linewidth=0.3)
-    ax.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
-    ax.set_axisbelow(True)
-
-    # 9. 调整布局
-    plt.tight_layout()
-
-    # 存储图表
-    figs.append(fig)
+    if fig_linear_y_above:
+        figs.append(fig_linear_y_above)  # 添加X>阈值的线性坐标图表
+        plt.close(fig_linear_y_above)
+    
+    # ✅ 原有修改：将所有fig（对数+线性+X>阈值）添加到ploter
     ploter.figs.extend(figs)
-    plt.close()
 
     # ########################### 展示图表 ###########################
     ploter.show()

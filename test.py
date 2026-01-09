@@ -4,25 +4,27 @@
 
 
 
-# from src.figs.fig7_mecc_result import evaluate_best_params, run_pareto_verification_and_plot
+from src.figs.fig7_mecc_result import run_pareto_verification_and_plot as fig7_2
+from src.figs.fig7_ecc_result import run_ecc_param_search_and_plot as fig7_1
+from src.figs.fig5_timeseries_vib_display import Fig5
+from src.figs.fig2_rms_distribution import RMS_Statistics_Histogram as fig2
 
-# run_pareto_verification_and_plot()
+
+if __name__ == "__main__":
+    fig2()
 
 
-# from src.figs.fig7_ecc_result import run_ecc_param_search_and_plot
 
 # run_ecc_param_search_and_plot()
 
-
-# from src.figs.fig5_timeseries_vib_display import Fig5
 
 # fig = Fig5()
 
 # fig.plot()
 
-from src.figs.fig3_wind_velocity_distribution import Wind_Speed_Histogram
+# from src.figs.fig3_wind_velocity_distribution import Wind_Speed_Histogram
 
-Wind_Speed_Histogram()
+# Wind_Speed_Histogram()
 
 
 
