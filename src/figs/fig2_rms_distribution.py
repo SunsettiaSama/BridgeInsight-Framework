@@ -1,8 +1,8 @@
 from ..visualize_tools.utils import ChartApp, PlotLib
 import matplotlib.pyplot as plt
 import numpy as np
-import matplotlib.pyplot as plt
 import os
+import matplotlib.gridspec as gridspec  
 
 from ..data_processer.data_processer_V0 import UNPACK, DataManager
 from matplotlib.font_manager import FontProperties
@@ -27,8 +27,8 @@ CN_FONT = FontProperties(
     # fname='/usr/share/fonts/truetype/simhei/SimHei.ttf'
 )
 
-RESULT_SAVE_PATH =  r'E:\Research\Vibration Characteristics In Cable Vibration\results\rms_statistics.txt'
-ALL_VIBRATION_ROOT = r"E:\Research\Vibration Characteristics In Cable Vibration\data\2024September\SuTong\VIC"
+RESULT_SAVE_PATH =  r'F:\Research\Vibration Characteristics In Cable Vibration\results\rms_statistics.txt'
+ALL_VIBRATION_ROOT = r"F:\Research\Vibration Characteristics In Cable Vibration\data\2024September\SuTong\VIC"
 
 # ###################################################################
 
@@ -156,10 +156,10 @@ def plot_rms_hist_log_y(random_vibration_rms, viv_rms, rms_threshold, n_bins, fo
     
     return fig
 
-# 绘制线性Y轴（直角坐标）的RMS直方图函数（原有逻辑完整保留）
+# 绘制线性Y轴（直角坐标）的RMS直方图函数（原有逻辑完整保留，新增笛卡尔坐标样式）
 def plot_rms_hist_linear_y(random_vibration_rms, viv_rms, rms_threshold, n_bins, font_size, ENG_FONT, CN_FONT):
     """
-    绘制RMS直方图（Y轴为线性直角坐标）
+    绘制RMS直方图（Y轴为线性直角坐标），样式调整为笛卡尔坐标系（仅保留左下边框）
     :param random_vibration_rms: 随机振动RMS数组
     :param viv_rms: VIV振动RMS数组
     :param rms_threshold: RMS阈值
@@ -214,7 +214,18 @@ def plot_rms_hist_linear_y(random_vibration_rms, viv_rms, rms_threshold, n_bins,
     ax.axvline(x=rms_threshold, color=THRESHOLD_COLOR, linestyle='--', linewidth=1.8, label=r'标准差阈值$\sigma_0$')
     
     # 6. 坐标轴配置
-    # X轴配置（与原逻辑一致）
+    # ========== 核心修改：笛卡尔坐标样式（去除上/右边框） ==========
+    # 隐藏上边框和右边框
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    # 调整X轴和Y轴的位置（让轴线交汇，更贴近笛卡尔坐标）
+    ax.spines['bottom'].set_position(('data', 0))  # X轴对齐Y=0
+    ax.spines['left'].set_position(('data', np.min(bins)))  # Y轴对齐X=数据最小值
+    # 确保轴线样式清晰（可选：调整边框宽度，增强笛卡尔视觉）
+    ax.spines['left'].set_linewidth(1.0)
+    ax.spines['bottom'].set_linewidth(1.0)
+    
+    # X轴配置（与原逻辑一致，仅保留格式）
     ax.set_xlabel(r'标准差（$m/s^2$）', fontproperties=CN_FONT)
     ax.set_xticklabels([f'{x:.2f}' for x in ax.get_xticks()], fontproperties=ENG_FONT)
     
@@ -226,19 +237,19 @@ def plot_rms_hist_linear_y(random_vibration_rms, viv_rms, rms_threshold, n_bins,
     ax.yaxis.set_minor_formatter(mticker.NullFormatter())
     ax.set_yticklabels([f'{int(x)}' if x.is_integer() else f'{x:.1f}' for x in ax.get_yticks()], fontproperties=ENG_FONT)
     
-    # 7. 图例配置（与原逻辑一致）
-    ax.legend(
-        prop=CN_FONT,
-        loc='upper right',
-        frameon=True,
-        fancybox=True,
-        shadow=False
-    )
+    # 7. 图例配置（与原逻辑一致，注释保留）
+    # ax.legend(
+    #     prop=CN_FONT,
+    #     loc='upper right',
+    #     frameon=True,
+    #     fancybox=True,
+    #     shadow=False
+    # )
     
-    # 8. 网格配置（与原逻辑一致）
-    ax.grid(axis='y', which='major', alpha=0.5, linestyle='-', linewidth=0.5)
-    ax.grid(axis='y', which='minor', alpha=0.2, linestyle='--', linewidth=0.3)
-    ax.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
+    # 8. 网格配置（与原逻辑一致，笛卡尔风格下网格仍保留可读性）
+    # ax.grid(axis='y', which='major', alpha=0.5, linestyle='-', linewidth=0.5)
+    # ax.grid(axis='y', which='minor', alpha=0.2, linestyle='--', linewidth=0.3)
+    # ax.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
     ax.set_axisbelow(True)
     
     # 9. 调整布局（与原逻辑一致）
@@ -324,8 +335,6 @@ def plot_rms_hist_linear_y_above_threshold(random_vibration_rms, viv_rms, rms_th
     
     return fig
 
-import numpy as np  # 确保已导入numpy，若代码开头已有则无需重复
-
 # 新增：封装RMS统计结果打印函数（核心新增逻辑）
 def print_rms_statistics(rms_threshold, total_samples, total_below_threshold, total_above_threshold,
                          random_above_threshold, viv_above_threshold, all_rms):
@@ -375,6 +384,102 @@ def print_rms_statistics(rms_threshold, total_samples, total_below_threshold, to
     else:
         print(f"   - 无大于等于阈值的样本，无需统计类型占比")
     print("="*60 + "\n")
+
+
+# -------------------------- 核心修改：双堆叠子图绘制函数 --------------------------
+def plot_rms_double_stacked_subplots(random_vibration_rms, viv_rms, rms_threshold, font_size, ENG_FONT, CN_FONT):
+    """
+    绘制双堆叠子图：左子图（0.16~0.5区间）、右子图（0.5~20区间）
+    核心调整：统一x/y轴标签，x标签放在整个图表最底部
+    """
+    # 1. 定义区间范围（原逻辑完全保留）
+    left_subplot_min = rms_threshold  # 0.16
+    left_subplot_max = 0.5
+    
+    right_subplot_max = 20.0
+    interval_nums = 50
+
+    left_interval_nums = interval_nums
+    right_interval_nums = interval_nums * 2
+    right_subplot_min = left_subplot_max
+
+    # 2. 筛选对应区间的样本（原逻辑完全保留）
+    random_left = random_vibration_rms[(random_vibration_rms >= left_subplot_min) & (random_vibration_rms <= left_subplot_max)]
+    viv_left = viv_rms[(viv_rms >= left_subplot_min) & (viv_rms <= left_subplot_max)]
+    random_right = random_vibration_rms[(random_vibration_rms >= right_subplot_min) & (random_vibration_rms <= right_subplot_max)]
+    viv_right = viv_rms[(viv_rms >= right_subplot_min) & (viv_rms <= right_subplot_max)]
+
+    # 3. 创建画布（原逻辑完全保留）
+    fig = plt.figure(figsize=(12, 6))
+    gs = gridspec.GridSpec(1, 2, width_ratios=[1, 2])  # 左侧占1/3，右侧占2/3
+    ax1 = fig.add_subplot(gs[0, 0])  # 左子图
+    ax2 = fig.add_subplot(gs[0, 1])  # 右子图（独立纵轴）
+
+    # -------------------------- 左子图：0.16~0.5（原逻辑完全保留） --------------------------
+    bins_left = np.linspace(left_subplot_min, left_subplot_max, left_interval_nums + 1)
+    x_start = rms_threshold - (left_subplot_max - left_subplot_min) / 81 
+
+    random_hist_left, _ = np.histogram(random_left, bins=bins_left)
+    viv_hist_left, _ = np.histogram(viv_left, bins=bins_left)
+    ax1.bar(bins_left[:-1], random_hist_left, width=np.diff(bins_left), 
+            color=NORMAL_VIB_COLOR, edgecolor=NORMAL_EDGE_COLOR, linewidth=0.5, alpha=1.0)
+    ax1.bar(bins_left[:-1], viv_hist_left, width=np.diff(bins_left), bottom=random_hist_left,
+            color=VIV_VIB_COLOR, edgecolor=VIV_EDGE_COLOR, linewidth=0.5, alpha=VIV_ALPHA)
+
+    # 坐标轴配置（仅移除左子图xlabel，保留ylabel和其他逻辑）
+    # ========== 修改1：移除左子图单独的xlabel（改为全局统一） ==========
+    # ax1.set_xlabel(r'标准差（$m/s^2$）', fontproperties=CN_FONT)  # 注释/删除该行
+    ax1.set_ylabel('样本数量', fontproperties=CN_FONT)  # 保留ylabel（统一y标签）
+    ax1.set_xlim(x_start, left_subplot_max)
+
+    auto_xticks_1 = ax1.get_xticks()
+    new_xticks_1 = np.unique(np.concatenate([[left_subplot_min], auto_xticks_1, [left_subplot_max]]))
+    new_xticks_1 = new_xticks_1[(new_xticks_1 >= left_subplot_min) & (new_xticks_1 <= left_subplot_max)]
+    new_xticks_1 = np.sort(new_xticks_1)
+    ax1.set_xticks(new_xticks_1)
+    ax1.set_xticklabels([f'{x:.2f}' for x in new_xticks_1], fontproperties=ENG_FONT, rotation=45)
+
+    ax1.set_xticklabels([f'{x:.2f}' for x in ax1.get_xticks()], fontproperties=ENG_FONT, rotation=45)
+    ax1.set_yticklabels(ax1.get_yticks(), fontproperties=ENG_FONT)
+    ax1.grid(axis='y', which='major', alpha=0.5, linestyle='-', linewidth=0.5)
+    ax1.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
+    ax1.set_axisbelow(True)
+
+    # -------------------------- 右子图：0.5~20（原逻辑完全保留） --------------------------
+    bins_right = np.linspace(right_subplot_min, right_subplot_max, right_interval_nums + 1) 
+    right_subplot_x_start = right_subplot_min - (right_subplot_max - right_subplot_min) / (right_interval_nums + 1) 
+
+    random_hist_right, _ = np.histogram(random_right, bins=bins_right)
+    viv_hist_right, _ = np.histogram(viv_right, bins=bins_right)
+    ax2.bar(bins_right[:-1], random_hist_right, width=np.diff(bins_right), 
+            color=NORMAL_VIB_COLOR, edgecolor=NORMAL_EDGE_COLOR, linewidth=0.5, alpha=1.0, label='随机振动样本')
+    ax2.bar(bins_right[:-1], viv_hist_right, width=np.diff(bins_right), bottom=random_hist_right,
+            color=VIV_VIB_COLOR, edgecolor=VIV_EDGE_COLOR, linewidth=0.5, alpha=VIV_ALPHA, label='涡激共振样本')
+    
+    # 坐标轴配置（新增右子图ylabel，保留其他逻辑）
+    ax2.set_xlim(right_subplot_x_start, right_subplot_max)
+    # ========== 修改2：给右子图添加统一的ylabel（样本数量） ==========
+    ax2.set_ylabel('样本数量', fontproperties=CN_FONT)  
+
+    auto_xticks_2 = ax2.get_xticks()
+    new_xticks_2 = np.unique(np.concatenate([[right_subplot_min], auto_xticks_2, [right_subplot_max]]))
+    new_xticks_2 = new_xticks_2[(new_xticks_2 >= right_subplot_min) & (new_xticks_2 <= right_subplot_max)]
+    new_xticks_2 = np.sort(new_xticks_2)
+    ax2.set_xticks(new_xticks_2)
+    ax2.set_xticklabels([f'{x:.1f}' for x in new_xticks_2], fontproperties=ENG_FONT, rotation=45)
+
+    ax2.set_yticklabels(ax2.get_yticks(), fontproperties=ENG_FONT)
+    ax2.legend(prop=CN_FONT, loc='upper right', frameon=True, fancybox=True, shadow=False)
+    ax2.grid(axis='y', which='major', alpha=0.5, linestyle='-', linewidth=0.5)
+    ax2.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
+    ax2.set_axisbelow(True)
+
+    # ========== 修改3：在整个图表最底部添加统一的xlabel（标准差+单位） ==========
+    fig.text(0.5, 0.02, r'标准差（$m/s^2$）', ha='center', fontproperties=CN_FONT)
+
+    # 整体布局调整（原逻辑完全保留，注意调整布局避免label被遮挡）
+    plt.tight_layout(rect=[0, 0.05, 1, 1])  # 微调rect，给底部xlabel留空间
+    return fig
 
 def RMS_Statistics_Histogram():
     # ########################### 核心参数配置 ###########################
@@ -601,7 +706,7 @@ def RMS_Statistics_Histogram():
         plt.close(fig_linear_y)
     
     # 绘制X>阈值的线性Y轴直方图
-    print("\n开始绘制X>阈值的线性Y轴RMS直方图...")
+    print("\n开始绘制X>阈值的线性Y轴直方图...")
     fig_linear_y_above = plot_rms_hist_linear_y_above_threshold(
         random_vibration_rms=random_vibration_rms,
         viv_rms=viv_rms,
@@ -614,6 +719,20 @@ def RMS_Statistics_Histogram():
     if fig_linear_y_above:
         figs.append(fig_linear_y_above)
         plt.close(fig_linear_y_above)
+    
+    # -------------------------- 新增：调用双堆叠子图绘制函数 --------------------------
+    print("\n开始绘制双区间堆叠子图...")
+    fig_double_stacked = plot_rms_double_stacked_subplots(
+        random_vibration_rms=random_vibration_rms,
+        viv_rms=viv_rms,
+        rms_threshold=rms_threshold,
+        font_size=font_size,
+        ENG_FONT=ENG_FONT,
+        CN_FONT=CN_FONT
+    )
+    if fig_double_stacked:
+        figs.append(fig_double_stacked)
+        plt.close(fig_double_stacked)
     
     # 将所有fig添加到ploter
     ploter.figs.extend(figs)
@@ -630,3 +749,15 @@ def RMS_Statistics_Histogram():
 # 3. 在主函数RMS_Statistics_Histogram中，保存统计文件后调用新增的打印函数
 # 4. 所有原有导入逻辑、执行逻辑、绘图逻辑均未修改
 # 5. 打印函数中处理了除零错误，避免统计时出现除以零的异常
+# -------------------------- 新增改动备注 --------------------------
+# 6. 新增函数plot_rms_double_stacked_subplots：实现双区间堆叠子图绘制，核心配置：
+#    - 左子图：0.16~2.5区间，50个细粒度bins，标注阈值，无图例
+#    - 右子图：2.5~20区间，20个粗粒度bins，显示图例，堆叠样式（随机在下，VIV在上）
+#    - 两个子图在一个fig中左右排列，共享Y轴刻度
+# 7. 在主函数中调用该新函数，将生成的fig加入figs列表，参与后续展示
+# 8. 新函数中严格遵循要求：
+#    - Threshold开始位置为0.16（非0）
+#    - 堆叠型展示（随机振动底层，VIV振动上层）
+#    - 0~2.5区间粒度增大（50个bins）
+#    - label仅显示在2.5~20的右子图上
+#    - 两个子图放在一个fig中统一显示（左右布局）
