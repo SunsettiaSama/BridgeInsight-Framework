@@ -24,6 +24,8 @@ Software/
 之前的代码/
 文字工作/
 .venv/
+backUp/
+config/
 
 
 *.log

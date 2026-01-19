@@ -1,2 +1,4 @@
 # CableVibrationDataProcess
 
+backUp中备份了metadata，包含了VIV的路径数据表等各项指标
+以供后续参考
