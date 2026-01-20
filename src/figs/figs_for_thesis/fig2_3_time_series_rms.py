@@ -7,6 +7,8 @@ import matplotlib.gridspec as gridspec
 from ...data_processer.data_processer_V0 import UNPACK, DataManager
 from matplotlib.font_manager import FontProperties
 import matplotlib.ticker as mticker
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from tqdm import tqdm
 
 # 从配置文件导入绘图基础配置
 from .config import (
@@ -21,11 +23,45 @@ ALL_VIBRATION_ROOT = r"F:\Research\Vibration Characteristics In Cable Vibration\
 # 硬编码参数
 FS = 50  # 振动信号采样频率
 TIME_WINDOW = 60.0   # 计算RMS的时间窗口（秒）
-RMS_TRHESHOLD = 0.16 # RMS阈值
+# RMS_TRHESHOLD = 0.16 # RMS阈值已改为动态计算（95%分位值）
 
 # 颜色配置（根据阈值区分）
-BELOW_THRESHOLD_COLOR = '#8074C8'  # 小于标准差阈值的颜色
-ABOVE_THRESHOLD_COLOR = '#7895C1'  # 大于标准差阈值的颜色
+BELOW_THRESHOLD_COLOR = '#8074C8'  # 小于均方根阈值的颜色
+ABOVE_THRESHOLD_COLOR = '#7895C1'  # 大于均方根阈值的颜色
+
+def process_single_file(file_path, window_size):
+    """单文件处理工作函数，用于多进程"""
+    try:
+        import numpy as np
+        from ...data_processer.data_processer_V0 import UNPACK
+        unpacker = UNPACK(init_path=False)
+        vibration_data = unpacker.VIC_DATA_Unpack(file_path)
+        vibration_data = np.array(vibration_data)
+        
+        if len(vibration_data) == 0:
+            return [], []
+            
+        rms_list = []
+        lengths = []
+        
+        if len(vibration_data) >= window_size:
+            for i in range(0, len(vibration_data) - window_size + 1, window_size):
+                window_data = vibration_data[i:i+window_size]
+                # 计算信号的均方根RMS
+                rms_val = np.sqrt(np.mean(np.square(window_data)))
+                if rms_val > 0:
+                    rms_list.append(rms_val)
+                    lengths.append(len(window_data))
+        else:
+            rms_val = np.sqrt(np.mean(np.square(vibration_data)))
+            if rms_val > 0:
+                rms_list.append(rms_val)
+                lengths.append(len(vibration_data))
+        
+        return rms_list, lengths
+    except Exception as e:
+        # print(f"处理文件 {file_path} 出错: {e}")
+        return [], []
 
 # 绘制线性Y轴的RMS直方图函数
 def plot_rms_hist_linear_y(random_vibration_rms, rms_threshold, n_bins, font_size, ENG_FONT, CN_FONT):
@@ -76,7 +112,7 @@ def plot_rms_hist_linear_y(random_vibration_rms, rms_threshold, n_bins, font_siz
         )
     
     # 添加阈值垂直虚线
-    ax.axvline(x=rms_threshold, color=THRESHOLD_COLOR, linestyle='--', linewidth=1.8, label=r'标准差阈值$\sigma_0$')
+    ax.axvline(x=rms_threshold, color=THRESHOLD_COLOR, linestyle='--', linewidth=1.8, label=r'均方根阈值$\sigma_0$')
     
     # 坐标轴配置
     ax.spines['top'].set_visible(False)
@@ -86,7 +122,7 @@ def plot_rms_hist_linear_y(random_vibration_rms, rms_threshold, n_bins, font_siz
     ax.spines['left'].set_linewidth(1.0)
     ax.spines['bottom'].set_linewidth(1.0)
     
-    ax.set_xlabel(r'标准差（$m/s^2$）', fontproperties=CN_FONT)
+    ax.set_xlabel(r'均方根（$m/s^2$）', fontproperties=CN_FONT)
     ax.set_xticklabels([f'{x:.2f}' for x in ax.get_xticks()], fontproperties=ENG_FONT)
     
     ax.set_yscale('linear')
@@ -138,300 +174,159 @@ def print_rms_statistics(rms_threshold, total_samples, total_below_threshold, to
 # 双堆叠子图绘制函数
 def plot_rms_double_stacked_subplots(random_vibration_rms, rms_threshold, font_size, ENG_FONT, CN_FONT):
     """
-    绘制双堆叠子图：左子图（0.16~0.5区间）、右子图（0.5~20区间）
+    绘制双堆叠子图：
+    左子图：从rms_threshold开始，包含剔除阈值后剩下样本中的95%
+    右子图：包含剩下的5%样本（x_max ~ 最大值）
     """
-    left_subplot_min = rms_threshold
-    left_subplot_max = 0.5
-    
-    right_subplot_max = 20.0
-    interval_nums = 50
+    samples_above_threshold = random_vibration_rms[random_vibration_rms >= rms_threshold]
+    if len(samples_above_threshold) == 0:
+        return None
 
+    left_subplot_min = rms_threshold
+    # 动态计算x_max：剔除阈值后，剩下样本中的95%分位值
+    left_subplot_max = np.percentile(samples_above_threshold, 95)
+    
+    right_subplot_min = left_subplot_max
+    right_subplot_max = np.max(random_vibration_rms)
+    
+    interval_nums = 50
     left_interval_nums = interval_nums
     right_interval_nums = interval_nums * 2
-    right_subplot_min = left_subplot_max
 
     random_left = random_vibration_rms[(random_vibration_rms >= left_subplot_min) & (random_vibration_rms <= left_subplot_max)]
-    random_right = random_vibration_rms[(random_vibration_rms >= right_subplot_min) & (random_vibration_rms <= right_subplot_max)]
+    random_right = random_vibration_rms[(random_vibration_rms > right_subplot_min) & (random_vibration_rms <= right_subplot_max)]
 
     fig = plt.figure(figsize=(12, 6))
     gs = gridspec.GridSpec(1, 2, width_ratios=[1, 2])
     ax1 = fig.add_subplot(gs[0, 0])
     ax2 = fig.add_subplot(gs[0, 1])
 
+    # -------------------------- 左子图 --------------------------
     bins_left = np.linspace(left_subplot_min, left_subplot_max, left_interval_nums + 1)
-    x_start = rms_threshold - (left_subplot_max - left_subplot_min) / 81 
+    # 计算左右对称的余量
+    margin_left = (left_subplot_max - left_subplot_min) / 80
+    x_start = left_subplot_min - margin_left
+    x_end = left_subplot_max + margin_left
 
     random_hist_left, _ = np.histogram(random_left, bins=bins_left)
     ax1.bar(bins_left[:-1], random_hist_left, width=np.diff(bins_left), 
             color=ABOVE_THRESHOLD_COLOR, edgecolor=ABOVE_THRESHOLD_COLOR, linewidth=0.5, alpha=1.0)
 
     ax1.set_ylabel('样本数量', fontproperties=CN_FONT)
-    ax1.set_xlim(x_start, left_subplot_max)
+    # 设置对称的范围
+    ax1.set_xlim(x_start, x_end)
 
     auto_xticks_1 = ax1.get_xticks()
-    new_xticks_1 = np.unique(np.concatenate([[left_subplot_min], auto_xticks_1, [left_subplot_max]]))
-    new_xticks_1 = new_xticks_1[(new_xticks_1 >= left_subplot_min) & (new_xticks_1 <= left_subplot_max)]
+    # 过滤出在范围内的自动刻度
+    valid_auto = auto_xticks_1[(auto_xticks_1 > left_subplot_min) & (auto_xticks_1 < left_subplot_max)]
+    if len(auto_xticks_1) >= 2:
+        default_interval = np.mean(np.diff(auto_xticks_1))
+        # 防重叠：左侧检查
+        if len(valid_auto) > 0 and (valid_auto[0] - left_subplot_min) < 0.8 * default_interval:
+            valid_auto = valid_auto[1:]
+        # 防重叠：右侧检查
+        if len(valid_auto) > 0 and (left_subplot_max - valid_auto[-1]) < 0.8 * default_interval:
+            valid_auto = valid_auto[:-1]
+            
+    new_xticks_1 = np.unique(np.concatenate([[left_subplot_min], valid_auto, [left_subplot_max]]))
     new_xticks_1 = np.sort(new_xticks_1)
     ax1.set_xticks(new_xticks_1)
     ax1.set_xticklabels([f'{x:.2f}' for x in new_xticks_1], fontproperties=ENG_FONT, rotation=45)
 
-    ax1.set_xticklabels([f'{x:.2f}' for x in ax1.get_xticks()], fontproperties=ENG_FONT, rotation=45)
     ax1.set_yticklabels(ax1.get_yticks(), fontproperties=ENG_FONT)
     ax1.grid(axis='y', which='major', alpha=0.5, linestyle='-', linewidth=0.5)
     ax1.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
     ax1.set_axisbelow(True)
 
+    # -------------------------- 右子图 --------------------------
     bins_right = np.linspace(right_subplot_min, right_subplot_max, right_interval_nums + 1) 
-    right_subplot_x_start = right_subplot_min - (right_subplot_max - right_subplot_min) / (right_interval_nums + 1) 
+    # 计算左右对称的余量
+    margin_right = (right_subplot_max - right_subplot_min) / 80
+    right_subplot_x_start = right_subplot_min - margin_right
+    right_subplot_x_end = right_subplot_max + margin_right
 
     random_hist_right, _ = np.histogram(random_right, bins=bins_right)
     ax2.bar(bins_right[:-1], random_hist_right, width=np.diff(bins_right), 
             color=ABOVE_THRESHOLD_COLOR, edgecolor=ABOVE_THRESHOLD_COLOR, linewidth=0.5, alpha=1.0, label='随机振动样本')
     
-    ax2.set_xlim(right_subplot_x_start, right_subplot_max)
+    # 设置对称的范围
+    ax2.set_xlim(right_subplot_x_start, right_subplot_x_end)
     ax2.set_ylabel('样本数量', fontproperties=CN_FONT)  
 
     auto_xticks_2 = ax2.get_xticks()
-    new_xticks_2 = np.unique(np.concatenate([[right_subplot_min], auto_xticks_2, [right_subplot_max]]))
-    new_xticks_2 = new_xticks_2[(new_xticks_2 >= right_subplot_min) & (new_xticks_2 <= right_subplot_max)]
+    # 过滤出在范围内的自动刻度，并检查与两端的间隔
+    valid_auto_2 = auto_xticks_2[(auto_xticks_2 > right_subplot_min) & (auto_xticks_2 < right_subplot_max)]
+    if len(valid_auto_2) > 0 and len(auto_xticks_2) >= 2:
+        default_interval_2 = np.mean(np.diff(auto_xticks_2))
+        # 检查左侧重叠
+        if (valid_auto_2[0] - right_subplot_min) < 0.8 * default_interval_2:
+            valid_auto_2 = valid_auto_2[1:]
+        # 检查右侧重叠
+        if len(valid_auto_2) > 0 and (right_subplot_max - valid_auto_2[-1]) < 0.8 * default_interval_2:
+            valid_auto_2 = valid_auto_2[:-1]
+            
+    new_xticks_2 = np.unique(np.concatenate([[right_subplot_min], valid_auto_2, [right_subplot_max]]))
     new_xticks_2 = np.sort(new_xticks_2)
     ax2.set_xticks(new_xticks_2)
     ax2.set_xticklabels([f'{x:.1f}' for x in new_xticks_2], fontproperties=ENG_FONT, rotation=45)
 
     ax2.set_yticklabels(ax2.get_yticks(), fontproperties=ENG_FONT)
-    ax2.legend(prop=CN_FONT, loc='upper right', frameon=True, fancybox=True, shadow=False)
+    # ax2.legend(prop=CN_FONT, loc='upper right', frameon=True, fancybox=True, shadow=False)
     ax2.grid(axis='y', which='major', alpha=0.5, linestyle='-', linewidth=0.5)
     ax2.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
     ax2.set_axisbelow(True)
 
-    fig.text(0.5, 0.02, r'标准差（$m/s^2$）', ha='center', fontproperties=CN_FONT)
+    fig.text(0.5, 0.02, r'均方根（$m/s^2$）', ha='center', fontproperties=CN_FONT)
 
     plt.tight_layout(rect=[0, 0.05, 1, 1])
     return fig
-
-# 绘制缺失比例直方图
-def plot_missing_ratio_histogram(sequence_lengths, expected_length, n_bins, ENG_FONT, CN_FONT):
-    """
-    绘制缺失比例直方图（5%-95%分位）
-    :param sequence_lengths: 样本长度列表
-    :param expected_length: 期望长度（50*60=3000）
-    :param n_bins: 分箱数
-    """
-    if len(sequence_lengths) == 0:
-        return None
-    
-    # 计算缺失比例：当前样本长度/期望长度
-    missing_ratios = np.array(sequence_lengths) / expected_length
-    
-    # 计算5%和95%分位数作为阈值
-    ratio_5_percentile = np.percentile(missing_ratios, 5)
-    ratio_95_percentile = np.percentile(missing_ratios, 95)
-    
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    bin_min = np.min(missing_ratios)
-    bin_max = np.max(missing_ratios)
-    bins = np.linspace(bin_min, bin_max, n_bins + 1)
-    
-    # 根据5%和95%分位数分离数据
-    below_5 = missing_ratios[missing_ratios < ratio_5_percentile]
-    above_95 = missing_ratios[missing_ratios >= ratio_5_percentile]
-    
-    # 绘制小于5%分位数的样本
-    if len(below_5) > 0:
-        ax.hist(
-            below_5,
-            bins=bins,
-            color=BELOW_THRESHOLD_COLOR,
-            edgecolor=BELOW_THRESHOLD_COLOR,
-            linewidth=0.8,
-            label=f'5%以下样本',
-            alpha=1.0
-        )
-    
-    # 绘制大于等于5%分位数的样本
-    if len(above_95) > 0:
-        ax.hist(
-            above_95,
-            bins=bins,
-            color=ABOVE_THRESHOLD_COLOR,
-            edgecolor=ABOVE_THRESHOLD_COLOR,
-            linewidth=0.8,
-            label=f'95%以上样本',
-            alpha=1.0
-        )
-    
-    # 添加5%分位数垂直虚线
-    ax.axvline(x=ratio_5_percentile, color=THRESHOLD_COLOR, linestyle='--', linewidth=1.8, label=r'5%分位线')
-    ax.text(
-        ratio_5_percentile,
-        ax.get_ylim()[1] * 0.95,
-        f'5%: {ratio_5_percentile:.2f}',
-        fontproperties=ENG_FONT,
-        fontsize=FONT_SIZE,
-        color=THRESHOLD_COLOR,
-        ha='center',
-        va='top'
-    )
-    
-    # 添加95%分位数垂直虚线
-    ax.axvline(x=ratio_95_percentile, color=THRESHOLD_COLOR, linestyle='--', linewidth=1.8, label=r'95%分位线')
-    ax.text(
-        ratio_95_percentile,
-        ax.get_ylim()[1] * 0.85,  # 调整y轴位置避免和5%文本重叠
-        f'95%: {ratio_95_percentile:.2f}',
-        fontproperties=ENG_FONT,
-        fontsize=FONT_SIZE,
-        color=THRESHOLD_COLOR,
-        ha='center',
-        va='top'
-    )
-    
-    ax.set_xlabel('缺失比例', fontproperties=CN_FONT)
-    ax.set_xticklabels([f'{x:.2f}' for x in ax.get_xticks()], fontproperties=ENG_FONT)
-    
-    ax.set_ylabel('样本数量', fontproperties=CN_FONT)
-    ax.set_yticklabels([f'{int(x)}' if x.is_integer() else f'{x:.1f}' for x in ax.get_yticks()], fontproperties=ENG_FONT)
-    
-    # ========== 仅新增这一行：设置y轴为对数刻度 ==========
-    ax.set_yscale('log')
-    
-    # 图例配置
-    ax.legend(
-        prop=CN_FONT,
-        loc='upper left',
-        frameon=True,
-        fancybox=True,
-        shadow=False
-    )
-    
-    ax.grid(axis='y', which='major', alpha=0.5, linestyle='-', linewidth=0.5)
-    ax.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
-    ax.set_axisbelow(True)
-    
-    plt.tight_layout()
-    return fig
-
-# 绘制缺失比例直方图
-def plot_missing_ratio_histogram_logy(sequence_lengths, expected_length, n_bins, ENG_FONT, CN_FONT):
-    """
-    绘制缺失比例直方图（5%-95%分位）
-    :param sequence_lengths: 样本长度列表
-    :param expected_length: 期望长度（50*60=3000）
-    :param n_bins: 分箱数
-    """
-    if len(sequence_lengths) == 0:
-        return None
-    
-    # 计算缺失比例：当前样本长度/期望长度
-    missing_ratios = np.array(sequence_lengths) / expected_length
-    
-    # 计算5%和95%分位数作为阈值
-    ratio_5_percentile = np.percentile(missing_ratios, 5)
-    ratio_95_percentile = np.percentile(missing_ratios, 95)
-    
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    bin_min = np.min(missing_ratios)
-    bin_max = np.max(missing_ratios)
-    bins = np.linspace(bin_min, bin_max, n_bins + 1)
-    
-    # 根据5%和95%分位数分离数据
-    below_5 = missing_ratios[missing_ratios < ratio_5_percentile]
-    above_95 = missing_ratios[missing_ratios >= ratio_5_percentile]
-    
-    # 绘制小于5%分位数的样本
-    if len(below_5) > 0:
-        ax.hist(
-            below_5,
-            bins=bins,
-            color=BELOW_THRESHOLD_COLOR,
-            edgecolor=BELOW_THRESHOLD_COLOR,
-            linewidth=0.8,
-            label=f'5%以下样本',
-            alpha=1.0
-        )
-    
-    # 绘制大于等于5%分位数的样本
-    if len(above_95) > 0:
-        ax.hist(
-            above_95,
-            bins=bins,
-            color=ABOVE_THRESHOLD_COLOR,
-            edgecolor=ABOVE_THRESHOLD_COLOR,
-            linewidth=0.8,
-            label=f'95%以上样本',
-            alpha=1.0
-        )
-    
-    # 添加5%分位数垂直虚线
-    ax.axvline(x=ratio_5_percentile, color=THRESHOLD_COLOR, linestyle='--', linewidth=1.8, label=r'5%分位线')
-    ax.text(
-        ratio_5_percentile,
-        ax.get_ylim()[1] * 0.95,
-        f'5%: {ratio_5_percentile:.2f}',
-        fontproperties=ENG_FONT,
-        fontsize=FONT_SIZE,
-        color=THRESHOLD_COLOR,
-        ha='center',
-        va='top'
-    )
-    
-    # 添加95%分位数垂直虚线
-    ax.axvline(x=ratio_95_percentile, color=THRESHOLD_COLOR, linestyle='--', linewidth=1.8, label=r'95%分位线')
-    ax.text(
-        ratio_95_percentile,
-        ax.get_ylim()[1] * 0.85,  # 调整y轴位置避免和5%文本重叠
-        f'95%: {ratio_95_percentile:.2f}',
-        fontproperties=ENG_FONT,
-        fontsize=FONT_SIZE,
-        color=THRESHOLD_COLOR,
-        ha='center',
-        va='top'
-    )
-    
-    ax.set_xlabel('缺失比例', fontproperties=CN_FONT)
-    ax.set_xticklabels([f'{x:.2f}' for x in ax.get_xticks()], fontproperties=ENG_FONT)
-    
-    ax.set_ylabel('样本数量', fontproperties=CN_FONT)
-    ax.set_yticklabels([f'{int(x)}' if x.is_integer() else f'{x:.1f}' for x in ax.get_yticks()], fontproperties=ENG_FONT)
-    
-    # 图例配置
-    ax.legend(
-        prop=CN_FONT,
-        loc='upper left',
-        frameon=True,
-        fancybox=True,
-        shadow=False
-    )
-    
-    ax.grid(axis='y', which='major', alpha=0.5, linestyle='-', linewidth=0.5)
-    ax.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
-    ax.set_axisbelow(True)
-    
-    plt.tight_layout()
-    return fig
-
-
 
 def RMS_Statistics_Histogram():
     # 核心参数配置
     fs_vibration = FS
     time_window = TIME_WINDOW
-    rms_threshold = RMS_TRHESHOLD
+    # rms_threshold 将在数据收集后通过95%分位值动态计算
     
     n_bins = N_BINS
     
     result_save_path = RESULT_SAVE_PATH
 
     target_sensors = [
-        'ST-VIC-C18-102-01'
+        'ST-VIC-C34-101-02',
+        'ST-VIC-C34-101-01',
+
+        'ST-VIC-C34-102-01',
+        'ST-VIC-C34-102-02',
+
+        'ST-VIC-C18-101-01',
+        'ST-VIC-C18-101-02',
+
+        'ST-VIC-C18-102-01',
+        'ST-VIC-C18-102-02',
+
+        'ST-VIC-C34-201-01',
+        'ST-VIC-C34-201-02',
+
+        'ST-VIC-C34-202-01',
+        'ST-VIC-C34-202-02',
+
+        'ST-VIC-C34-301-01',
+        'ST-VIC-C34-301-02',
+
+        'ST-VIC-C34-302-01',
+        'ST-VIC-C34-302-02',
+
+        'ST-VIC-C18-301-01',
+        'ST-VIC-C18-301-02',
+
+        'ST-VIC-C18-302-01',
+        'ST-VIC-C18-302-02'
+
     ]
 
     all_vibration_root = ALL_VIBRATION_ROOT
 
     ploter = PlotLib() 
-    unpacker = UNPACK(init_path = False)
     figs = []
 
     def get_all_vibration_files(root_dir, target_sensor_ids, suffix=".VIC"):
@@ -444,16 +339,8 @@ def RMS_Statistics_Histogram():
                         vibration_files.append(file_path)
         return vibration_files
 
-    def calculate_rms(signal_data):
-        """计算信号的均方根RMS"""
-        if len(signal_data) == 0:
-            return 0
-        return np.sqrt(np.mean(np.square(signal_data)))
-
     # 数据收集
     random_vibration_rms_list = []
-    sequence_lengths = []  # 收集窗口样本长度用于计算缺失比例
-    expected_length = int(FS * TIME_WINDOW)  # 50 * 60 = 3000
     window_size = int(time_window * fs_vibration)
 
     all_vib_files = get_all_vibration_files(
@@ -462,43 +349,33 @@ def RMS_Statistics_Histogram():
     )
     print(f"共获取所有振动文件数量：{len(all_vib_files)}")
 
-    for file_path in all_vib_files:
-        try:
-            vibration_data = unpacker.VIC_DATA_Unpack(file_path)
-            vibration_data = np.array(vibration_data)
-        except Exception as e:
-            print(f"解析振动文件失败：{file_path}，错误信息：{e}")
-            continue
+    # 使用多进程并行获取数据
+    print(f"开始并行处理文件并计算RMS...")
+    with ProcessPoolExecutor() as executor:
+        # 提交所有任务
+        futures = {executor.submit(process_single_file, fp, window_size): fp for fp in all_vib_files}
         
-        if len(vibration_data) == 0:
-            print(f"警告：{file_path} 无有效振动数据，跳过")
-            continue
-        
-        if len(vibration_data) >= window_size:
-            for i in range(0, len(vibration_data) - window_size + 1, window_size):
-                window_data = vibration_data[i:i+window_size]
-                rms_val = calculate_rms(window_data)
-                
-                if rms_val <= 0:
-                    continue
-                
-                # 收集窗口样本长度
-                sequence_lengths.append(len(window_data))
-                random_vibration_rms_list.append(rms_val)
-        else:
-            rms_val = calculate_rms(vibration_data)
-            if rms_val <= 0:
-                continue
-            
-            # 收集窗口样本长度
-            sequence_lengths.append(len(vibration_data))
-            random_vibration_rms_list.append(rms_val)
+        # 使用tqdm显示进度
+        for future in tqdm(as_completed(futures), total=len(all_vib_files), desc="数据获取进度"):
+            try:
+                rms_res, len_res = future.result()
+                if rms_res:
+                    random_vibration_rms_list.extend(rms_res)
+            except Exception as e:
+                print(f"处理任务时出错: {e}")
 
     random_vibration_rms = np.array(random_vibration_rms_list)
 
     if len(random_vibration_rms) == 0:
         print("警告：无有效振动样本数据")
         return
+    
+    # 动态计算RMS阈值：采取统计上的95%分位值
+    rms_threshold = np.percentile(random_vibration_rms, 95)
+    print(f"\n" + "="*60)
+    print(f"计算得到的动态RMS阈值 (95%分位值): {rms_threshold:.4f}")
+    print("="*60 + "\n")
+
     print(f"随机振动样本数量：{len(random_vibration_rms)}")
 
     # 样本数量统计
@@ -565,33 +442,6 @@ def RMS_Statistics_Histogram():
     if fig_double_stacked:
         figs.append(fig_double_stacked)
         plt.close(fig_double_stacked)
-    
-    # 绘制缺失比例直方图
-    print("\n开始绘制缺失比例直方图...")
-    fig_missing_ratio = plot_missing_ratio_histogram(
-        sequence_lengths=sequence_lengths,
-        expected_length=expected_length,
-        n_bins=50,
-        ENG_FONT=ENG_FONT,
-        CN_FONT=CN_FONT
-    )
-    if fig_missing_ratio:
-        figs.append(fig_missing_ratio)
-        plt.close(fig_missing_ratio)
-
-
-    # 绘制缺失比例直方图
-    print("\n开始绘制缺失比例直方图...")
-    fig_missing_ratio = plot_missing_ratio_histogram_logy(
-        sequence_lengths=sequence_lengths,
-        expected_length=expected_length,
-        n_bins=50,
-        ENG_FONT=ENG_FONT,
-        CN_FONT=CN_FONT
-    )
-    if fig_missing_ratio:
-        figs.append(fig_missing_ratio)
-        plt.close(fig_missing_ratio)
 
     ploter.figs.extend(figs)
 
