@@ -1,10 +1,11 @@
-from ..visualize_tools.utils import ChartApp, PlotLib
+from ...visualize_tools.utils import ChartApp, PlotLib
 import matplotlib.pyplot as plt
 import numpy as np
 import os
 import matplotlib.gridspec as gridspec  
 
-from ..data_processer.data_processer_V0 import UNPACK, DataManager
+from ...data_processer.data_processer_V0 import UNPACK, DataManager
+from ...data_processer.calculate_algorithm import isVIV
 from matplotlib.font_manager import FontProperties
 import matplotlib.ticker as mticker
 
@@ -535,7 +536,6 @@ def RMS_Statistics_Histogram():
             return 0
         return np.sqrt(np.mean(np.square(signal_data)))
 
-    from ..data_processer.calculate_algorithm import isVIV
     # ------------------- 单样本VIV识别函数 -------------------
     def is_viv_single_sample(sample_data, fs, **kwargs):
         """

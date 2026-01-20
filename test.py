@@ -7,11 +7,11 @@
 # from src.figs.fig7_mecc_result import run_pareto_verification_and_plot as fig7_2
 # from src.figs.fig7_ecc_result import run_ecc_param_search_and_plot as fig7_1
 # from src.figs.fig5_timeseries_vib_display import Fig5
-from src.figs.fig2_rms_distribution import RMS_Statistics_Histogram as fig2
+from src.figs.figs_for_thesis.fig2_2_time_series_rms import RMS_Statistics_Histogram as fig2_2
 
 
 if __name__ == "__main__":
-    fig2()
+    fig2_2()
 
 
 
