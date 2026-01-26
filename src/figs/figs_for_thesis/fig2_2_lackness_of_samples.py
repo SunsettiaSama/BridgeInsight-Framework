@@ -61,18 +61,18 @@ def process_single_file(file_path, window_size):
 def plot_missing_ratio_double_stacked_subplots(sequence_lengths, expected_length, font_size, ENG_FONT, CN_FONT):
     """
     绘制缺失比例双堆叠子图：
-    左子图：缺失严重样本 (缺失比例 0 ~ 5%分位值)，展示长尾分布
-    右子图：基本完整样本 (缺失比例 5%分位值 ~ 100%)，展示密集分布
+    左子图：缺失严重样本 (数据完整度 0 ~ 95%)，展示其分布
+    右子图：基本完整样本 (数据完整度 95% ~ 100%)，展示其密集分布
     """
     if len(sequence_lengths) == 0:
         return None
     
     missing_ratios = np.array(sequence_lengths) / expected_length
     
-    ratio_min = np.min(missing_ratios)
-    # 核心界限：数值最小的5%样本（即缺失最严重的）
-    ratio_boundary = np.percentile(missing_ratios, 5)
-    ratio_max = np.max(missing_ratios)
+    # 设定显示与划分界限
+    ratio_min_data = 0.0
+    ratio_boundary = 0.95
+    ratio_max_data = 1.0
     
     # 分离数据：左闭右开逻辑，确保完整样本在边界处被归类到右侧
     ratios_left = missing_ratios[missing_ratios < ratio_boundary]
@@ -86,29 +86,29 @@ def plot_missing_ratio_double_stacked_subplots(sequence_lengths, expected_length
     
     interval_nums = 50
     
-    # -------------------------- 左子图 (严重缺失部分，0-5%分位数) --------------------------
-    bins_left = np.linspace(ratio_min, ratio_boundary, interval_nums + 1)
-    # 计算对称余量
-    margin_left = (ratio_boundary - ratio_min) / 80
-    x_start_1 = 0.0 # 暂时改为硬编码
-    x_end_1 = 0.95 + margin_left
+    # -------------------------- 左子图 (严重缺失部分，0-95%) --------------------------
+    bins_left = np.linspace(ratio_min_data, ratio_boundary, interval_nums + 1)
+    # 计算步长，向外扩展一个区间
+    step_left = (ratio_boundary - ratio_min_data) / interval_nums
+    x_start_1 = ratio_min_data - step_left
+    x_end_1 = ratio_boundary + step_left
     
     ax1.hist(ratios_left, bins=bins_left, color=ABOVE_THRESHOLD_COLOR, 
-             edgecolor=ABOVE_THRESHOLD_COLOR, linewidth=0.5, alpha=1.0, label='严重缺失样本')
+             edgecolor=ABOVE_THRESHOLD_COLOR, linewidth=0.5, alpha=1.0, label='缺失样本 (0-95%)')
     
     ax1.set_ylabel('样本数量', fontproperties=CN_FONT)
     ax1.set_xlim(x_start_1, x_end_1)
     
     auto_xticks_1 = ax1.get_xticks()
-    valid_auto_1 = auto_xticks_1[(auto_xticks_1 > ratio_min) & (auto_xticks_1 < ratio_boundary)]
+    valid_auto_1 = auto_xticks_1[(auto_xticks_1 > ratio_min_data) & (auto_xticks_1 < ratio_boundary)]
     if len(auto_xticks_1) >= 2:
         default_interval_1 = np.mean(np.diff(auto_xticks_1))
-        if len(valid_auto_1) > 0 and (valid_auto_1[0] - ratio_min) < 0.8 * default_interval_1:
+        if len(valid_auto_1) > 0 and (valid_auto_1[0] - ratio_min_data) < 0.8 * default_interval_1:
             valid_auto_1 = valid_auto_1[1:]
         if len(valid_auto_1) > 0 and (ratio_boundary - valid_auto_1[-1]) < 0.8 * default_interval_1:
             valid_auto_1 = valid_auto_1[:-1]
             
-    new_xticks_1 = np.unique(np.concatenate([[ratio_min], valid_auto_1, [ratio_boundary]]))
+    new_xticks_1 = np.unique(np.concatenate([[ratio_min_data], valid_auto_1, [ratio_boundary]]))
     new_xticks_1 = np.sort(new_xticks_1)
     ax1.set_xticks(new_xticks_1)
     ax1.set_xticklabels([f'{x*100:.1f}%' for x in new_xticks_1], fontproperties=ENG_FONT, rotation=45)
@@ -119,28 +119,29 @@ def plot_missing_ratio_double_stacked_subplots(sequence_lengths, expected_length
     ax1.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
     ax1.set_axisbelow(True)
     
-    # -------------------------- 右子图 (基本完整部分，5-100%分位数) --------------------------
-    bins_right = np.linspace(ratio_boundary, ratio_max, interval_nums // 2 + 1)
-    margin_right = (ratio_max - ratio_boundary) / 80
-    x_start_2 = 0.95 - margin_right
-    x_end_2 = 1.0 + margin_right
+    # -------------------------- 右子图 (基本完整部分，95-100%) --------------------------
+    bins_right = np.linspace(ratio_boundary, ratio_max_data, interval_nums // 2 + 1)
+    # 计算步长，向外扩展一个区间
+    step_right = (ratio_max_data - ratio_boundary) / (interval_nums // 2)
+    x_start_2 = ratio_boundary - step_right
+    x_end_2 = ratio_max_data + step_right
     
     ax2.hist(ratios_right, bins=bins_right, color=BELOW_THRESHOLD_COLOR, 
-             edgecolor=BELOW_THRESHOLD_COLOR, linewidth=0.5, alpha=1.0, label='正常样本')
+             edgecolor=BELOW_THRESHOLD_COLOR, linewidth=0.5, alpha=1.0, label='正常样本 (95-100%)')
     
     ax2.set_xlim(x_start_2, x_end_2)
     ax2.set_ylabel('样本数量', fontproperties=CN_FONT)
     
     auto_xticks_2 = ax2.get_xticks()
-    valid_auto_2 = auto_xticks_2[(auto_xticks_2 > ratio_boundary) & (auto_xticks_2 < ratio_max)]
+    valid_auto_2 = auto_xticks_2[(auto_xticks_2 > ratio_boundary) & (auto_xticks_2 < ratio_max_data)]
     if len(auto_xticks_2) >= 2:
         default_interval_2 = np.mean(np.diff(auto_xticks_2))
         if len(valid_auto_2) > 0 and (valid_auto_2[0] - ratio_boundary) < 0.8 * default_interval_2:
             valid_auto_2 = valid_auto_2[1:]
-        if len(valid_auto_2) > 0 and (ratio_max - valid_auto_2[-1]) < 0.8 * default_interval_2:
+        if len(valid_auto_2) > 0 and (ratio_max_data - valid_auto_2[-1]) < 0.8 * default_interval_2:
             valid_auto_2 = valid_auto_2[:-1]
             
-    new_xticks_2 = np.unique(np.concatenate([[ratio_boundary], valid_auto_2, [ratio_max]]))
+    new_xticks_2 = np.unique(np.concatenate([[ratio_boundary], valid_auto_2, [ratio_max_data]]))
     new_xticks_2 = np.sort(new_xticks_2)
     ax2.set_xticks(new_xticks_2)
     ax2.set_xticklabels([f'{x*100:.1f}%' for x in new_xticks_2], fontproperties=ENG_FONT, rotation=45)
@@ -151,7 +152,7 @@ def plot_missing_ratio_double_stacked_subplots(sequence_lengths, expected_length
     ax2.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
     ax2.set_axisbelow(True)
     
-    fig.text(0.5, 0.02, '缺失比例（实际长度/期望长度）', ha='center', fontproperties=CN_FONT)
+    fig.text(0.5, 0.02, '完整比例', ha='center', fontproperties=CN_FONT)
     
     plt.tight_layout(rect=[0, 0.05, 1, 1])
     return fig
