@@ -7,7 +7,7 @@ from matplotlib.colors import ListedColormap
 import matplotlib.ticker as ticker
 
 # 导入项目内部模块 (改为绝对导入以支持直接运行)
-from src.data_processer.data_processer_V0 import DataManager
+from src.data_processer.io_unpacker import DataManager
 from src.visualize_tools.utils import PlotLib
 from src.utils import UNPACK
 # 导入统一配置
@@ -18,8 +18,9 @@ from .config import (
     LABEL_FONT_SIZE,
     FIG_SIZE,
     NFFT,
-    WAVEFORM_COLOR
+    DEFAULT_COLOR, 
 )
+
 
 # --- 时间切分区间配置 ---
 # 定义要分析的分钟范围 (起始分钟, 结束分钟)，左闭右开
@@ -69,7 +70,7 @@ def plot_time_domain_waveform(data, fs=50.0):
     ax.plot(
         time_axis, 
         final_data, 
-        color=WAVEFORM_COLOR,  # 使用配置中的深灰色
+        color=DEFAULT_COLOR,  # 使用配置中的深灰色
         linewidth=1.0
     )
     
