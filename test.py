@@ -13,16 +13,17 @@ from src.figs.figs_for_thesis.fig2_3_vibration_sample import Vibration_Below_Thr
 from src.figs.figs_for_thesis.fig2_4_time_series_rms import RMS_Statistics_Histogram as fig2_4
 from src.figs.figs_for_thesis.fig2_5_rms_calendar import plot_vibration_calendar_results as fig2_5
 
-from src.data_processer.statistics.rms_statistics import main as get_rms_statistics_json
+# 测试振动路径工作流
+from src.data_processer.statistics.vibration_io_process.step0_get_vib_data import get_all_vibration_files as step0
+# from src.data_processer.statistics.vibration_io_process.step1_sensor_filter import get_rms_statistics_json as step1
+
+from src.data_processer.statistics.vibration_io_process.workflow import run_vibration_data_workflow as workflow
+from src.data_processer.statistics.vibration_io_process.step1_lackness_filter import run_lackness_filter as step1
 
 if __name__ == "__main__":
-    # fig2_3()
-    fig2_2()
-    
-    # get_rms_statistics_json()
-    # fig2_5()
+    metadatas = workflow()
 
-
+    pass
 
 # run_ecc_param_search_and_plot()
 

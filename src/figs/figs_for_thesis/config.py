@@ -51,44 +51,7 @@ VIV_ALPHA = 0.6
 N_BINS = 100
 
 
-# 硬编码参数
-FS = 50  # 振动信号采样频率
-TIME_WINDOW = 60.0   # 计算RMS的时间窗口（秒）
-NFFT = 512
-# RMS_TRHESHOLD = 0.16 # RMS阈值已改为动态计算（95%分位值）
-
-# 传感器列表
-TARGET_VIBRATION_SENSORS = [
-    'ST-VIC-C34-101-02',
-    'ST-VIC-C34-101-01',
-
-    'ST-VIC-C34-102-01',
-    'ST-VIC-C34-102-02',
-
-    'ST-VIC-C18-101-01',
-    'ST-VIC-C18-101-02',
-
-    'ST-VIC-C18-102-01',
-    'ST-VIC-C18-102-02',
-
-    'ST-VIC-C34-201-01',
-    'ST-VIC-C34-201-02',
-
-    'ST-VIC-C34-202-01',
-    'ST-VIC-C34-202-02',
-
-    'ST-VIC-C34-301-01',
-    'ST-VIC-C34-301-02',
-
-    'ST-VIC-C34-302-01',
-    'ST-VIC-C34-302-02',
-
-    'ST-VIC-C18-301-01',
-    'ST-VIC-C18-301-02',
-
-    'ST-VIC-C18-302-01',
-    'ST-VIC-C18-302-02'
-]
+from ...config.data_processer.statistics.vibration_io_process.config import *
 
 
 # 颜色配置（根据阈值区分）
