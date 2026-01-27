@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.signal import welch
 import os
 from collections import deque
 from pathlib import Path
@@ -620,4 +619,74 @@ class DataManager():
         return wind_velocities, wind_directions, wind_angles
     
     
+
+def parse_path_str(path_str: str) -> dict:
+    """
+    单个路径字符串解析器
+    解析如: F:\Research\Vibration Characteristics In Cable Vibration\data\2024September\SuTong\VIC\09\11\ST-VIC-C18-102-01_130000.VIC
+    """
+    try:
+        path_obj = Path(path_str)
+        parts = path_obj.parts
+        
+        # 获取文件名部分
+        filename = parts[-1]
+        if '_' not in filename:
+            return {}
+            
+        # 分离传感器ID和时间部分
+        # ST-VIC-C18-102-01_130000.VIC -> ST-VIC-C18-102-01, 130000.VIC
+        sensor_id, time_with_ext = filename.split('_')
+        time_val = time_with_ext.split('.')[0]
+        
+        # 拆分时间为时、分、秒
+        hour, minute, second = None, None, None
+        if len(time_val) == 6:
+            hour = time_val[0:2]
+            minute = time_val[2:4]
+            second = time_val[4:6]
+            
+        return {
+            "data_type": parts[-4],
+            "month": parts[-3],
+            "day": parts[-2],
+            "sensor_id": sensor_id,
+            "hour": hour,
+            "minute": minute,
+            "second": second,
+            "raw_time": time_val
+        }
+    except Exception:
+        return {}
+
+def parse_path_metadata(data):
+    """
+    针对字典或列表的路径元数据解析
+    2.2.1 字典解析：在原有元数据基础上新增时间、数据类型、传感器id等
+    2.2.2 列表解析：元素为字符串时，统一转化成对齐字典解析过程的结构
+    """
+    if isinstance(data, list):
+        # 如果是字符串列表
+        if all(isinstance(x, str) for x in data):
+            result = []
+            for path in data:
+                meta = parse_path_str(path)
+                if meta:
+                    meta["path"] = path
+                    result.append(meta)
+            return result
+        # 如果是字典列表 (对齐之前提到过的结果文件)
+        elif all(isinstance(x, dict) and 'path' in x for x in data):
+            for item in data:
+                meta = parse_path_str(item['path'])
+                item.update(meta)
+            return data
+            
+    elif isinstance(data, dict) and 'path' in data:
+        # 单个字典解析
+        meta = parse_path_str(data['path'])
+        data.update(meta)
+        return data
+        
+    return data
 

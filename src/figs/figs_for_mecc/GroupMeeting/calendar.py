@@ -297,12 +297,12 @@ def analyze_daily_viv_from_parquet(
 def build_calculate_chunk():
     
     # 进行简单数据处理
-    # from src.data_processer.data_Processor import *
-    # from src.data_processer.raw_Processor import *
-    # from src.data_processer.calculate_algorithm import *
+    # from src.data_processer.persistence_utils import *
+    # from src.data_processer.pipeline_orchestrator import *
+    # from src.data_processer.algorithms import *
 
     from src.config import sensor_config
-    from src.data_processer.chunk_manager import ChunkManager
+    from src.data_processer.database_manager import ChunkManager
 
     manager = ChunkManager(local_dir = r'F:\Research\Vibration Characteristics In Cable Vibration\data\202409db')
 

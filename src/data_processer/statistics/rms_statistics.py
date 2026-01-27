@@ -6,8 +6,16 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 import sys
 
+# 添加项目根目录到 sys.path 以支持 src.xxx 形式的导入
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from src.data_processer.io_unpacker import parse_path_metadata
+
 # 1. 常量硬编码
 JSON_SAVE_PATH = r'F:\Research\Vibration Characteristics In Cable Vibration\results\statistics\rms_statistics.json'
+JSON_EXTREME_PATH = r'F:\Research\Vibration Characteristics In Cable Vibration\results\statistics\rms_statistics_extreme.json'
 ALL_VIBRATION_ROOT = r"F:\Research\Vibration Characteristics In Cable Vibration\data\2024September\SuTong\VIC"
 FS = 50
 TIME_WINDOW = 60.0
@@ -27,6 +35,14 @@ TARGET_SENSORS = [
 def load_rms_metadata(json_path=JSON_SAVE_PATH):
     """
     封装函数：从 JSON 中读取结果文件并返回为元数据列表
+    
+    参数:
+        json_path: JSON 文件路径
+            - 默认为 JSON_SAVE_PATH (P95 结果, Top 5%)
+            - 可传入 JSON_EXTREME_PATH (极端结果, Top 0.25%)
+    
+    返回:
+        元数据列表，每个元素包含 path, indices 等字段
     """
     if not os.path.exists(json_path):
         print(f"错误：文件 {json_path} 不存在。")
@@ -83,29 +99,33 @@ def print_statistics(total_files, file_rms_results, all_rms, threshold_p95, fina
     samples_extreme = np.sum(all_rms >= final_threshold)
     
     # 文件级统计
+    files_with_p95 = 0
     files_with_extreme = 0
     files_all_below_p95 = 0
     for fp, rms_info in file_rms_results.items():
         rmss = [item[1] for item in rms_info]
+        if any(r >= threshold_p95 for r in rmss):
+            files_with_p95 += 1
         if any(r >= final_threshold for r in rmss):
             files_with_extreme += 1
         if all(r < threshold_p95 for r in rmss):
             files_all_below_p95 += 1
 
-    print("\n" + "="*60)
-    print("                RMS 统计详细报告")
-    print("="*60)
+    print("\n" + "="*70)
+    print("                    RMS 统计详细报告")
+    print("="*70)
     print(f"1. 阈值参数：")
-    print(f"   - 一级阈值 (P95): {threshold_p95:.6f} m/s²")
-    print(f"   - 二级阈值 (极端振动): {final_threshold:.6f} m/s²")
+    print(f"   - P95 阈值 (高振动): {threshold_p95:.6f} m/s²  [保存至主文件]")
+    print(f"   - 极端阈值 (Top 0.25%): {final_threshold:.6f} m/s²  [另存至极端文件]")
     print(f"\n2. 样本统计 (总计: {total_samples} 个窗口):")
-    print(f"   - 高于一级阈值样本: {samples_above_p95} ({samples_above_p95/total_samples*100:.2f}%)")
-    print(f"   - 低于一级阈值样本: {samples_below_p95} ({samples_below_p95/total_samples*100:.2f}%)")
-    print(f"   - 极端振动样本 (Top 0.25%): {samples_extreme}")
+    print(f"   - P95 以上样本 (Top 5%): {samples_above_p95} ({samples_above_p95/total_samples*100:.2f}%)")
+    print(f"   - P95 以下样本: {samples_below_p95} ({samples_below_p95/total_samples*100:.2f}%)")
+    print(f"   - 极端振动样本 (Top 0.25%): {samples_extreme} ({samples_extreme/total_samples*100:.4f}%)")
     print(f"\n3. 文件统计 (总计: {total_files} 个文件):")
+    print(f"   - 包含 P95 以上振动的文件: {files_with_p95}")
     print(f"   - 包含极端振动的文件: {files_with_extreme}")
     print(f"   - 所有窗口均低于 P95 的文件: {files_all_below_p95}")
-    print("="*60 + "\n")
+    print("="*70 + "\n")
 
 def main():
     window_size = int(TIME_WINDOW * FS)
@@ -136,17 +156,38 @@ def main():
     # 打印详细统计
     print_statistics(len(vibration_files), file_rms_results, all_rms_list, threshold_p95, final_threshold)
 
-    # 构建并保存元数据
-    metadata = []
+    # 1. 构建并保存 P95 元数据（top 5%，主文件）
+    metadata_p95 = []
     for fp, rms_info in file_rms_results.items():
-        indices = [int(idx) for idx, rms in rms_info if rms >= final_threshold]
-        if indices: metadata.append({"path": fp, "indices": indices})
+        indices = [int(idx) for idx, rms in rms_info if rms >= threshold_p95]
+        if indices: 
+            metadata_p95.append({"path": fp, "indices": indices})
+    
+    # 完善元数据逻辑：嵌入 parse_path_metadata
+    metadata_p95 = parse_path_metadata(metadata_p95)
     
     os.makedirs(os.path.dirname(JSON_SAVE_PATH), exist_ok=True)
     with open(JSON_SAVE_PATH, 'w', encoding='utf-8') as f:
-        json.dump(metadata, f, indent=4, ensure_ascii=False)
+        json.dump(metadata_p95, f, indent=4, ensure_ascii=False)
     
-    print(f"元数据已保存至：{JSON_SAVE_PATH}")
+    print(f"✓ P95 元数据（Top 5%）已保存至：{JSON_SAVE_PATH}")
+    print(f"  - 包含 {len(metadata_p95)} 个文件的高振动事件")
+    
+    # 2. 构建并保存极端振动元数据（top 0.25%，另存文件）
+    metadata_extreme = []
+    for fp, rms_info in file_rms_results.items():
+        indices = [int(idx) for idx, rms in rms_info if rms >= final_threshold]
+        if indices:
+            metadata_extreme.append({"path": fp, "indices": indices})
+    
+    # 完善元数据逻辑：嵌入 parse_path_metadata
+    metadata_extreme = parse_path_metadata(metadata_extreme)
+    
+    with open(JSON_EXTREME_PATH, 'w', encoding='utf-8') as f:
+        json.dump(metadata_extreme, f, indent=4, ensure_ascii=False)
+    
+    print(f"✓ 极端振动元数据（Top 0.25%）已保存至：{JSON_EXTREME_PATH}")
+    print(f"  - 包含 {len(metadata_extreme)} 个文件的极端振动事件\n")
 
 if __name__ == "__main__":
     main()

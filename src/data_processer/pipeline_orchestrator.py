@@ -14,7 +14,7 @@ import json
 import gc
 
 
-from .data_Processor import save_dataframe_to_parquet
+from .persistence_utils import save_dataframe_to_parquet
 
 
 class TimeSeriesDataSegmenter:

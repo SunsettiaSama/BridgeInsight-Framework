@@ -61,9 +61,11 @@ NFFT = 512
 BELOW_THRESHOLD_COLOR = '#8074C8'  # 小于标准差阈值的颜色
 ABOVE_THRESHOLD_COLOR = '#7895C1'  # 大于标准差阈值的颜色
 DEFAULT_COLOR = '#8074C8'
+ANNOTATION_COLOR = '#404040'
+
 
 #　配色ＣＭＡＰ
-def get_color_map(style='discrete'):
+def get_full_color_map(style='discrete'):
     """
     获取图中树状图的配色映射
     :param style: 色图模式，可选 'discrete'（离散色图）或 'gradient'（渐变插值色图）
@@ -96,29 +98,96 @@ def get_color_map(style='discrete'):
     
     return cmap
 
+def get_blue_color_map(style='discrete'):
+    """
+    获取蓝色系配色映射（对应原图中 Bsal/M36 family 1-5）
+    :param style: 色图模式，可选 'discrete'（离散色图）或 'gradient'（渐变插值色图）
+    :return: matplotlib.colors.Colormap 对象
+    """
+    # 按“浅→深”顺序排列（数值低→浅，数值高→深）
+    blue_hex = [
+        '#F2FAFC',  # Bsal/M36 family 5 (最浅)
+        '#D6EFF4',  # Bsal/M36 family 4
+        '#A8CBDF',  # Bsal/M36 family 3
+        '#7895C1',  # Bsal/M36 family 2
+        '#8074C8'   # Bsal/M36 family 1 (最深)
+    ]
+    
+    if style == 'discrete':
+        cmap = ListedColormap(blue_hex, name='blue_family_cmap')
+    elif style == 'gradient':
+        cmap = LinearSegmentedColormap.from_list('blue_family_gradient', blue_hex, N=256)
+    else:
+        raise ValueError("style 参数仅支持 'discrete' 或 'gradient'")
+    
+    return cmap
+
+def get_red_color_map(style='discrete'):
+    """
+    获取红色系配色映射（对应原图中剩余的所有类别）
+    :param style: 色图模式，可选 'discrete'（离散色图）或 'gradient'（渐变插值色图）
+    :return: matplotlib.colors.Colormap 对象
+    """
+    # 按“浅→深”顺序排列（数值低→浅，数值高→深）
+    red_hex = [
+        '#F7FBC9',  # Bsal/M36 family 6 (最浅)
+        '#F5EBAE',  # Singleton outliers
+        '#F0C284',  # Eh/M36 family
+        '#EF8B67',  # Bsal, Bd, Eh and Hp M36 family
+        '#E3625D',  # Bsal and Bd M36 family
+        '#B54764',  # Bsal/M36 family (dark red)
+        '#992224'   # Bsal/M36 family (darkest red) (最深)
+    ]
+    
+    if style == 'discrete':
+        cmap = ListedColormap(red_hex, name='red_family_cmap')
+    elif style == 'gradient':
+        cmap = LinearSegmentedColormap.from_list('red_family_gradient', red_hex, N=256)
+    else:
+        raise ValueError("style 参数仅支持 'discrete' 或 'gradient'")
+    
+    return cmap
+
 
 # ------------------------------
 # 测试代码（可选）
 # ------------------------------
 if __name__ == "__main__":
-    # 获取两种模式的色图
-    cmap_discrete = get_color_map(style='discrete')
-    cmap_gradient = get_color_map(style='gradient')
+    # 获取两种色系的色图
+    cmap_blue_discrete = get_blue_color_map(style='discrete')
+    cmap_blue_gradient = get_blue_color_map(style='gradient')
+    cmap_red_discrete = get_red_color_map(style='discrete')
+    cmap_red_gradient = get_red_color_map(style='gradient')
     
     # 可视化色图效果
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 3))
+    fig, axes = plt.subplots(2, 2, figsize=(14, 6))
     
-    # 离散色图展示
-    ax1.imshow([range(12)], cmap=cmap_discrete, aspect='auto')
-    ax1.set_title("Discrete Color Map (12 Categories)")
-    ax1.set_xticks(range(12))
-    ax1.set_xticklabels([f'Cat {i+1}' for i in range(12)], rotation=45, ha='right')
-    ax1.set_yticks([])
+    # 蓝色系离散色图
+    axes[0,0].imshow([range(5)], cmap=cmap_blue_discrete, aspect='auto')
+    axes[0,0].set_title("Blue Family - Discrete (5 Categories)")
+    axes[0,0].set_xticks(range(5))
+    axes[0,0].set_xticklabels([f'Cat {i+1}' for i in range(5)], rotation=45, ha='right')
+    axes[0,0].set_yticks([])
     
-    # 渐变色图展示
-    ax2.imshow([range(256)], cmap=cmap_gradient, aspect='auto')
-    ax2.set_title("Gradient Color Map (256 Interpolated Colors)")
-    ax2.set_yticks([])
+    # 蓝色系渐变色图
+    axes[0,1].imshow([range(256)], cmap=cmap_blue_gradient, aspect='auto')
+    axes[0,1].set_title("Blue Family - Gradient (256 Colors)")
+    axes[0,1].set_yticks([])
+    
+    # 红色系离散色图
+    axes[1,0].imshow([range(7)], cmap=cmap_red_discrete, aspect='auto')
+    axes[1,0].set_title("Red Family - Discrete (7 Categories)")
+    axes[1,0].set_xticks(range(7))
+    axes[1,0].set_xticklabels([f'Cat {i+1}' for i in range(7)], rotation=45, ha='right')
+    axes[1,0].set_yticks([])
+    
+    # 红色系渐变色图
+    axes[1,1].imshow([range(256)], cmap=cmap_red_gradient, aspect='auto')
+    axes[1,1].set_title("Red Family - Gradient (256 Colors)")
+    axes[1,1].set_yticks([])
     
     plt.tight_layout()
     plt.show()
+
+
+
