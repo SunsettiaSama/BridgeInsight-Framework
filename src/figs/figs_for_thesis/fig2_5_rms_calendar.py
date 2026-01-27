@@ -32,18 +32,19 @@ except ImportError:
     print("警告：无法导入配置，使用默认设置。")
 
 # 常量定义
-JSON_PATH = r'F:\Research\Vibration Characteristics In Cable Vibration\results\statistics\rms_statistics.json'
+RMS_95_PATH = r'F:\Research\Vibration Characteristics In Cable Vibration\results\statistics\rms_statistics.json'
+RMS_EXTREME_PATH = r'F:\Research\Vibration Characteristics In Cable Vibration\results\statistics\rms_statistics_extreme.json'
 
 
-def load_rms_daily_counts(month_str="09"):
+def load_rms_daily_counts(json_path, month_str="09"):
     """
     读取统计结果并汇总每日发生频次
     """
-    if not os.path.exists(JSON_PATH):
-        print(f"错误：未找到统计结果文件 {JSON_PATH}")
+    if not os.path.exists(json_path):
+        print(f"错误：未找到统计结果文件 {json_path}")
         return {}
 
-    with open(JSON_PATH, 'r', encoding='utf-8') as f:
+    with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
     # 统计逻辑：遍历所有条目，对符合月份的日期，累加 indices 长度
@@ -57,18 +58,10 @@ def load_rms_daily_counts(month_str="09"):
             
     return daily_counts
 
-def plot_daily_occurrence_calendar():
+def _plot_calendar_core(daily_counts):
     """
-    绘制发生频次颜色日历并嵌入 PlotLib GUI
+    核心绘图逻辑：根据每日频次生成日历 Figure
     """
-    ploter = PlotLib()
-    
-    # 统计 9 月份数据
-    daily_counts = load_rms_daily_counts(month_str="09")
-    if not daily_counts:
-        print("未发现 2024 年 9 月的统计数据。")
-        return
-
     # 获取颜色映射 (从 config.py)
     cmap = get_blue_color_map(style='gradient')
     
@@ -94,7 +87,6 @@ def plot_daily_occurrence_calendar():
         cal_matrix.append([0]*7)
     
     # 绘制日历热力块 + 日期 + 频次标注
-    default_color = "#f0f0f0"
     grid_color = "#dddddd"
     text_color = "#333333"
     
@@ -106,9 +98,8 @@ def plot_daily_occurrence_calendar():
             # 获取当日频次
             count = daily_counts.get(day, 0) if day != 0 else 0
             
-            # 确定颜色（包括0值也映射到色系中）
+            # 确定颜色
             if day != 0:
-                # 线性映射，0值对应色系最浅色
                 color = cmap(norm(count))
             else:
                 color = "#ffffff"
@@ -132,18 +123,18 @@ def plot_daily_occurrence_calendar():
                     fontsize=FONT_SIZE
                 )
                 
-                # 绘制频次标注（右下角，缩小字号，去掉"次"字，加粗）
-                if count > 0:
+                # 绘制频次标注
+                if count >= 0:
                     ax.text(
-                        x + 0.45, y + 0.45, " " * 4 + r"$(\times$" + f"{count}" + r"$)$",  # 使用空格占位符偏右
+                        x + 0.45, y + 0.45, " " * 4 + r"$(\times$" + f"{count}" + r"$)$",
                         ha="right", va="bottom",
                         color=ANNOTATION_COLOR,
                         fontproperties=ENG_FONT,
-                        fontsize=FONT_SIZE - 2,  # 缩小一号
-                        weight='bold'  # 加粗
+                        fontsize=FONT_SIZE - 2,
+                        weight='bold'
                     )
     
-    # 绘制星期标签（去掉底色，加粗）
+    # 绘制星期标签
     weekday_labels = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
     label_y = 6.3
     for idx, label in enumerate(weekday_labels):
@@ -162,28 +153,76 @@ def plot_daily_occurrence_calendar():
     ax.invert_yaxis()
     ax.axis("off")
     
-    # 添加连续颜色条（右侧）
-    # 在主轴右侧创建颜色条轴
+    # 添加连续颜色条
     from mpl_toolkits.axes_grid1 import make_axes_locatable
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="3%", pad=0.5)
     
-    # 绘制颜色条（线性刻度）
     cb = ColorbarBase(cax, cmap=cmap, norm=norm, orientation='vertical')
     cb.set_label('频次', fontproperties=CN_FONT, fontsize=FONT_SIZE)
     
-    # 设置颜色条刻度标签字体
     for label in cax.get_yticklabels():
         label.set_fontproperties(ENG_FONT)
         label.set_fontsize(FONT_SIZE - 2)
     
     plt.tight_layout()
-    
-    # 嵌入到 ploter 并关闭原始窗口（由 GUI 统一接管）
-    ploter.figs.append(fig)
-    plt.close(fig)
-    
-    ploter.show()
+    return fig
 
-if __name__ == "__main__":
-    plot_daily_occurrence_calendar()
+def plot_rms_95_calendar(ploter=None):
+    """
+    绘制 95% 振动发生频次日历
+    """
+    daily_counts = load_rms_daily_counts(RMS_95_PATH, month_str="09")
+    if not daily_counts:
+        print("未发现 95% 振动统计数据。")
+        return None
+    
+    fig = _plot_calendar_core(daily_counts)
+    if ploter:
+        ploter.figs.append(fig)
+        plt.close(fig)
+    return fig
+
+def plot_rms_extreme_calendar(ploter=None):
+    """
+    绘制 Top 0.25% 极端振动发生频次日历
+    """
+    daily_counts = load_rms_daily_counts(RMS_EXTREME_PATH, month_str="09")
+    if not daily_counts:
+        print("未发现 Top 0.25% 极端振动统计数据。")
+        return None
+    
+    fig = _plot_calendar_core(daily_counts)
+    if ploter:
+        ploter.figs.append(fig)
+        plt.close(fig)
+    return fig
+
+def plot_vibration_calendar_results(ploter = None):
+    """
+    主接口：绘制 95% 振动和 Top 0.25% 极端振动的日历图，并整合到 ploter 对象中
+    
+    参数:
+        ploter: PlotLib 实例。如果为 None，则内部创建一个新的。
+    返回:
+        figs: 包含生成的所有 Figure 对象的列表
+    """
+    if ploter is None:
+        ploter = PlotLib()
+        
+    figs = []
+    
+    # 1. 绘制 95% 振动日历
+    fig_95 = plot_rms_95_calendar(ploter)
+    if fig_95:
+        figs.append(fig_95)
+        
+    # 2. 绘制 Top 0.25% 极端振动日历
+    fig_extreme = plot_rms_extreme_calendar(ploter)
+    if fig_extreme:
+        figs.append(fig_extreme)
+    
+    ploter.figs.extend(figs)
+    ploter.show()
+    return figs
+

@@ -57,6 +57,40 @@ TIME_WINDOW = 60.0   # 计算RMS的时间窗口（秒）
 NFFT = 512
 # RMS_TRHESHOLD = 0.16 # RMS阈值已改为动态计算（95%分位值）
 
+# 传感器列表
+TARGET_VIBRATION_SENSORS = [
+    'ST-VIC-C34-101-02',
+    'ST-VIC-C34-101-01',
+
+    'ST-VIC-C34-102-01',
+    'ST-VIC-C34-102-02',
+
+    'ST-VIC-C18-101-01',
+    'ST-VIC-C18-101-02',
+
+    'ST-VIC-C18-102-01',
+    'ST-VIC-C18-102-02',
+
+    'ST-VIC-C34-201-01',
+    'ST-VIC-C34-201-02',
+
+    'ST-VIC-C34-202-01',
+    'ST-VIC-C34-202-02',
+
+    'ST-VIC-C34-301-01',
+    'ST-VIC-C34-301-02',
+
+    'ST-VIC-C34-302-01',
+    'ST-VIC-C34-302-02',
+
+    'ST-VIC-C18-301-01',
+    'ST-VIC-C18-301-02',
+
+    'ST-VIC-C18-302-01',
+    'ST-VIC-C18-302-02'
+]
+
+
 # 颜色配置（根据阈值区分）
 BELOW_THRESHOLD_COLOR = '#8074C8'  # 小于标准差阈值的颜色
 ABOVE_THRESHOLD_COLOR = '#7895C1'  # 大于标准差阈值的颜色

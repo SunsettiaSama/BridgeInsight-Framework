@@ -14,7 +14,7 @@ from tqdm import tqdm
 from .config import (
     FONT_SIZE, ENG_FONT, CN_FONT,
     NORMAL_VIB_COLOR, NORMAL_EDGE_COLOR,
-    THRESHOLD_COLOR, N_BINS
+    THRESHOLD_COLOR, N_BINS, TARGET_VIBRATION_SENSORS
 )
 
 RESULT_SAVE_PATH =  r'F:\Research\Vibration Characteristics In Cable Vibration\results\rms_statistics.txt'
@@ -28,6 +28,7 @@ TIME_WINDOW = 60.0   # 计算RMS的时间窗口（秒）
 # 颜色配置（根据阈值区分）
 BELOW_THRESHOLD_COLOR = '#8074C8'  # 小于均方根阈值的颜色
 ABOVE_THRESHOLD_COLOR = '#7895C1'  # 大于均方根阈值的颜色
+
 
 def process_single_file(file_path, window_size):
     """单文件处理工作函数，用于多进程"""
@@ -291,39 +292,6 @@ def RMS_Statistics_Histogram():
     
     result_save_path = RESULT_SAVE_PATH
 
-    target_sensors = [
-        'ST-VIC-C34-101-02',
-        'ST-VIC-C34-101-01',
-
-        'ST-VIC-C34-102-01',
-        'ST-VIC-C34-102-02',
-
-        'ST-VIC-C18-101-01',
-        'ST-VIC-C18-101-02',
-
-        'ST-VIC-C18-102-01',
-        'ST-VIC-C18-102-02',
-
-        'ST-VIC-C34-201-01',
-        'ST-VIC-C34-201-02',
-
-        'ST-VIC-C34-202-01',
-        'ST-VIC-C34-202-02',
-
-        'ST-VIC-C34-301-01',
-        'ST-VIC-C34-301-02',
-
-        'ST-VIC-C34-302-01',
-        'ST-VIC-C34-302-02',
-
-        'ST-VIC-C18-301-01',
-        'ST-VIC-C18-301-02',
-
-        'ST-VIC-C18-302-01',
-        'ST-VIC-C18-302-02'
-
-    ]
-
     all_vibration_root = ALL_VIBRATION_ROOT
 
     ploter = PlotLib() 
@@ -345,7 +313,7 @@ def RMS_Statistics_Histogram():
 
     all_vib_files = get_all_vibration_files(
         root_dir=all_vibration_root,
-        target_sensor_ids=target_sensors
+        target_sensor_ids=TARGET_VIBRATION_SENSORS
     )
     print(f"共获取所有振动文件数量：{len(all_vib_files)}")
 

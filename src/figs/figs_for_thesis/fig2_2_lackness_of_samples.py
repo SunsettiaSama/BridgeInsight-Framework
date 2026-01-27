@@ -2,7 +2,6 @@ from ...visualize_tools.utils import ChartApp, PlotLib
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-import matplotlib.gridspec as gridspec  
 
 from ...data_processer.io_unpacker import UNPACK
 from matplotlib.font_manager import FontProperties
@@ -14,162 +13,133 @@ from tqdm import tqdm
 from .config import (
     FONT_SIZE, ENG_FONT, CN_FONT,
     BELOW_THRESHOLD_COLOR, ABOVE_THRESHOLD_COLOR,
-    THRESHOLD_COLOR, N_BINS
+    THRESHOLD_COLOR, N_BINS, TARGET_VIBRATION_SENSORS,
+    FS
 )
 
 RESULT_SAVE_PATH =  r'F:\Research\Vibration Characteristics In Cable Vibration\results\lackness_statistics.txt'
 ALL_VIBRATION_ROOT = r"F:\Research\Vibration Characteristics In Cable Vibration\data\2024September\SuTong\VIC"
 
-# 硬编码参数
-FS = 50  # 振动信号采样频率
-TIME_WINDOW = 60.0   # 时间窗口（秒）
+# 常量硬编码
+MISSING_RATE_THRESHOLD = 0.05  # 缺失率阈值
 
-def process_single_file(file_path, window_size):
-    """单文件处理工作函数，用于多进程"""
+def process_single_file(file_path):
+    """获取单个源文件的数据长度"""
     try:
         import numpy as np
         from ...data_processer.io_unpacker import UNPACK
         unpacker = UNPACK(init_path=False)
         vibration_data = unpacker.VIC_DATA_Unpack(file_path)
-        vibration_data = np.array(vibration_data)
-        
-        if len(vibration_data) == 0:
-            return [], []
-            
-        rms_list = []
-        lengths = []
-        
-        if len(vibration_data) >= window_size:
-            for i in range(0, len(vibration_data) - window_size + 1, window_size):
-                window_data = vibration_data[i:i+window_size]
-                # 计算信号的均方根RMS
-                rms_val = np.sqrt(np.mean(np.square(window_data)))
-                if rms_val > 0:
-                    rms_list.append(rms_val)
-                    lengths.append(len(window_data))
-        else:
-            rms_val = np.sqrt(np.mean(np.square(vibration_data)))
-            if rms_val > 0:
-                rms_list.append(rms_val)
-                lengths.append(len(vibration_data))
-        
-        return rms_list, lengths
-    except Exception as e:
-        return [], []
+        return len(vibration_data)
+    except Exception:
+        return 0
 
-# 绘制缺失比例双堆叠子图
-def plot_missing_ratio_double_stacked_subplots(sequence_lengths, expected_length, font_size, ENG_FONT, CN_FONT):
+# 绘制缺失比例直方图（单一线性坐标）
+def plot_missing_ratio_histogram(missing_rates, font_size, ENG_FONT, CN_FONT):
     """
-    绘制缺失比例双堆叠子图：
-    左子图：缺失严重样本 (数据完整度 0 ~ 95%)，展示其分布
-    右子图：基本完整样本 (数据完整度 95% ~ 100%)，展示其密集分布
+    绘制缺失比例直方图：
+    在一副图中展示所有样本的缺失率分布
     """
-    if len(sequence_lengths) == 0:
+    if len(missing_rates) == 0:
         return None
     
-    missing_ratios = np.array(sequence_lengths) / expected_length
+    fig, ax = plt.subplots(figsize=(12, 7))
+    valid_rates = missing_rates
     
-    # 设定显示与划分界限
-    ratio_min_data = 0.0
-    ratio_boundary = 0.95
-    ratio_max_data = 1.0
+    # 统计信息，确保绘图范围包含所有数据
+    min_rate = np.min(valid_rates)
+    max_rate = np.max(valid_rates)
     
-    # 分离数据：左闭右开逻辑，确保完整样本在边界处被归类到右侧
-    ratios_left = missing_ratios[missing_ratios < ratio_boundary]
-    ratios_right = missing_ratios[missing_ratios >= ratio_boundary]
+    # 设定直方图的范围，默认 [0, 1]，但如果数据超限则扩大
+    plot_min = min(0.0, min_rate)
+    plot_max = max(1.0, max_rate)
     
-    fig = plt.figure(figsize=(12, 6))
-    # 左侧宽度占比为2 (长尾区间)，右侧宽度占比为1 (密集区间)
-    gs = gridspec.GridSpec(1, 2, width_ratios=[2, 1])
+    # 绘制直方图
+    bins = np.linspace(plot_min, plot_max, N_BINS + 1)
+    
+    # 统计各区间
+    ax.hist(valid_rates, bins=bins, color=BELOW_THRESHOLD_COLOR, 
+             edgecolor='white', linewidth=0.5, alpha=0.8, label='样本缺失率分布')
+    
+    # 设置 Y 轴为对数坐标
+    ax.set_yscale('log')
+    
+    # 绘制阈值线
+    ax.axvline(MISSING_RATE_THRESHOLD, color=THRESHOLD_COLOR, linestyle='--', linewidth=2, 
+                label=f'阈值 ({MISSING_RATE_THRESHOLD*100:.1f}%)')
+    
+    ax.set_xlabel('缺失率', fontproperties=CN_FONT)
+    ax.set_ylabel('源文件数量', fontproperties=CN_FONT)
+    
+    # 设置 X 轴为百分比格式
+    ax.xaxis.set_major_formatter(mticker.PercentFormatter(1.0))
+    
+    # 设置字体
+    for label in ax.get_xticklabels() + ax.get_yticklabels():
+        label.set_fontproperties(ENG_FONT)
+        
+    ax.legend(prop=CN_FONT, loc='upper right')
+    ax.grid(axis='y', alpha=0.3)
+    
+    plt.tight_layout()
+    return fig
+
+def plot_missing_ratio_dual_linear_subplots(missing_rates, font_size, ENG_FONT, CN_FONT):
+    """
+    绘制缺失比例双子图：
+    左子图：缺失率 0~5% (线性坐标)
+    右子图：缺失率 5%~95% (线性坐标)
+    宽度比例 1:2，分箱密度比例 1:2
+    """
+    if len(missing_rates) == 0:
+        return None
+
+    import matplotlib.gridspec as gridspec
+    fig = plt.figure(figsize=(14, 7))
+    gs = gridspec.GridSpec(1, 2, width_ratios=[1, 2])
     ax1 = fig.add_subplot(gs[0, 0])
     ax2 = fig.add_subplot(gs[0, 1])
-    
-    interval_nums = 50
-    
-    # -------------------------- 左子图 (严重缺失部分，0-95%) --------------------------
-    bins_left = np.linspace(ratio_min_data, ratio_boundary, interval_nums + 1)
-    # 计算步长，向外扩展一个区间
-    step_left = (ratio_boundary - ratio_min_data) / interval_nums
-    x_start_1 = ratio_min_data - step_left
-    x_end_1 = ratio_boundary + step_left
-    
-    ax1.hist(ratios_left, bins=bins_left, color=ABOVE_THRESHOLD_COLOR, 
-             edgecolor=ABOVE_THRESHOLD_COLOR, linewidth=0.5, alpha=1.0, label='缺失样本 (0-95%)')
-    
-    ax1.set_ylabel('样本数量', fontproperties=CN_FONT)
-    ax1.set_xlim(x_start_1, x_end_1)
-    
-    auto_xticks_1 = ax1.get_xticks()
-    valid_auto_1 = auto_xticks_1[(auto_xticks_1 > ratio_min_data) & (auto_xticks_1 < ratio_boundary)]
-    if len(auto_xticks_1) >= 2:
-        default_interval_1 = np.mean(np.diff(auto_xticks_1))
-        if len(valid_auto_1) > 0 and (valid_auto_1[0] - ratio_min_data) < 0.8 * default_interval_1:
-            valid_auto_1 = valid_auto_1[1:]
-        if len(valid_auto_1) > 0 and (ratio_boundary - valid_auto_1[-1]) < 0.8 * default_interval_1:
-            valid_auto_1 = valid_auto_1[:-1]
-            
-    new_xticks_1 = np.unique(np.concatenate([[ratio_min_data], valid_auto_1, [ratio_boundary]]))
-    new_xticks_1 = np.sort(new_xticks_1)
-    ax1.set_xticks(new_xticks_1)
-    ax1.set_xticklabels([f'{x*100:.1f}%' for x in new_xticks_1], fontproperties=ENG_FONT, rotation=45)
-    
-    ax1.set_yticklabels([f'{int(x)}' if x.is_integer() else f'{x:.1f}' for x in ax1.get_yticks()], fontproperties=ENG_FONT)
-    ax1.legend(prop=CN_FONT, loc='upper left', frameon=True, fancybox=True, shadow=False)
-    ax1.grid(axis='y', which='major', alpha=0.5, linestyle='-', linewidth=0.5)
-    ax1.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
-    ax1.set_axisbelow(True)
-    
-    # -------------------------- 右子图 (基本完整部分，95-100%) --------------------------
-    bins_right = np.linspace(ratio_boundary, ratio_max_data, interval_nums // 2 + 1)
-    # 计算步长，向外扩展一个区间
-    step_right = (ratio_max_data - ratio_boundary) / (interval_nums // 2)
-    x_start_2 = ratio_boundary - step_right
-    x_end_2 = ratio_max_data + step_right
-    
-    ax2.hist(ratios_right, bins=bins_right, color=BELOW_THRESHOLD_COLOR, 
-             edgecolor=BELOW_THRESHOLD_COLOR, linewidth=0.5, alpha=1.0, label='正常样本 (95-100%)')
-    
-    ax2.set_xlim(x_start_2, x_end_2)
-    ax2.set_ylabel('样本数量', fontproperties=CN_FONT)
-    
-    auto_xticks_2 = ax2.get_xticks()
-    valid_auto_2 = auto_xticks_2[(auto_xticks_2 > ratio_boundary) & (auto_xticks_2 < ratio_max_data)]
-    if len(auto_xticks_2) >= 2:
-        default_interval_2 = np.mean(np.diff(auto_xticks_2))
-        if len(valid_auto_2) > 0 and (valid_auto_2[0] - ratio_boundary) < 0.8 * default_interval_2:
-            valid_auto_2 = valid_auto_2[1:]
-        if len(valid_auto_2) > 0 and (ratio_max_data - valid_auto_2[-1]) < 0.8 * default_interval_2:
-            valid_auto_2 = valid_auto_2[:-1]
-            
-    new_xticks_2 = np.unique(np.concatenate([[ratio_boundary], valid_auto_2, [ratio_max_data]]))
-    new_xticks_2 = np.sort(new_xticks_2)
-    ax2.set_xticks(new_xticks_2)
-    ax2.set_xticklabels([f'{x*100:.1f}%' for x in new_xticks_2], fontproperties=ENG_FONT, rotation=45)
-    
-    ax2.set_yticklabels([f'{int(x)}' if x.is_integer() else f'{x:.1f}' for x in ax2.get_yticks()], fontproperties=ENG_FONT)
-    ax2.legend(prop=CN_FONT, loc='upper left', frameon=True, fancybox=True, shadow=False)
-    ax2.grid(axis='y', which='major', alpha=0.5, linestyle='-', linewidth=0.5)
-    ax2.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
-    ax2.set_axisbelow(True)
-    
-    fig.text(0.5, 0.02, '完整比例', ha='center', fontproperties=CN_FONT)
-    
-    plt.tight_layout(rect=[0, 0.05, 1, 1])
+
+    boundary = MISSING_RATE_THRESHOLD # 0.05
+    left_rates = missing_rates[missing_rates <= boundary]
+    right_rates = missing_rates[missing_rates > boundary]
+
+    # 设定分箱数量
+    # 左侧范围 0.05，右侧范围 0.95 (假设到1.0)
+    # 密度 1:2 意味着右侧的分箱更密集
+    n_bins_left = 20
+    n_bins_right = 80 # 密度更高
+
+    # 左子图 (包含可能小于0的部分)
+    min_l = min(0.0, np.min(left_rates)) if len(left_rates) > 0 else 0.0
+    ax1.hist(left_rates, bins=np.linspace(min_l, boundary, n_bins_left + 1), 
+             color=BELOW_THRESHOLD_COLOR, edgecolor='white', linewidth=0.5, alpha=0.8)
+    ax1.set_title('低缺失率样本 (0-5%)', fontproperties=CN_FONT)
+    ax1.set_ylabel('源文件数量', fontproperties=CN_FONT)
+    ax1.xaxis.set_major_formatter(mticker.PercentFormatter(1.0))
+
+    # 右子图 (5 - 100%)
+    # 自动确定右侧上限
+    max_r = max(1.0, np.max(right_rates)) if len(right_rates) > 0 else 1.0
+    ax2.hist(right_rates, bins=np.linspace(boundary, max_r, n_bins_right + 1), 
+             color=ABOVE_THRESHOLD_COLOR, edgecolor='white', linewidth=0.5, alpha=0.8)
+    ax2.set_title('高缺失率样本 (5%以上)', fontproperties=CN_FONT)
+    ax2.xaxis.set_major_formatter(mticker.PercentFormatter(1.0))
+
+    # 设置字体和网格
+    for ax in [ax1, ax2]:
+        for label in ax.get_xticklabels() + ax.get_yticklabels():
+            label.set_fontproperties(ENG_FONT)
+        ax.grid(axis='y', alpha=0.3)
+        ax.set_xlabel('缺失率', fontproperties=CN_FONT)
+
+    plt.tight_layout()
     return fig
 
 def Lackness_Of_Samples_Analysis():
     # 核心参数配置
-    fs_vibration = FS
-    time_window = TIME_WINDOW
+    expected_length = int(FS * 60 * 60)  # 50Hz * 60s * 60m
     
-    target_sensors = [
-        'ST-VIC-C34-101-02', 'ST-VIC-C34-101-01', 'ST-VIC-C34-102-01', 'ST-VIC-C34-102-02',
-        'ST-VIC-C18-101-01', 'ST-VIC-C18-101-02', 'ST-VIC-C18-102-01', 'ST-VIC-C18-102-02',
-        'ST-VIC-C34-201-01', 'ST-VIC-C34-201-02', 'ST-VIC-C34-202-01', 'ST-VIC-C34-202-02',
-        'ST-VIC-C34-301-01', 'ST-VIC-C34-301-02', 'ST-VIC-C34-302-01', 'ST-VIC-C34-302-02',
-        'ST-VIC-C18-301-01', 'ST-VIC-C18-301-02', 'ST-VIC-C18-302-01', 'ST-VIC-C18-302-02'
-    ]
-
     all_vibration_root = ALL_VIBRATION_ROOT
     ploter = PlotLib() 
     figs = []
@@ -184,42 +154,82 @@ def Lackness_Of_Samples_Analysis():
                         vibration_files.append(file_path)
         return vibration_files
 
-    # 数据收集
-    sequence_lengths = []  # 收集窗口样本长度用于计算缺失比例
-    expected_length = int(FS * TIME_WINDOW)  # 50 * 60 = 3000
-    window_size = int(time_window * fs_vibration)
-
-    all_vib_files = get_all_vibration_files(root_dir=all_vibration_root, target_sensor_ids=target_sensors)
+    all_vib_files = get_all_vibration_files(root_dir=all_vibration_root, target_sensor_ids=TARGET_VIBRATION_SENSORS)
     print(f"共获取所有振动文件数量：{len(all_vib_files)}")
 
     # 使用多进程并行获取数据
-    print(f"开始并行处理文件并收集长度...")
+    actual_lengths = []
+    print(f"开始并行处理文件并获取数据长度...")
     with ProcessPoolExecutor() as executor:
-        futures = {executor.submit(process_single_file, fp, window_size): fp for fp in all_vib_files}
-        for future in tqdm(as_completed(futures), total=len(all_vib_files), desc="数据获取进度"):
+        futures = {executor.submit(process_single_file, fp): fp for fp in all_vib_files}
+        for future in tqdm(as_completed(futures), total=len(all_vib_files), desc="数据长度获取"):
             try:
-                rms_res, len_res = future.result()
-                if len_res:
-                    sequence_lengths.extend(len_res)
+                file_len = future.result()
+                # 即使长度为0也记录，作为100%缺失
+                actual_lengths.append(file_len)
             except Exception as e:
                 print(f"处理任务时出错: {e}")
+                # 出错也记录为0长度
+                actual_lengths.append(0)
 
-    if not sequence_lengths:
+    if not actual_lengths:
         print("警告：无有效样本数据")
         return
 
+    # 计算缺失率：1 - (实际长度 / 预期长度)
+    actual_lengths = np.array(actual_lengths)
+    missing_rates = 1.0 - (actual_lengths / expected_length)
+    
+    # 打印统计信息
+    total_samples = len(missing_rates)
+    high_missing_samples = np.sum(missing_rates > MISSING_RATE_THRESHOLD)
+    avg_missing_rate = np.mean(missing_rates)
+    
+    print("\n" + "="*50)
+    print("           样本缺失率统计报告")
+    print("="*50)
+    print(f"处理源文件总数: {total_samples}")
+    print(f"预期单文件长度: {expected_length} (50Hz * 60s * 60m)")
+    print(f"平均缺失率: {avg_missing_rate*100:.2f}%")
+    print(f"缺失率超过阈值 ({MISSING_RATE_THRESHOLD*100:.1f}%) 的样本数: {high_missing_samples}")
+    print(f"超过阈值样本占比: {high_missing_samples/total_samples*100:.2f}%")
+    print("="*50 + "\n")
+
     # 绘制缺失比例直方图
-    print("\n开始绘制缺失比例堆叠子图...")
-    fig_double = plot_missing_ratio_double_stacked_subplots(
-        sequence_lengths=sequence_lengths,
-        expected_length=expected_length,
+    print("开始绘制缺失率分布图...")
+    fig = plot_missing_ratio_histogram(
+        missing_rates=missing_rates,
         font_size=FONT_SIZE,
         ENG_FONT=ENG_FONT,
         CN_FONT=CN_FONT
     )
-    if fig_double:
-        figs.append(fig_double)
-        plt.close(fig_double)
+    
+    # 验证绘图完整性
+    hist_counts, _ = np.histogram(missing_rates, bins=np.linspace(min(0, np.min(missing_rates)), max(1, np.max(missing_rates)), N_BINS + 1))
+    print(f"直方图统计样本总数: {np.sum(hist_counts)} / 原始文件总数: {total_samples}")
+    
+    boundary = MISSING_RATE_THRESHOLD
+    left_rates = missing_rates[missing_rates <= boundary]
+    right_rates = missing_rates[missing_rates > boundary]
+    left_counts, _ = np.histogram(left_rates, bins=np.linspace(min(0.0, np.min(left_rates)) if len(left_rates)>0 else 0, boundary, 21))
+    right_counts, _ = np.histogram(right_rates, bins=np.linspace(boundary, max(1.0, np.max(right_rates)) if len(right_rates)>0 else 1.0, 81))
+    print(f"双子图统计样本总数: {np.sum(left_counts) + np.sum(right_counts)} / 原始文件总数: {total_samples}")
+    
+    if fig:
+        figs.append(fig)
+        plt.close(fig)
+
+    # 绘制缺失比例双子图
+    print("开始绘制缺失率双子图分布...")
+    fig_dual = plot_missing_ratio_dual_linear_subplots(
+        missing_rates=missing_rates,
+        font_size=FONT_SIZE,
+        ENG_FONT=ENG_FONT,
+        CN_FONT=CN_FONT
+    )
+    if fig_dual:
+        figs.append(fig_dual)
+        plt.close(fig_dual)
 
     ploter.figs.extend(figs)
     ploter.show()
