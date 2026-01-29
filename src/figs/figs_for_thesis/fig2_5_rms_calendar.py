@@ -1,3 +1,50 @@
+"""
+================================================================================
+文件依赖说明 (File Dependencies)
+================================================================================
+本文件依赖以下数据处理模块：
+
+1. 数据来源:
+   - RMS 95% 振动统计结果文件
+     路径: F:\Research\Vibration Characteristics In Cable Vibration\results\statistics\rms_statistics.json
+   
+   - RMS Top 0.25% 极端振动统计结果文件
+     路径: F:\Research\Vibration Characteristics In Cable Vibration\results\statistics\rms_statistics_extreme.json
+
+2. 数据生成工作流:
+   - src.data_processer.statistics.vibration_io_process.workflow
+     └─> step3_rms_statistics 生成 RMS 统计数据
+
+3. 配置文件:
+   - src.figs.figs_for_thesis.config
+     └─> 定义字体、颜色、尺寸等绘图配置
+
+================================================================================
+数据格式说明 (Data Format)
+================================================================================
+
+输入数据格式 (JSON):
+[
+    {
+        "sensor_id": "传感器ID",
+        "month": "09",
+        "day": "01",
+        "hour": "12",
+        "indices": [0, 1, 2, ...],  // 该小时内发生极端振动的窗口索引列表
+        "rms_values": [0.5, 0.6, 0.7, ...]  // 对应窗口的RMS值
+    },
+    ...
+]
+
+数据说明:
+- 每个条目表示某个传感器在某个小时内的极端振动统计
+- indices: 该小时内超过阈值的时间窗口索引列表（长度即为该小时的极端振动次数）
+- rms_values: 对应时间窗口的均方根值
+- 日历图根据每日累计的 indices 数量进行着色
+
+================================================================================
+"""
+
 import os
 import json
 import numpy as np

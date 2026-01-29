@@ -1,3 +1,33 @@
+"""
+================================================================================
+文件依赖说明 (File Dependencies)
+================================================================================
+本文件依赖以下数据处理模块：
+
+1. 数据获取模块 (Step 0):
+   - src.data_processer.statistics.vibration_io_process.step0_get_vib_data
+     └─> get_all_vibration_files() 获取所有振动文件路径
+   
+2. 数据筛选模块 (Step 1):
+   - src.data_processer.statistics.vibration_io_process.step1_lackness_filter
+     └─> run_lackness_filter() 执行缺失率筛选，过滤不符合要求的数据文件
+     └─> 返回筛选后的文件路径列表和统计信息
+   
+3. 配置文件:
+   - src.config.data_processer.statistics.vibration_io_process.config
+     └─> 定义缺失率阈值 (MISSING_RATE_THRESHOLD) 和预期长度 (EXPECTED_LENGTH)
+   
+4. 数据解析:
+   - src.data_processer.io_unpacker.UNPACK
+     └─> 解析 .VIC 格式的振动数据文件
+
+设计说明:
+  本文件直接依赖 step1_lackness_filter 而非完整的 workflow，这样可以：
+  - 确保数据来源稳定（只使用缺失率筛选后的数据）
+  - 避免 workflow 后续新增步骤（step2, step3...）导致数据进一步筛选而不对齐
+================================================================================
+"""
+
 from ...visualize_tools.utils import ChartApp, PlotLib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,8 +47,11 @@ from .config import (
     THRESHOLD_COLOR, N_BINS, TARGET_VIBRATION_SENSORS
 )
 
-RESULT_SAVE_PATH =  r'F:\Research\Vibration Characteristics In Cable Vibration\results\rms_statistics.txt'
-ALL_VIBRATION_ROOT = r"F:\Research\Vibration Characteristics In Cable Vibration\data\2024September\SuTong\VIC"
+# 导入数据处理模块
+from ...data_processer.statistics.vibration_io_process.step0_get_vib_data import get_all_vibration_files
+from ...data_processer.statistics.vibration_io_process.step1_lackness_filter import run_lackness_filter
+
+RESULT_SAVE_PATH = r'F:\Research\Vibration Characteristics In Cable Vibration\results\rms_statistics.txt'
 
 # 硬编码参数
 FS = 50  # 振动信号采样频率
@@ -292,30 +325,32 @@ def RMS_Statistics_Histogram():
     
     result_save_path = RESULT_SAVE_PATH
 
-    all_vibration_root = ALL_VIBRATION_ROOT
-
     ploter = PlotLib() 
     figs = []
 
-    def get_all_vibration_files(root_dir, target_sensor_ids, suffix=".VIC"):
-        vibration_files = []
-        for root, dirs, files in os.walk(root_dir):
-            for file in files:
-                if file.upper().endswith(suffix.upper()):
-                    if any(sensor_id in file for sensor_id in target_sensor_ids):
-                        file_path = os.path.join(root, file)
-                        vibration_files.append(file_path)
-        return vibration_files
+    # ============================================================
+    # 数据获取：使用 step1_lackness_filter 获取经过缺失率筛选的文件
+    # ============================================================
+    print("\n[Step 0] 获取所有振动文件...")
+    all_files = get_all_vibration_files()
+    print(f"✓ 获取到 {len(all_files)} 个振动文件")
+    
+    print("\n[Step 1] 执行缺失率筛选...")
+    filtered_paths, statistics = run_lackness_filter(all_files)
+    
+    # 从筛选结果中提取符合目标传感器的文件
+    all_vib_files = []
+    for file_path in filtered_paths:
+        # 筛选目标传感器的文件
+        if any(sensor_id in file_path for sensor_id in TARGET_VIBRATION_SENSORS):
+            all_vib_files.append(file_path)
+    
+    print(f"✓ 筛选后文件数量：{len(filtered_paths)}")
+    print(f"✓ 符合目标传感器的文件数量：{len(all_vib_files)}")
 
     # 数据收集
     random_vibration_rms_list = []
     window_size = int(time_window * fs_vibration)
-
-    all_vib_files = get_all_vibration_files(
-        root_dir=all_vibration_root,
-        target_sensor_ids=TARGET_VIBRATION_SENSORS
-    )
-    print(f"共获取所有振动文件数量：{len(all_vib_files)}")
 
     # 使用多进程并行获取数据
     print(f"开始并行处理文件并计算RMS...")
