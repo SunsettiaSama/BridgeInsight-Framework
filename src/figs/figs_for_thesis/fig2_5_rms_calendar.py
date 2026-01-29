@@ -5,15 +5,15 @@
 本文件依赖以下数据处理模块：
 
 1. 数据来源:
-   - RMS 95% 振动统计结果文件
-     路径: F:\Research\Vibration Characteristics In Cable Vibration\results\statistics\rms_statistics.json
+   - 振动数据处理工作流缓存文件
+     路径: F:\Research\Vibration Characteristics In Cable Vibration\results\vib\workflow_cache.json
    
-   - RMS Top 0.25% 极端振动统计结果文件
-     路径: F:\Research\Vibration Characteristics In Cable Vibration\results\statistics\rms_statistics_extreme.json
-
 2. 数据生成工作流:
    - src.data_processer.statistics.vibration_io_process.workflow
-     └─> step3_rms_statistics 生成 RMS 统计数据
+     └─> Step 0: 获取所有振动文件
+     └─> Step 1: 缺失率筛选
+     └─> Step 2: RMS 统计分析与极端振动识别
+     └─> 输出: metadata（包含 extreme_rms_indices）
 
 3. 配置文件:
    - src.figs.figs_for_thesis.config
@@ -23,24 +23,31 @@
 数据格式说明 (Data Format)
 ================================================================================
 
-输入数据格式 (JSON):
-[
-    {
-        "sensor_id": "传感器ID",
-        "month": "09",
-        "day": "01",
-        "hour": "12",
-        "indices": [0, 1, 2, ...],  // 该小时内发生极端振动的窗口索引列表
-        "rms_values": [0.5, 0.6, 0.7, ...]  // 对应窗口的RMS值
-    },
-    ...
-]
+输入数据格式 (从 workflow_cache.json 读取):
+{
+    "metadata": [
+        {
+            "sensor_id": "传感器ID",
+            "month": "09",
+            "day": "01",
+            "hour": "12",
+            "file_path": "文件路径",
+            "actual_length": 180000,
+            "missing_rate": 0.02,
+            "extreme_rms_indices": [5, 12, 23, ...]  // 极端振动的窗口索引列表
+        },
+        ...
+    ],
+    "process_params": {
+        "rms_threshold_95": 0.1234,  // RMS 95%分位值阈值
+        ...
+    }
+}
 
 数据说明:
-- 每个条目表示某个传感器在某个小时内的极端振动统计
-- indices: 该小时内超过阈值的时间窗口索引列表（长度即为该小时的极端振动次数）
-- rms_values: 对应时间窗口的均方根值
-- 日历图根据每日累计的 indices 数量进行着色
+- metadata: 每个条目表示一个小时的振动数据文件元数据
+- extreme_rms_indices: 该小时内超过 95% 分位值阈值的时间窗口索引列表
+- 日历图根据每日累计的 extreme_rms_indices 数量进行着色
 
 ================================================================================
 """
@@ -78,29 +85,44 @@ except ImportError:
         return plt.cm.viridis
     print("警告：无法导入配置，使用默认设置。")
 
-# 常量定义
-RMS_95_PATH = r'F:\Research\Vibration Characteristics In Cable Vibration\results\statistics\rms_statistics.json'
-RMS_EXTREME_PATH = r'F:\Research\Vibration Characteristics In Cable Vibration\results\statistics\rms_statistics_extreme.json'
+# 常量定义 - 从 workflow 获取数据
+WORKFLOW_CACHE_PATH = r'F:\Research\Vibration Characteristics In Cable Vibration\results\vib\workflow_cache.json'
 
 
-def load_rms_daily_counts(json_path, month_str="09"):
+def load_rms_daily_counts_from_workflow(workflow_cache_path=WORKFLOW_CACHE_PATH, month_str="09", rms_threshold_percentile=95):
     """
-    读取统计结果并汇总每日发生频次
+    从 workflow 缓存中读取元数据并汇总每日极端振动发生频次
+    
+    参数:
+        workflow_cache_path: workflow 缓存文件路径
+        month_str: 目标月份（字符串格式，如 "09"）
+        rms_threshold_percentile: RMS 阈值分位数（95 表示取95%以上的作为极端振动）
+    
+    返回:
+        daily_counts: 每日极端振动次数字典 {day: count}
     """
-    if not os.path.exists(json_path):
-        print(f"错误：未找到统计结果文件 {json_path}")
+    if not os.path.exists(workflow_cache_path):
+        print(f"错误：未找到 workflow 缓存文件 {workflow_cache_path}")
         return {}
 
-    with open(json_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+    with open(workflow_cache_path, 'r', encoding='utf-8') as f:
+        cache_data = json.load(f)
 
-    # 统计逻辑：遍历所有条目，对符合月份的日期，累加 indices 长度
+    # 获取元数据和处理参数
+    metadata = cache_data.get('metadata', [])
+    process_params = cache_data.get('process_params', {})
+    
+    # 获取 RMS 阈值（如果使用 95%，则统计所有有极端振动索引的样本）
+    # rms_threshold_95 = process_params.get('rms_threshold_95', None)
+    
+    # 统计逻辑：遍历所有元数据，对符合月份的日期，累加极端振动窗口数量
     daily_counts = {}
-    for entry in data:
+    for entry in metadata:
         if entry.get("month") == month_str:
             day = int(entry.get("day"))
-            # 统计频次：该小时内发生 extreme 振动的窗口数量
-            count = len(entry.get("indices", []))
+            # 统计频次：该小时内发生极端振动的窗口数量
+            extreme_indices = entry.get("extreme_rms_indices", [])
+            count = len(extreme_indices)
             daily_counts[day] = daily_counts.get(day, 0) + count
             
     return daily_counts
@@ -215,13 +237,22 @@ def _plot_calendar_core(daily_counts):
     plt.tight_layout()
     return fig
 
-def plot_rms_95_calendar(ploter=None):
+def plot_rms_95_calendar(ploter=None, workflow_cache_path=WORKFLOW_CACHE_PATH, month_str="09"):
     """
-    绘制 95% 振动发生频次日历
+    绘制 95% 振动发生频次日历（从 workflow 缓存读取）
+    
+    参数:
+        ploter: PlotLib 实例
+        workflow_cache_path: workflow 缓存文件路径
+        month_str: 目标月份
     """
-    daily_counts = load_rms_daily_counts(RMS_95_PATH, month_str="09")
+    daily_counts = load_rms_daily_counts_from_workflow(
+        workflow_cache_path=workflow_cache_path,
+        month_str=month_str,
+        rms_threshold_percentile=95
+    )
     if not daily_counts:
-        print("未发现 95% 振动统计数据。")
+        print("未发现振动统计数据。")
         return None
     
     fig = _plot_calendar_core(daily_counts)
@@ -230,13 +261,26 @@ def plot_rms_95_calendar(ploter=None):
         plt.close(fig)
     return fig
 
-def plot_rms_extreme_calendar(ploter=None):
+def plot_rms_extreme_calendar(ploter=None, workflow_cache_path=WORKFLOW_CACHE_PATH, month_str="09"):
     """
-    绘制 Top 0.25% 极端振动发生频次日历
+    绘制极端振动发生频次日历（从 workflow 缓存读取）
+    
+    注意：此函数与 plot_rms_95_calendar 使用相同的数据源（workflow metadata 中的 extreme_rms_indices）
+    如需区分不同阈值，需在 workflow 中添加更多统计信息
+    
+    参数:
+        ploter: PlotLib 实例
+        workflow_cache_path: workflow 缓存文件路径
+        month_str: 目标月份
     """
-    daily_counts = load_rms_daily_counts(RMS_EXTREME_PATH, month_str="09")
+    # 当前使用相同的数据源（95%分位值以上的极端振动）
+    daily_counts = load_rms_daily_counts_from_workflow(
+        workflow_cache_path=workflow_cache_path,
+        month_str=month_str,
+        rms_threshold_percentile=95
+    )
     if not daily_counts:
-        print("未发现 Top 0.25% 极端振动统计数据。")
+        print("未发现极端振动统计数据。")
         return None
     
     fig = _plot_calendar_core(daily_counts)
