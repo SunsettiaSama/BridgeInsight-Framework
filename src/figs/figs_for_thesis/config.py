@@ -7,7 +7,7 @@ from matplotlib.font_manager import FontProperties
 from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 
 # ==================== 字号配置 ====================
-FONT_SIZE = 16
+FONT_SIZE = 20
 LABEL_FONT_SIZE = 20
 FIG_SIZE = (12, 8)
 

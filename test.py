@@ -21,8 +21,8 @@ from src.data_processer.statistics.vibration_io_process.workflow import run_vibr
 from src.data_processer.statistics.vibration_io_process.step1_lackness_filter import run_lackness_filter as step1
 
 if __name__ == "__main__":
-    metadatas = workflow()
-
+    # metadatas = workflow()
+    fig2_5()
     pass
 
 # run_ecc_param_search_and_plot()
