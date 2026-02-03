@@ -11,6 +11,7 @@ if project_root not in sys.path:
 # 导入各步骤模块
 from src.data_processer.statistics.wind_data_io_process.step0_get_wind_data import get_all_wind_files
 from src.data_processer.statistics.wind_data_io_process.step1_timestamp_align import run_timestamp_align
+from src.data_processer.statistics.wind_data_io_process.step2_extreme_filter import run_extreme_filter
 from src.data_processer.io_unpacker import parse_path_metadata
 
 # 从配置文件导入常量
@@ -116,13 +117,15 @@ def run(vib_metadata,
         save_path=FILTER_RESULT_PATH,
         cache_path=WORKFLOW_CACHE_PATH,
         use_cache=True,
-        force_recompute=False):
+        force_recompute=False,
+        extreme_only=False):
     """
     风数据处理完整工作流
     
     工作流程：
         Step 0: 获取所有风数据文件路径
         Step 1: 根据振动数据元数据进行时间戳对齐筛选
+        Step 2: (可选) 筛选出极端振动对应的风数据样本
     
     参数:
         vib_metadata: 振动数据元数据列表（来自振动数据workflow）
@@ -130,6 +133,7 @@ def run(vib_metadata,
         cache_path: 缓存文件路径
         use_cache: 是否使用缓存（默认 True）
         force_recompute: 是否强制重新计算（默认 False）
+        extreme_only: 是否只返回极端振动对应的风数据（默认 False）
     
     返回:
         metadata: 纯净的元数据列表，每项包含完整的样本信息：
@@ -138,6 +142,7 @@ def run(vib_metadata,
             - day: 日期
             - hour: 小时
             - file_path: 文件路径
+            - extreme_time_ranges: (如果 extreme_only=True) 极端振动时间范围
     """
     # 重置报告收集器
     global report_collector
@@ -145,13 +150,15 @@ def run(vib_metadata,
     
     # 记录处理参数
     report_collector.set_param('vib_metadata_count', len(vib_metadata))
+    report_collector.set_param('extreme_only', extreme_only)
     
     # 尝试从缓存读取
     if use_cache and not force_recompute:
         cached_metadata, cached_params = load_workflow_cache(cache_path)
         if cached_metadata is not None:
-            # 检查缓存的参数是否匹配（基于振动元数据数量）
-            if cached_params.get('vib_metadata_count') == len(vib_metadata):
+            # 检查缓存的参数是否匹配（基于振动元数据数量和extreme_only标志）
+            if (cached_params.get('vib_metadata_count') == len(vib_metadata) and
+                cached_params.get('extreme_only') == extreme_only):
                 report_collector.log("✓ 使用缓存结果（参数匹配）\n")
                 # 恢复处理参数
                 for key, value in cached_params.items():
@@ -207,6 +214,23 @@ def run(vib_metadata,
     for i, file_path in enumerate(aligned_paths):
         metadata[i]['file_path'] = file_path
     
+    # ============================================================
+    # Step 2: (可选) 极端振动对应的风数据筛选
+    # ============================================================
+    if extreme_only:
+        report_collector.log("\n[Step 2] 筛选极端振动对应的风数据...")
+        report_collector.log("-"*80)
+        
+        metadata, extreme_stats = run_extreme_filter(
+            wind_metadata=metadata,
+            vib_metadata=vib_metadata,
+            logger=report_collector
+        )
+        
+        # 记录处理参数
+        report_collector.set_param('extreme_samples', extreme_stats.get('total_extreme_samples', 0))
+        report_collector.set_param('extreme_time_ranges', extreme_stats.get('total_extreme_time_ranges', 0))
+    
     # 保存元数据到文件
     save_dir = os.path.dirname(save_path)
     if not os.path.exists(save_dir):
@@ -225,8 +249,13 @@ def run(vib_metadata,
     report_collector.log(" " * 30 + "工作流完成")
     report_collector.log("="*80)
     report_collector.log(f"✓ 原始风数据文件总数: {len(all_wind_files)}")
-    report_collector.log(f"✓ 对齐后文件数: {len(metadata)}")
-    report_collector.log(f"✓ 对齐率: {len(metadata)/len(all_wind_files)*100:.2f}%" if len(all_wind_files) > 0 else "✓ 对齐率: 0%")
+    report_collector.log(f"✓ 对齐后文件数: {len(aligned_paths)}")
+    if extreme_only:
+        report_collector.log(f"✓ 极端振动对应的风数据文件数: {len(metadata)}")
+        report_collector.log(f"✓ 极端时间窗口总数: {report_collector.get_param('extreme_time_ranges', 0)}")
+    else:
+        report_collector.log(f"✓ 最终输出文件数: {len(metadata)}")
+    report_collector.log(f"✓ 对齐率: {len(aligned_paths)/len(all_wind_files)*100:.2f}%" if len(all_wind_files) > 0 else "✓ 对齐率: 0%")
     report_collector.log(f"✓ 时间戳覆盖率: {statistics.get('coverage', 0):.2f}%")
     report_collector.log("="*80 + "\n")
     
