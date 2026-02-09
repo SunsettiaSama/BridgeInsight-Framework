@@ -1,22 +1,28 @@
 """
-图2.6: 风数据紊流度风玫瑰图（极端振动时段）
+图2.6: 风数据紊流度风玫瑰图（极端振动时段） - 改进版
 基于风数据工作流接口，绘制风速和紊流度的极坐标统计图
 
 功能特点：
 1. 仅使用极端振动对应的风荷载数据（通过extreme_only=True模式）
 2. 根据extreme_time_ranges时间窗口截取原始风数据
-3. 确保数据按1Hz采样频率处理
-4. 支持多进程并行处理数据
-5. 每个风速传感器独立绘图
-6. 使用 PlotLib 统一管理图表
-7. 颜色映射统一为0-100%范围
+3. 针对每个极端时间窗口计算统计量，而非处理全部原始数据点
+4. 计算内容：平均风速、平均风向（圆形统计）、紊流度
+5. 支持多进程并行处理数据
+6. 每个风速传感器独立绘图
+7. 使用 PlotLib 统一管理图表
+8. 颜色映射统一为0-100%范围
 
-数据处理流程：
+改进的数据处理流程：
 - Step 1: 获取振动数据元数据（包含极端振动索引）
 - Step 2: 运行风数据工作流，筛选极端振动对应的风数据
 - Step 3: 根据extreme_time_ranges截取原始风数据的极端时间窗口
-- Step 4: 对截取后的数据进行风向修正、角度分箱、紊流度计算
-- Step 5: 绘制风玫瑰图
+- Step 4: 对每个时间窗口计算：
+    * 平均风速（有效数据点的平均）
+    * 平均风向（使用向量平均法的圆形统计）
+    * 紊流度（该窗口数据的风速标准差/平均值）
+- Step 5: 按平均风向进行角度分箱
+- Step 6: 计算每个分箱内的平均紊流度
+- Step 7: 绘制风玫瑰图
 """
 
 # --------------- 模块导入 ---------------
@@ -43,7 +49,7 @@ from src.data_processer.io_unpacker import UNPACK
 from src.visualize_tools.utils import PlotLib
 
 # 导入绘图配置
-from .config import ENG_FONT, CN_FONT, FONT_SIZE, FIG_SIZE, get_full_color_map
+from .config import ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE, get_full_color_map
 
 # 导入传感器配置（从 sensor_config 导入，不是从绘图配置导入）
 from src.config.sensor_config import (
@@ -51,9 +57,7 @@ from src.config.sensor_config import (
     WIND_DIR_CORRECTION,
     AXIS_OF_BRIDGE,
     WIND_FS,
-    WIND_TIME_WINDOW,
     WIND_VALID_THRESHOLD,
-    MAX_TURBULENCE_INTENSITY
 )
 
 # --------------- 全局绘图配置 ---------------
@@ -61,23 +65,29 @@ plt.style.use('default')
 plt.rcParams['font.size'] = FONT_SIZE
 
 # 颜色映射
-CMAP = get_full_color_map('gradient')  # 红黄蓝反向色图（紊流度：低-蓝，高-红）
+CMAP = plt.cm.viridis
 MIN_CMAP = 0
-MAX_CMAP = 100
+MAX_CMAP = 50
+
+# 图片大小
+FIG_SIZE = SQUARE_FIG_SIZE
+
+# 多进程
+USE_MULTIPROCESS = True
+
 
 # --------------- 工具函数 ---------------
 def calculate_turbulence_intensity(wind_speed_group):
     """
     计算紊流度：TI = (风速样本标准差 / 平均风速) × 100%
     
-    修复说明：
-    1. 使用样本标准差（ddof=1）而非总体标准差，符合工程样本统计规范
-    2. 添加紊流度上限截断，过滤无物理意义的异常值
-    3. 返回 np.nan 而非 0.0，便于区分「无效TI」和「有效低TI」
+    计算说明：
+    1. 使用样本标准差（ddof=1）符合工程样本统计规范
+    2. 返回 np.nan 表示无效数据，便于区分「无效TI」和「有效低TI」
+    3. 不对紊流度进行上限截断，保留原始计算结果
     
     参数:
         wind_speed_group: 某一分箱内的风速样本（np.array）
-        max_ti: 紊流度上限阈值（%，超过此值截断，默认35%）
     
     返回:
         ti_value: 紊流度值（百分比），异常情况返回 np.nan
@@ -93,13 +103,13 @@ def calculate_turbulence_intensity(wind_speed_group):
     if u_mean <= 1e-6:
         return np.nan
     
-    # 4. 计算样本标准差（ddof=1，核心修复点）
+    # 4. 计算样本标准差（ddof=1）
     u_std = np.std(wind_speed_group, ddof=1)
     
-    # 5. 计算紊流度并截断到物理意义上限
+    # 5. 计算紊流度（不截断）
     ti_value = (u_std / u_mean) * 100  # 转换为百分比
 
-    # 6. 保留两位小数，返回有效值
+    # 6. 保留两位小数，返回计算值
     return round(ti_value, 2)
 
 
@@ -171,11 +181,11 @@ def plot_wind_rose(theta, counts, ti_values, axis_of_bridge, bin_step, cmap, tit
     cbar = plt.colorbar(
         sm, ax=ax,
         orientation='vertical',
-        label='Turbulence Intensity (%)',
+        label='紊流度 (%)',
         pad=0.08,
         shrink=0.85
     )
-    cbar.set_label('Turbulence Intensity (%)', fontproperties=ENG_FONT)
+    cbar.set_label('紊流度 (%)', fontproperties=CN_FONT)
     cbar.ax.tick_params(labelsize=FONT_SIZE)
     
     # 地理坐标标签
@@ -210,7 +220,7 @@ def plot_wind_rose(theta, counts, ti_values, axis_of_bridge, bin_step, cmap, tit
 # --------------- 多进程数据加载函数 ---------------
 def extract_extreme_time_windows(wind_velocity, wind_direction, extreme_time_ranges, fs=WIND_FS):
     """
-    根据极端时间窗口截取风数据
+    根据极端时间窗口截取风数据，每个窗口独立处理
     
     参数:
         wind_velocity: 完整的风速数组
@@ -219,7 +229,7 @@ def extract_extreme_time_windows(wind_velocity, wind_direction, extreme_time_ran
         fs: 采样频率（Hz），默认为配置的风数据采样频率
     
     返回:
-        (extracted_velocities, extracted_directions): 截取后的风速和风向数组
+        (extracted_velocities, extracted_directions): 每个窗口独立处理后的风速和风向数组
     """
     if len(extreme_time_ranges) == 0:
         return np.array([]), np.array([])
@@ -241,10 +251,25 @@ def extract_extreme_time_windows(wind_velocity, wind_direction, extreme_time_ran
         
         if start_idx < end_idx:
             # 截取该时间窗口的数据
-            extracted_velocities.extend(wind_velocity[start_idx:end_idx])
-            extracted_directions.extend(wind_direction[start_idx:end_idx])
+            window_vel = wind_velocity[start_idx:end_idx]
+            window_dir = wind_direction[start_idx:end_idx]
+            
+            # 数据清洗：过滤无效风速
+            valid_mask = window_vel > WIND_VALID_THRESHOLD
+            window_vel_valid = window_vel[valid_mask]
+            window_dir_valid = window_dir[valid_mask]
+            
+            # 只有当窗口内有有效数据时才添加
+            if len(window_vel_valid) > 0:
+                extracted_velocities.append(window_vel_valid)
+                extracted_directions.append(window_dir_valid)
     
-    return np.array(extracted_velocities), np.array(extracted_directions)
+    # 如果没有任何有效窗口，返回空数组
+    if len(extracted_velocities) == 0:
+        return np.array([]), np.array([])
+    
+    # 使用hstack合并所有窗口的数据（保持每个窗口独立处理）
+    return np.hstack(extracted_velocities), np.hstack(extracted_directions)
 
 
 def process_single_wind_file(file_path, extreme_time_ranges=None, valid_threshold=WIND_VALID_THRESHOLD):
@@ -275,25 +300,132 @@ def process_single_wind_file(file_path, extreme_time_ranges=None, valid_threshol
             wind_velocity, wind_direction = extract_extreme_time_windows(
                 wind_velocity, wind_direction, extreme_time_ranges
             )
+        else:
+            # 如果没有提供极端时间窗口，使用全部数据并过滤无效风速
+            if len(wind_velocity) > 0:
+                valid_mask = wind_velocity > valid_threshold
+                wind_velocity = wind_velocity[valid_mask]
+                wind_direction = wind_direction[valid_mask]
         
-        # 数据清洗：过滤无效风速（使用配置的阈值）
+        # 返回有效数据
         if len(wind_velocity) > 0:
-            valid_mask = wind_velocity > valid_threshold
-            wind_velocity_valid = wind_velocity[valid_mask]
-            wind_direction_valid = wind_direction[valid_mask]
-            
-            if len(wind_velocity_valid) > 0:
-                return (wind_velocity_valid, wind_direction_valid)
-        
-        return (None, None)
+            return (wind_velocity, wind_direction)
+        else:
+            return (None, None)
     
     except Exception as e:
         return (None, None)
 
 
+def compute_window_statistics(wind_velocity, wind_direction, extreme_time_ranges, fs=WIND_FS):
+    """
+    计算每个极端时间窗口的统计量（平均风速、平均风向、紊流度）
+    
+    参数:
+        wind_velocity: 完整的风速数组
+        wind_direction: 完整的风向数组
+        extreme_time_ranges: 极端时间窗口列表 [(start_sec, end_sec), ...]
+        fs: 采样频率（Hz），默认为配置的风数据采样频率
+    
+    返回:
+        (mean_velocities, mean_directions, ti_values): 每个窗口的平均风速、平均风向、紊流度列表
+    """
+    if len(extreme_time_ranges) == 0:
+        return [], [], []
+    
+    wind_velocity = np.array(wind_velocity)
+    wind_direction = np.array(wind_direction)
+    
+    mean_velocities = []
+    mean_directions = []
+    ti_values = []
+    
+    for start_sec, end_sec in extreme_time_ranges:
+        # 计算对应的采样点索引
+        start_idx = int(start_sec * fs)
+        end_idx = int(end_sec * fs)
+        
+        # 确保索引在有效范围内
+        start_idx = max(0, start_idx)
+        end_idx = min(len(wind_velocity), end_idx)
+        
+        if start_idx < end_idx:
+            # 截取该时间窗口的数据
+            window_vel = wind_velocity[start_idx:end_idx]
+            window_dir = wind_direction[start_idx:end_idx]
+            
+            # 数据清洗：过滤无效风速
+            valid_mask = window_vel > WIND_VALID_THRESHOLD
+            window_vel_valid = window_vel[valid_mask]
+            window_dir_valid = window_dir[valid_mask]
+            
+            # 只有当窗口内有有效数据时才计算统计量
+            if len(window_vel_valid) > 0:
+                # 计算平均风速
+                mean_vel = np.mean(window_vel_valid)
+                
+                # 计算平均风向（需要考虑圆形统计）
+                # 使用向量平均法计算平均风向
+                angles_rad = np.deg2rad(window_dir_valid)
+                sin_sum = np.sum(np.sin(angles_rad))
+                cos_sum = np.sum(np.cos(angles_rad))
+                mean_dir = np.rad2deg(np.arctan2(sin_sum, cos_sum))
+                mean_dir = mean_dir % 360  # 确保在0-360范围内
+                
+                # 计算紊流度
+                ti = calculate_turbulence_intensity(window_vel_valid)
+                
+                mean_velocities.append(mean_vel)
+                mean_directions.append(mean_dir)
+                ti_values.append(ti)
+    
+    return mean_velocities, mean_directions, ti_values
+
+
+def process_single_wind_file_statistics(file_path, extreme_time_ranges=None, valid_threshold=WIND_VALID_THRESHOLD):
+    """
+    单文件风数据统计处理工作函数，用于多进程
+    计算每个极端时间窗口的统计量而非返回原始数据
+    
+    参数:
+        file_path: 文件路径
+        extreme_time_ranges: 极端时间窗口列表 [(start_sec, end_sec), ...]，如果为None则返回空
+        valid_threshold: 风速有效阈值（m/s），从配置导入
+    
+    返回:
+        (mean_velocities, mean_directions, ti_values): 平均风速、平均风向、紊流度列表，失败返回 ([], [], [])
+    """
+    try:
+        from src.data_processer.io_unpacker import UNPACK
+        unpacker = UNPACK(init_path=False)
+        
+        # 解析风数据
+        wind_velocity, wind_direction, _ = unpacker.Wind_Data_Unpack(file_path)
+        
+        # 转换为numpy数组
+        wind_velocity = np.array(wind_velocity)
+        wind_direction = np.array(wind_direction)
+        
+        # 计算时间窗口统计量
+        if extreme_time_ranges is not None and len(extreme_time_ranges) > 0:
+            mean_velocities, mean_directions, ti_values = compute_window_statistics(
+                wind_velocity, wind_direction, extreme_time_ranges
+            )
+            return (mean_velocities, mean_directions, ti_values)
+        else:
+            return ([], [], [])
+    
+    except Exception as e:
+        return ([], [], [])
+
+
 def load_wind_data_by_sensor(wind_metadata, sensor_id, use_multiprocess=True, max_workers=None):
     """
-    按传感器加载风数据（支持多进程），仅加载极端振动时间窗口的数据
+    按传感器加载风数据统计量（支持多进程），仅加载极端振动时间窗口的数据
+    改进的逻辑：
+    1. 获取路径解析的风速数据文件
+    2. 通过极端振动索引，截取时间窗口
+    3. 求取这段时间内数据的平均值，包括风速风向的平均值、以及对应的该窗口的紊流度
     
     参数:
         wind_metadata: 风数据元数据列表（包含extreme_time_ranges信息）
@@ -302,13 +434,13 @@ def load_wind_data_by_sensor(wind_metadata, sensor_id, use_multiprocess=True, ma
         max_workers: 最大进程数（None表示自动）
     
     返回:
-        (all_velocities, all_directions): 该传感器的所有风速和风向数据（仅极端时间窗口）
+        (mean_velocities, mean_directions, ti_values): 该传感器的所有极端窗口的平均风速、平均风向、紊流度列表
     """
     # 筛选该传感器的文件
     sensor_files = [item for item in wind_metadata if item.get('sensor_id') == sensor_id]
     
     if len(sensor_files) == 0:
-        return np.array([]), np.array([])
+        return [], [], []
     
     # 提取文件路径和对应的极端时间窗口
     file_info_list = []
@@ -317,43 +449,47 @@ def load_wind_data_by_sensor(wind_metadata, sensor_id, use_multiprocess=True, ma
         extreme_time_ranges = item.get('extreme_time_ranges', [])
         file_info_list.append((file_path, extreme_time_ranges))
     
-    all_velocities = []
-    all_directions = []
+    all_mean_velocities = []
+    all_mean_directions = []
+    all_ti_values = []
     
     if use_multiprocess:
-        # 多进程并行加载
+        # 多进程并行加载和处理
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(process_single_wind_file, fp, etr): (fp, etr) 
+            futures = {executor.submit(process_single_wind_file_statistics, fp, etr): (fp, etr) 
                       for fp, etr in file_info_list}
             
             for future in tqdm(as_completed(futures), 
                              total=len(file_info_list),
-                             desc=f"加载 {sensor_id} (极端窗口)"):
+                             desc=f"处理 {sensor_id} (极端窗口统计)"):
                 try:
-                    vel, dir = future.result()
-                    if vel is not None and dir is not None:
-                        all_velocities.extend(vel)
-                        all_directions.extend(dir)
+                    mean_vels, mean_dirs, tis = future.result()
+                    if len(mean_vels) > 0:
+                        all_mean_velocities.extend(mean_vels)
+                        all_mean_directions.extend(mean_dirs)
+                        all_ti_values.extend(tis)
                 except Exception as e:
                     pass
     else:
-        # 单进程顺序加载
-        for file_path, extreme_time_ranges in tqdm(file_info_list, desc=f"加载 {sensor_id} (极端窗口)"):
+        # 单进程顺序加载和处理
+        for file_path, extreme_time_ranges in tqdm(file_info_list, desc=f"处理 {sensor_id} (极端窗口统计)"):
             try:
-                vel, dir = process_single_wind_file(file_path, extreme_time_ranges)
-                if vel is not None and dir is not None:
-                    all_velocities.extend(vel)
-                    all_directions.extend(dir)
+                mean_vels, mean_dirs, tis = process_single_wind_file_statistics(file_path, extreme_time_ranges)
+                if len(mean_vels) > 0:
+                    all_mean_velocities.extend(mean_vels)
+                    all_mean_directions.extend(mean_dirs)
+                    all_ti_values.extend(tis)
             except Exception as e:
                 pass
     
-    return np.array(all_velocities), np.array(all_directions)
+    return all_mean_velocities, all_mean_directions, all_ti_values
 
 
 def process_sensor_data(sensor_id, wind_metadata, interval_nums=36, 
                        use_multiprocess=True):
     """
     处理单个传感器的数据并绘图
+    改进的逻辑：针对每个极端时间窗口计算统计量，然后按风向分箱绘制风玫瑰图
     
     参数:
         sensor_id: 传感器ID
@@ -375,42 +511,65 @@ def process_sensor_data(sensor_id, wind_metadata, interval_nums=36,
     print(f"极端数据文件数: {len(sensor_files)}")
     print(f"极端时间窗口数: {total_windows}")
     
-    # 加载该传感器的数据（仅极端时间窗口）
-    velocities, directions = load_wind_data_by_sensor(
+    # 加载该传感器的数据（计算每个极端时间窗口的统计量）
+    mean_velocities, mean_directions, ti_values = load_wind_data_by_sensor(
         wind_metadata, sensor_id, use_multiprocess=use_multiprocess
     )
     
-    if len(velocities) == 0:
+    if len(mean_velocities) == 0:
         print(f"警告：传感器 {sensor_id} 无有效极端振动风数据，跳过")
         return None
     
-    print(f"✓ 极端窗口数据加载完成")
-    print(f"  有效样本数: {len(velocities)} (1Hz采样)")
-    print(f"  风速范围: {velocities.min():.2f} ~ {velocities.max():.2f} m/s")
-    print(f"  平均风速: {velocities.mean():.2f} m/s")
+    print(f"✓ 极端窗口统计完成")
+    print(f"  极端窗口数: {len(mean_velocities)}")
+    print(f"  风速范围: {min(mean_velocities):.2f} ~ {max(mean_velocities):.2f} m/s")
+    print(f"  平均风速: {np.mean(mean_velocities):.2f} m/s")
     
-    # 风向修正
+    # 风向修正（应用于平均风向）
     correction_val = WIND_DIR_CORRECTION.get(sensor_id, 360)
-    directions = correct_wind_direction(directions, correction_val)
+    mean_directions = np.array(mean_directions)
+    mean_directions = correct_wind_direction(mean_directions, correction_val)
     print(f"✓ 风向修正完成（修正值: {correction_val}度）")
     
-    # 角度分箱
+    # 角度分箱（基于修正后的平均风向）
     bin_step = int(360 / interval_nums)
     bins = np.arange(0, 360 + bin_step, bin_step)
-    digitized = np.digitize(directions, bins)
-    grouped_speeds = [velocities[digitized == i] for i in range(1, len(bins))]
+    digitized = np.digitize(mean_directions, bins)
     
-    # 统计量计算
-    counts = [len(speeds) for speeds in grouped_speeds]
-    ti_values = [calculate_turbulence_intensity(speeds) for speeds in grouped_speeds]
+    # 按分箱统计
+    counts = []
+    ti_values_binned = []
     
-    # 处理 nan 值：分离有效 TI 值用于统计，填充 nan 为 0 用于可视化
-    ti_values_np = np.array(ti_values, dtype=np.float64)
-    valid_ti = ti_values_np[~np.isnan(ti_values_np)]  # 过滤有效 TI 值
-    ti_values_for_plot = np.nan_to_num(ti_values_np, nan=0.0).tolist()  # nan 填充为 0
+    for i in range(1, len(bins)):
+        mask = digitized == i
+        count = np.sum(mask)
+        counts.append(count)
+        
+        # 计算该分箱内的平均紊流度
+        if count > 0:
+            binned_ti_values = [ti_values[j] for j in range(len(ti_values)) if mask[j] and ti_values[j] is not None]
+            if len(binned_ti_values) > 0:
+                # 过滤有效TI值（非nan）
+                valid_ti_in_bin = [ti for ti in binned_ti_values if not np.isnan(ti)]
+                if len(valid_ti_in_bin) > 0:
+                    avg_ti = np.mean(valid_ti_in_bin)
+                    ti_values_binned.append(avg_ti)
+                else:
+                    ti_values_binned.append(0.0)
+            else:
+                ti_values_binned.append(0.0)
+        else:
+            ti_values_binned.append(0.0)
+    
+    # 处理 nan 值用于可视化
+    ti_values_for_plot = [0.0 if np.isnan(ti) else ti for ti in ti_values_binned]
+    
+    # 统计信息
+    valid_ti = [ti for ti in ti_values_binned if not np.isnan(ti) and ti > 0]
     
     print(f"✓ 统计计算完成")
     print(f"  分箱数: {interval_nums}")
+    print(f"  有效数据分箱数: {len([c for c in counts if c > 0])}/{interval_nums}")
     print(f"  有效紊流度分箱数: {len(valid_ti)}/{interval_nums}")
     if len(valid_ti) > 0:
         print(f"  平均紊流度: {np.mean(valid_ti):.2f}%")
@@ -419,7 +578,7 @@ def process_sensor_data(sensor_id, wind_metadata, interval_nums=36,
     else:
         print(f"  警告: 无有效紊流度数据")
     
-    # 绘制风玫瑰图（使用填充后的 ti_values）
+    # 绘制风玫瑰图
     theta = np.deg2rad(bins[:-1])
     sensor_name = WIND_SENSOR_NAMES.get(sensor_id, sensor_id)
     fig, ax = plot_wind_rose(
@@ -429,7 +588,6 @@ def process_sensor_data(sensor_id, wind_metadata, interval_nums=36,
         axis_of_bridge=AXIS_OF_BRIDGE,
         bin_step=bin_step,
         cmap=CMAP,
-        title=f"{sensor_name} - Wind Rose"
     )
     
     print(f"✓ 绘图完成")
@@ -500,7 +658,7 @@ def main():
             sensor_id=sensor_id,
             wind_metadata=wind_metadata,
             interval_nums=36,
-            use_multiprocess=True
+            use_multiprocess=USE_MULTIPROCESS, 
         )
         
         if fig is not None:

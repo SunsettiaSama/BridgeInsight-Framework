@@ -9,7 +9,9 @@ from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 # ==================== 字号配置 ====================
 FONT_SIZE = 20
 LABEL_FONT_SIZE = 20
-FIG_SIZE = (12, 8)
+REC_FIG_SIZE = (12, 8) # 矩形配置
+SQUARE_FIG_SIZE = (10, 8) # 正方形配置
+
 
 
 # ==================== 字体配置 ====================
