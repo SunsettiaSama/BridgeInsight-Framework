@@ -10,10 +10,11 @@ from src.figs.figs_for_thesis.fig2_3_rms_statistics import RMS_Statistics_Histog
 from src.figs.figs_for_thesis.fig2_2_lackness_of_samples import Lackness_Of_Samples_Analysis as fig2_2
 from src.figs.figs_for_thesis.fig2_5_rms_calendar import plot_vibration_calendar_results as fig2_5
 from src.figs.figs_for_thesis.fig2_6_wind_turbulence import main as fig2_6
-
+from src.figs.figs_for_thesis.fig2_7_mean_wind_v_vib_rms import main as fig2_7
 
 if __name__ == "__main__":
-    fig2_6()
+    # fig2_6()
+    fig2_7()
     # fig2_2()
     # result = wind_workflow(force_recompute=True)
     # result = vibration_workflow(force_recompute=True)
