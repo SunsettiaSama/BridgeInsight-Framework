@@ -2,9 +2,6 @@
 import os
 import sys
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 
 # 添加项目根目录到 sys.path
@@ -12,417 +9,348 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# 导入数据处理工作流
-from src.data_processer.statistics.wind_data_io_process.workflow import run as run_wind_workflow
-from src.data_processer.statistics.vibration_io_process.workflow import run as run_vib_workflow
 from src.data_processer.io_unpacker import UNPACK
+from src.config.io_config import WIND_DATA_ROOT
 
-# 导入可视化工具
-from src.visualize_tools.utils import PlotLib
+# 导入子模块工作流接口
+from src.data_processer.statistics.vibration_io_process.workflow import run as run_vib_workflow
+from src.data_processer.statistics.wind_data_io_process.workflow import run as run_wind_workflow
 
-# 导入传感器配置
-from src.config.sensor_config import (
-    WIND_SENSOR_NAMES,
-    WIND_FS,
-    WIND_VALID_THRESHOLD,
-    VIB_TO_WIND_SENSOR_MAP,
-)
-
-# 导入绘图配置
-from src.figs.figs_for_thesis.config import ENG_FONT, CN_FONT, FONT_SIZE, REC_FIG_SIZE
-
-# --------------- 全局配置 ---------------
-plt.style.use('default')
-plt.rcParams['font.size'] = FONT_SIZE
-
-# 选定的传感器组合
-# 选择同一根拉索的面内和面外传感器对，对比不同方向的振动特性
-# 北塔边跨1/4跨上游：ST-VIC-C18-101-01（面内）vs ST-VIC-C18-101-02（面外）
-# 北塔跨中1/4跨上游：ST-VIC-C18-201-01（面内）vs ST-VIC-C18-201-02（面外）
-# 参考配置：src.config.sensor_config.VIBRATION_SENSOR_MAP
-SELECTED_VIB_SENSORS = {
-    'edge_span_inplane': 'ST-VIC-C18-101-01',      # 北索塔边跨1/4跨 面内上游
-    'edge_span_outplane': 'ST-VIC-C18-101-02',     # 北索塔边跨1/4跨 面外上游
-    'mid_span_inplane': 'ST-VIC-C18-201-01',       # 北索塔跨中1/4跨 面内上游
-    'mid_span_outplane': 'ST-VIC-C18-201-02',      # 北索塔跨中1/4跨 面外上游
-}
-
-# 对应的风传感器
-SELECTED_WIND_SENSOR = 'ST-UAN-G04-001-01'  # 跨中桥面上游
-
-# 采样频率配置
-VIB_FS = 50  # 振动信号采样频率 (Hz)
-WIND_FS_CONFIG = 1  # 风速采样频率 (Hz)
-
-# 时间窗口配置
-VIB_TIME_WINDOW = 60.0  # 计算振动RMS的时间窗口（秒）
-WIND_TIME_WINDOW = 60.0  # 计算风速平均值的时间窗口（秒）
-
-# 计算窗口大小
-VIB_WINDOW_SIZE = int(VIB_FS * VIB_TIME_WINDOW)  # 振动窗口大小（采样点）
-WIND_WINDOW_SIZE = int(WIND_FS_CONFIG * WIND_TIME_WINDOW)  # 风速窗口大小（采样点）
+# --------------- 采样频率和窗口配置 ---------------
+_VIB_FS = 50
+_WIND_FS_CONFIG = 1
+_VIB_TIME_WINDOW = 60.0
+_WIND_TIME_WINDOW = 60.0
+_VIB_WINDOW_SIZE = int(_VIB_FS * _VIB_TIME_WINDOW)
+_WIND_WINDOW_SIZE = int(_WIND_FS_CONFIG * _WIND_TIME_WINDOW)
 
 
-# --------------- 数据计算函数 ---------------
-def process_vibration_file(file_path, sensor_id, window_size=VIB_WINDOW_SIZE):
+# --------------- 私有辅助函数 ---------------
+def _get_processed_metadata(use_vib_cache=True, use_wind_cache=True, 
+                            vib_force_recompute=False, wind_force_recompute=False):
     """
-    处理单个振动文件，计算RMS时间序列
+    内部函数：获取经过处理的元数据（集成振动和风数据工作流）
+    """
+    # 运行振动数据工作流
+    vib_metadata = run_vib_workflow(
+        use_cache=use_vib_cache,
+        force_recompute=vib_force_recompute
+    )
     
-    参数:
-        file_path: 文件路径
-        sensor_id: 传感器ID
-        window_size: 滑动窗口大小（采样点）
+    # 运行风数据工作流
+    wind_metadata = run_wind_workflow(
+        use_cache=use_wind_cache,
+        force_recompute=wind_force_recompute
+    )
     
-    返回:
-        rms_list: RMS值列表
+    return vib_metadata, wind_metadata
+
+
+def _segment_windows_by_duration(metadata_item, data_dict, window_duration_minutes, vib_fs=_VIB_FS, wind_fs=_WIND_FS_CONFIG):
+    """
+    内部函数：按指定时间长度切分原始数据为固定时长的窗口
+    """
+    try:
+        if data_dict is None:
+            return []
+        
+        vib_data = data_dict.get('vib')
+        wind_speed = data_dict.get('wind_speed')
+        wind_direction = data_dict.get('wind_direction')
+        wind_angle = data_dict.get('wind_angle')
+        
+        if (vib_data is None or wind_speed is None or 
+            wind_direction is None or wind_angle is None):
+            return []
+        
+        vib_window_size = int(vib_fs * window_duration_minutes * 60)
+        if vib_window_size <= 0 or len(vib_data) < vib_window_size:
+            return []
+        
+        segmented_pairs = []
+        freq_ratio = vib_fs / wind_fs
+        
+        for start_idx in range(0, len(vib_data) - vib_window_size + 1, vib_window_size):
+            vib_start = start_idx
+            vib_end = start_idx + vib_window_size
+            
+            vib_segment = vib_data[vib_start:vib_end]
+            
+            wind_start = int(vib_start / freq_ratio)
+            wind_end = int(vib_end / freq_ratio)
+            wind_end = min(wind_end, len(wind_speed))
+            
+            wind_speed_seg = wind_speed[wind_start:wind_end]
+            wind_direction_seg = wind_direction[wind_start:wind_end]
+            wind_angle_seg = wind_angle[wind_start:wind_end]
+            
+            if (len(vib_segment) > 0 and len(wind_speed_seg) > 0 and
+                len(wind_direction_seg) > 0 and len(wind_angle_seg) > 0):
+                wind_segment = (wind_speed_seg, wind_direction_seg, wind_angle_seg)
+                segmented_pairs.append((vib_segment, wind_segment))
+        
+        return segmented_pairs
+    
+    except Exception:
+        return []
+
+
+def _segment_extreme_wind_windows(metadata_item, data_dict, vib_fs=_VIB_FS, wind_fs=_WIND_FS_CONFIG, vib_window_size=_VIB_WINDOW_SIZE):
+    """
+    内部函数：基于元数据中的极端振动索引，切分极端风速窗口数据
+    """
+    try:
+        if data_dict is None:
+            return []
+        
+        extreme_indices = metadata_item.get('extreme_rms_indices', [])
+        if len(extreme_indices) == 0:
+            return []
+        
+        vib_data = data_dict.get('vib')
+        wind_speed = data_dict.get('wind_speed')
+        wind_direction = data_dict.get('wind_direction')
+        wind_angle = data_dict.get('wind_angle')
+        
+        if (vib_data is None or wind_speed is None or 
+            wind_direction is None or wind_angle is None):
+            return []
+        
+        segmented_pairs = []
+        freq_ratio = vib_fs / wind_fs
+        
+        for extreme_idx in extreme_indices:
+            vib_start = extreme_idx
+            vib_end = extreme_idx + vib_window_size
+            
+            if vib_start < 0 or vib_end > len(vib_data):
+                continue
+            
+            vib_segment = vib_data[vib_start:vib_end]
+            
+            wind_start = int(vib_start / freq_ratio)
+            wind_end = int(vib_end / freq_ratio)
+            wind_end = min(wind_end, len(wind_speed))
+            
+            wind_speed_seg = wind_speed[wind_start:wind_end]
+            wind_direction_seg = wind_direction[wind_start:wind_end]
+            wind_angle_seg = wind_angle[wind_start:wind_end]
+            
+            if (len(vib_segment) > 0 and len(wind_speed_seg) > 0 and
+                len(wind_direction_seg) > 0 and len(wind_angle_seg) > 0):
+                wind_segment = (wind_speed_seg, wind_direction_seg, wind_angle_seg)
+                segmented_pairs.append((vib_segment, wind_segment))
+        
+        return segmented_pairs
+    
+    except Exception:
+        return []
+
+
+def _load_vibration_and_wind_data(vib_metadata_item, wind_sensor_id):
+    """
+    内部函数：从单个振动metadata解析并读取对应的振动和风原始数据
     """
     try:
         unpacker = UNPACK(init_path=False)
-        vibration_data = unpacker.VIC_DATA_Unpack(file_path)
+        vib_file_path = vib_metadata_item.get('file_path')
+        
+        # 读取振动数据
+        vibration_data = unpacker.VIC_DATA_Unpack(vib_file_path)
+        
+        if vibration_data is None or len(vibration_data) == 0:
+            return None
+        
         vibration_data = np.array(vibration_data)
         
-        if len(vibration_data) == 0:
+        # 根据vib_metadata构造风数据文件路径
+        month = vib_metadata_item.get('month')
+        day = vib_metadata_item.get('day')
+        hour = vib_metadata_item.get('hour')
+        
+        wind_file_path = os.path.join(WIND_DATA_ROOT, str(month).zfill(2), str(day).zfill(2), 
+                                      f"{wind_sensor_id}_{str(hour).zfill(2)}")
+        
+        # 寻找对应的风数据文件（可能有不同的扩展名）
+        wind_dir = os.path.dirname(wind_file_path)
+        wind_files = []
+        
+        if os.path.exists(wind_dir):
+            for fname in os.listdir(wind_dir):
+                if fname.startswith(os.path.basename(wind_file_path)):
+                    wind_files.append(os.path.join(wind_dir, fname))
+        
+        if len(wind_files) == 0:
+            return None
+        
+        # 选择第一个匹配的文件
+        wind_file_path = wind_files[0]
+        
+        # 读取风数据
+        wind_data = unpacker.Wind_Data_Unpack(wind_file_path)
+        
+        if wind_data is None or len(wind_data) < 3:
+            return None
+        
+        # 返回包含所有原始数据的字典
+        return {
+            'vib': vibration_data,
+            'wind_speed': np.array(wind_data[0]),
+            'wind_direction': np.array(wind_data[1]),
+            'wind_angle': np.array(wind_data[2])
+        }
+    
+    except Exception:
+        return None
+
+
+# --------------- 主入口函数 ---------------
+def get_data_pairs(wind_sensor_id, vib_sensor_id=None, use_multiprocess=False, 
+                   enable_extreme_window=False, window_duration_minutes=None,
+                   use_vib_cache=True, use_wind_cache=True):
+    """
+    批量提取振动和风数据对的主入口函数
+    
+    该函数一次性集成了子模块工作流和数据处理，无需预先加载元数据。
+    
+    参数:
+        wind_sensor_id: 风传感器ID字符串（如 'ST-UAN-G04-001-01'）
+        vib_sensor_id: 振动传感器ID过滤（字符串或None）
+                       若指定则仅处理该传感器的数据
+        use_multiprocess: 是否使用多进程处理（默认False）
+        enable_extreme_window: 是否进行极端窗口筛选（默认False）
+        window_duration_minutes: 窗口时长（分钟），当enable_extreme_window=False时有效
+                                 若为None则返回完整原始数据不切分
+        use_vib_cache: 是否使用振动数据缓存（默认True）
+        use_wind_cache: 是否使用风数据缓存（默认True）
+    
+    返回:
+        list: 数据对列表，每一项为字典，包含：
+            {
+                'vib_metadata': 对应的振动元数据,
+                'segment_config': 切分配置字典，包含：
+                    - 'vib_sensor_id': 振动传感器ID
+                    - 'wind_sensor_id': 风传感器ID
+                    - 'enable_extreme_window': 是否使用极端窗口筛选
+                    - 'window_duration_minutes': 窗口时长(仅在常规切分时有效)
+                    - 'vib_fs': 振动采样频率
+                    - 'wind_fs': 风速采样频率
+                'segmented_windows': 切分后的数据对列表
+                    [(vib_segment, (wind_speed, wind_direction, wind_angle)), ...]
+            }
+        
+        若无有效数据，返回空列表
+    """
+    print("="*80)
+    print(" "*15 + "批量提取振动和风数据对（集成工作流）")
+    print("="*80)
+    
+    # Step 1: 获取处理后的元数据
+    print("\n[Step 1] 获取处理后的元数据...")
+    print("-"*80)
+    vib_metadata, wind_metadata = _get_processed_metadata(
+        use_vib_cache=use_vib_cache,
+        use_wind_cache=use_wind_cache
+    )
+    print(f"✓ 获取到 {len(vib_metadata)} 条振动元数据")
+    print(f"✓ 获取到 {len(wind_metadata)} 条风数据元数据")
+    
+    # Step 2: 传感器筛选
+    filtered_metadata_list = vib_metadata
+    if vib_sensor_id is not None:
+        filtered_metadata_list = [item for item in vib_metadata 
+                                  if item.get('sensor_id') == vib_sensor_id]
+        print(f"\n[Step 2] 传感器筛选")
+        print("-"*80)
+        print(f"  - 原始元数据数: {len(vib_metadata)}")
+        print(f"  - 振动传感器ID过滤: {vib_sensor_id}")
+        print(f"  - 风传感器ID: {wind_sensor_id}")
+        print(f"  - 筛选后元数据数: {len(filtered_metadata_list)}")
+        
+        if len(filtered_metadata_list) == 0:
+            print(f"\n  警告: 未找到与 '{vib_sensor_id}' 匹配的元数据")
+            print("\n" + "="*80 + "\n")
             return []
-        
-        rms_list = []
-        
-        if len(vibration_data) >= window_size:
-            for i in range(0, len(vibration_data) - window_size + 1, window_size):
-                window_data = vibration_data[i:i+window_size]
-                rms_val = np.sqrt(np.mean(np.square(window_data)))
-                if rms_val > 0:
-                    rms_list.append(rms_val)
-        else:
-            rms_val = np.sqrt(np.mean(np.square(vibration_data)))
-            if rms_val > 0:
-                rms_list.append(rms_val)
-        
-        return rms_list
     
-    except Exception as e:
-        return []
-
-
-def process_wind_file(file_path, sensor_id, window_size=WIND_WINDOW_SIZE):
-    """
-    处理单个风速文件，计算平均风速时间序列
-    
-    参数:
-        file_path: 文件路径
-        sensor_id: 传感器ID
-        window_size: 滑动窗口大小（采样点）
-    
-    返回:
-        mean_wind_speeds: 平均风速值列表
-    """
-    try:
-        unpacker = UNPACK(init_path=False)
-        wind_velocity, wind_direction, _ = unpacker.Wind_Data_Unpack(file_path)
-        wind_velocity = np.array(wind_velocity)
-        
-        if len(wind_velocity) == 0:
-            return []
-        
-        mean_wind_speeds = []
-        
-        if len(wind_velocity) >= window_size:
-            for i in range(0, len(wind_velocity) - window_size + 1, window_size):
-                window_vel = wind_velocity[i:i+window_size]
-                # 过滤无效风速
-                valid_mask = window_vel > WIND_VALID_THRESHOLD
-                window_vel_valid = window_vel[valid_mask]
-                
-                if len(window_vel_valid) > 0:
-                    mean_vel = np.mean(window_vel_valid)
-                    mean_wind_speeds.append(mean_vel)
-        else:
-            valid_mask = wind_velocity > WIND_VALID_THRESHOLD
-            wind_velocity_valid = wind_velocity[valid_mask]
-            if len(wind_velocity_valid) > 0:
-                mean_vel = np.mean(wind_velocity_valid)
-                mean_wind_speeds.append(mean_vel)
-        
-        return mean_wind_speeds
-    
-    except Exception as e:
-        return []
-
-
-def load_vibration_rms_by_sensor(vib_metadata, sensor_id, use_multiprocess=True):
-    """
-    从振动文件中加载并计算指定传感器的RMS数据
-    
-    参数:
-        vib_metadata: 振动元数据列表
-        sensor_id: 传感器ID
-        use_multiprocess: 是否使用多进程
-    
-    返回:
-        rms_values: RMS数据列表
-    """
-    # 筛选该传感器的文件
-    sensor_files = [item for item in vib_metadata if item.get('sensor_id') == sensor_id]
-    
-    if len(sensor_files) == 0:
-        return np.array([])
-    
-    # 提取文件路径
-    file_paths = [item.get('file_path') for item in sensor_files if item.get('file_path')]
-    
-    all_rms_values = []
-    
-    if use_multiprocess:
-        with ProcessPoolExecutor(max_workers=4) as executor:
-            futures = {executor.submit(process_vibration_file, fp, sensor_id): fp 
-                      for fp in file_paths}
-            
-            for future in tqdm(as_completed(futures), 
-                             total=len(file_paths),
-                             desc=f"处理振动文件 {sensor_id}"):
-                try:
-                    rms_list = future.result()
-                    if len(rms_list) > 0:
-                        all_rms_values.extend(rms_list)
-                except Exception as e:
-                    pass
+    # Step 3: 数据处理配置
+    print(f"\n[Step 3] 数据处理配置")
+    print("-"*80)
+    print(f"  - 待处理元数据数: {len(filtered_metadata_list)}")
+    print(f"  - 多进程模式: {'启用' if use_multiprocess else '禁用'}")
+    print(f"  - 极端窗口筛选: {'启用' if enable_extreme_window else '禁用'}")
+    if not enable_extreme_window and window_duration_minutes is not None:
+        print(f"  - 常规窗口切分: 启用 ({window_duration_minutes} 分钟)")
     else:
-        for file_path in tqdm(file_paths, desc=f"处理振动文件 {sensor_id}"):
-            try:
-                rms_list = process_vibration_file(file_path, sensor_id)
-                if len(rms_list) > 0:
-                    all_rms_values.extend(rms_list)
-            except Exception as e:
-                pass
+        print(f"  - 常规窗口切分: 禁用")
     
-    return np.array(all_rms_values)
-
-
-def load_wind_speed_by_sensor(wind_metadata, sensor_id, use_multiprocess=True):
-    """
-    从风速文件中加载并计算指定传感器的平均风速数据
+    data_pairs = []
     
-    参数:
-        wind_metadata: 风数据元数据列表
-        sensor_id: 风传感器ID
-        use_multiprocess: 是否使用多进程
+    print(f"\n[Step 4] 处理进度")
+    print("-"*80)
     
-    返回:
-        wind_speeds: 平均风速数据列表
-    """
-    # 筛选该传感器的文件
-    sensor_files = [item for item in wind_metadata if item.get('sensor_id') == sensor_id]
+    # 构建segment_config
+    segment_config = {
+        'vib_sensor_id': vib_sensor_id,
+        'wind_sensor_id': wind_sensor_id,
+        'enable_extreme_window': enable_extreme_window,
+        'window_duration_minutes': window_duration_minutes,
+        'vib_fs': _VIB_FS,
+        'wind_fs': _WIND_FS_CONFIG
+    }
     
-    if len(sensor_files) == 0:
-        return np.array([])
-    
-    # 提取文件路径
-    file_paths = [item.get('file_path') for item in sensor_files if item.get('file_path')]
-    
-    all_wind_speeds = []
-    
-    if use_multiprocess:
-        with ProcessPoolExecutor(max_workers=4) as executor:
-            futures = {executor.submit(process_wind_file, fp, sensor_id): fp 
-                      for fp in file_paths}
+    # 单进程处理
+    if not use_multiprocess:
+        for idx, vib_item in enumerate(tqdm(filtered_metadata_list, desc="提取数据对")):
+            raw_data = _load_vibration_and_wind_data(vib_item, wind_sensor_id)
             
-            for future in tqdm(as_completed(futures), 
-                             total=len(file_paths),
-                             desc=f"处理风速文件 {sensor_id}"):
-                try:
-                    wind_list = future.result()
-                    if len(wind_list) > 0:
-                        all_wind_speeds.extend(wind_list)
-                except Exception as e:
-                    pass
+            segmented_windows = []
+            if raw_data is not None:
+                if enable_extreme_window:
+                    segmented_windows = _segment_extreme_wind_windows(vib_item, raw_data)
+                elif window_duration_minutes is not None:
+                    segmented_windows = _segment_windows_by_duration(vib_item, raw_data, window_duration_minutes)
+            
+            data_pairs.append({
+                'vib_metadata': vib_item,
+                'segment_config': segment_config,
+                'segmented_windows': segmented_windows
+            })
     else:
-        for file_path in tqdm(file_paths, desc=f"处理风速文件 {sensor_id}"):
-            try:
-                wind_list = process_wind_file(file_path, sensor_id)
-                if len(wind_list) > 0:
-                    all_wind_speeds.extend(wind_list)
-            except Exception as e:
-                pass
+        # 多进程处理（暂时保留占位符逻辑）
+        print("多进程模式暂未实现，使用单进程模式")
+        for idx, vib_item in enumerate(tqdm(filtered_metadata_list, desc="提取数据对")):
+            raw_data = _load_vibration_and_wind_data(vib_item, wind_sensor_id)
+            
+            segmented_windows = []
+            if raw_data is not None:
+                if enable_extreme_window:
+                    segmented_windows = _segment_extreme_wind_windows(vib_item, raw_data)
+                elif window_duration_minutes is not None:
+                    segmented_windows = _segment_windows_by_duration(vib_item, raw_data, window_duration_minutes)
+            
+            data_pairs.append({
+                'vib_metadata': vib_item,
+                'segment_config': segment_config,
+                'segmented_windows': segmented_windows
+            })
     
-    return np.array(all_wind_speeds)
-
-
-def plot_wind_vs_vibration(wind_speeds, vib_inplane, vib_outplane, 
-                           location_name='', output_path=None):
-    """
-    绘制风速与振动RMS的关系图
+    # 统计结果
+    successful_segmented = sum(1 for pair in data_pairs if len(pair['segmented_windows']) > 0)
+    total_windows = sum(len(pair['segmented_windows']) for pair in data_pairs)
+    failed_count = sum(1 for pair in data_pairs if len(pair['segmented_windows']) == 0)
     
-    参数:
-        wind_speeds: 风速数据
-        vib_inplane: 面内振动RMS
-        vib_outplane: 面外振动RMS
-        location_name: 位置名称（用于标题）
-        output_path: 输出文件路径（可选）
-    
-    返回:
-        fig, ax: matplotlib figure和axis对象
-    """
-    fig, ax = plt.subplots(figsize=REC_FIG_SIZE)
-    
-    # 确保数据长度一致
-    min_len = min(len(wind_speeds), len(vib_inplane), len(vib_outplane))
-    wind_speeds = wind_speeds[:min_len]
-    vib_inplane = vib_inplane[:min_len]
-    vib_outplane = vib_outplane[:min_len]
-    
-    # 绘制散点图
-    ax.scatter(wind_speeds, vib_inplane, 
-              color='#1f77b4', s=80, alpha=0.6, 
-              edgecolors='#1f77b4', linewidth=1.5,
-              label='面内方向（In-plane）', marker='o')
-    
-    ax.scatter(wind_speeds, vib_outplane, 
-              color='#ff7f0e', s=80, alpha=0.6, 
-              edgecolors='#ff7f0e', linewidth=1.5,
-              label='面外方向（Out-of-plane）', marker='s')
-    
-    # 设置标签
-    ax.set_xlabel('平均风速 (Mean Wind Speed) [m/s]', fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    ax.set_ylabel('加速度RMS (Acceleration RMS) [m/s²]', fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    
-    # 设置标题
-    title = f'风速与振动RMS关系 - {location_name}\n(Wind Speed vs Vibration RMS - {location_name})'
-    ax.set_title(title, fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=20)
-    
-    # 设置网格
-    ax.grid(True, alpha=0.3, linestyle='--')
-    
-    # 设置图例
-    ax.legend(loc='upper left', fontsize=FONT_SIZE-2, framealpha=0.95,
-             prop=CN_FONT if location_name else ENG_FONT)
-    
-    # 调整布局
-    plt.tight_layout()
-    
-    # 保存图片（可选）
-    if output_path:
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
-        print(f"✓ 图表已保存至: {output_path}")
-    
-    return fig, ax
-
-
-# --------------- 主函数 ---------------
-def main():
-    """
-    主函数：绘制平均风速与振动RMS的关系图
-    """
-    print("="*80)
-    print(" "*15 + "图2.7: 平均风速与振动RMS的关系分析")
-    print("="*80)
-    
-    # ============================================================
-    # Step 1: 运行振动数据工作流（获取振动元数据）
-    # ============================================================
-    print("\n[Step 1] 运行振动数据工作流...")
+    print(f"\n[处理结果统计]")
     print("-"*80)
-    vib_metadata = run_vib_workflow(use_cache=True)
-    print(f"✓ 获取振动数据元数据: {len(vib_metadata)} 条")
+    print(f"✓ 总处理数: {len(data_pairs)}")
+    print(f"✓ 成功切分: {successful_segmented}")
+    print(f"✗ 切分失败或无数据: {failed_count}")
+    if total_windows > 0:
+        print(f"✓ 总窗口数: {total_windows}")
     
-    # ============================================================
-    # Step 2: 运行风数据工作流（筛选极端振动对应的风数据）
-    # ============================================================
-    print("\n[Step 2] 运行风数据工作流（筛选极端振动时段）...")
-    print("-"*80)
-    wind_metadata = run_wind_workflow(
-        vib_metadata=vib_metadata,
-        use_cache=True,
-        force_recompute=False,
-        extreme_only=True
-    )
-    print(f"✓ 获取极端振动对应的风数据元数据: {len(wind_metadata)} 条")
+    if len(data_pairs) > 0:
+        success_rate = (successful_segmented / len(data_pairs) * 100) if successful_segmented > 0 else 0
+        print(f"✓ 成功率: {success_rate:.2f}%")
     
-    # ============================================================
-    # Step 3: 加载风速数据
-    # ============================================================
-    print("\n[Step 3] 加载和计算风速数据...")
-    print("-"*80)
-    print(f"风传感器: {SELECTED_WIND_SENSOR} ({WIND_SENSOR_NAMES.get(SELECTED_WIND_SENSOR, '未知')})")
-    print(f"时间窗口: {WIND_TIME_WINDOW}秒, 窗口大小: {WIND_WINDOW_SIZE}个采样点")
+    print("\n" + "="*80 + "\n")
     
-    wind_speeds = load_wind_speed_by_sensor(wind_metadata, SELECTED_WIND_SENSOR, use_multiprocess=True)
-    print(f"✓ 计算得到 {len(wind_speeds)} 个风速样本")
-    if len(wind_speeds) > 0:
-        print(f"  风速范围: {np.min(wind_speeds):.2f} ~ {np.max(wind_speeds):.2f} m/s")
-        print(f"  平均风速: {np.mean(wind_speeds):.2f} m/s")
-    
-    # 初始化 PlotLib
-    ploter = PlotLib()
-    
-    # ============================================================
-    # Step 4: 绘制边跨拉索数据（面内vs面外）
-    # ============================================================
-    print("\n[Step 4] 计算北塔边跨拉索RMS数据（In-plane vs Out-of-plane）...")
-    print("-"*80)
-    
-    print(f"面内传感器: {SELECTED_VIB_SENSORS['edge_span_inplane']}")
-    print(f"时间窗口: {VIB_TIME_WINDOW}秒, 窗口大小: {VIB_WINDOW_SIZE}个采样点")
-    edge_span_inplane = load_vibration_rms_by_sensor(vib_metadata, SELECTED_VIB_SENSORS['edge_span_inplane'], use_multiprocess=True)
-    print(f"✓ 计算得到 {len(edge_span_inplane)} 个RMS样本")
-    if len(edge_span_inplane) > 0:
-        print(f"  RMS范围: {np.min(edge_span_inplane):.4f} ~ {np.max(edge_span_inplane):.4f} m/s²")
-    
-    print(f"\n面外传感器: {SELECTED_VIB_SENSORS['edge_span_outplane']}")
-    edge_span_outplane = load_vibration_rms_by_sensor(vib_metadata, SELECTED_VIB_SENSORS['edge_span_outplane'], use_multiprocess=True)
-    print(f"✓ 计算得到 {len(edge_span_outplane)} 个RMS样本")
-    if len(edge_span_outplane) > 0:
-        print(f"  RMS范围: {np.min(edge_span_outplane):.4f} ~ {np.max(edge_span_outplane):.4f} m/s²")
-    
-    fig1, ax1 = plot_wind_vs_vibration(
-        wind_speeds, edge_span_inplane, edge_span_outplane,
-        location_name='北索塔边跨1/4跨（North Tower Edge-span）'
-    )
-    ploter.figs.append(fig1)
-    print(f"✓ 边跨拉索图表绘制完成")
-    
-    # ============================================================
-    # Step 5: 绘制跨中拉索数据（面内vs面外）
-    # ============================================================
-    print("\n[Step 5] 计算北塔跨中拉索RMS数据（In-plane vs Out-of-plane）...")
-    print("-"*80)
-    
-    print(f"面内传感器: {SELECTED_VIB_SENSORS['mid_span_inplane']}")
-    mid_span_inplane = load_vibration_rms_by_sensor(vib_metadata, SELECTED_VIB_SENSORS['mid_span_inplane'], use_multiprocess=True)
-    print(f"✓ 计算得到 {len(mid_span_inplane)} 个RMS样本")
-    if len(mid_span_inplane) > 0:
-        print(f"  RMS范围: {np.min(mid_span_inplane):.4f} ~ {np.max(mid_span_inplane):.4f} m/s²")
-    
-    print(f"\n面外传感器: {SELECTED_VIB_SENSORS['mid_span_outplane']}")
-    mid_span_outplane = load_vibration_rms_by_sensor(vib_metadata, SELECTED_VIB_SENSORS['mid_span_outplane'], use_multiprocess=True)
-    print(f"✓ 计算得到 {len(mid_span_outplane)} 个RMS样本")
-    if len(mid_span_outplane) > 0:
-        print(f"  RMS范围: {np.min(mid_span_outplane):.4f} ~ {np.max(mid_span_outplane):.4f} m/s²")
-    
-    fig2, ax2 = plot_wind_vs_vibration(
-        wind_speeds, mid_span_inplane, mid_span_outplane,
-        location_name='北索塔跨中1/4跨（North Tower Mid-span）'
-    )
-    ploter.figs.append(fig2)
-    print(f"✓ 跨中拉索图表绘制完成")
-    
-    # ============================================================
-    # 完成
-    # ============================================================
-    print("\n" + "="*80)
-    print(" "*20 + "所有图表绘制完成")
-    print("="*80)
-    print(f"✓ 共生成 {len(ploter.figs)} 个图表")
-    print(f"✓ 风传感器: {SELECTED_WIND_SENSOR} ({WIND_SENSOR_NAMES.get(SELECTED_WIND_SENSOR, '未知')})")
-    print(f"✓ 选定拉索:")
-    print(f"  1. 北塔边跨1/4跨上游: 面内({SELECTED_VIB_SENSORS['edge_span_inplane']}) vs 面外({SELECTED_VIB_SENSORS['edge_span_outplane']})")
-    print(f"  2. 北塔跨中1/4跨上游: 面内({SELECTED_VIB_SENSORS['mid_span_inplane']}) vs 面外({SELECTED_VIB_SENSORS['mid_span_outplane']})")
-    print(f"✓ 时间窗口配置: 振动{VIB_TIME_WINDOW}秒, 风速{WIND_TIME_WINDOW}秒")
-    print(f"✓ 采样频率: 振动{VIB_FS}Hz, 风速{WIND_FS_CONFIG}Hz")
-    print(f"✓ 使用 PlotLib 展示图表...")
-    
-    # 使用 PlotLib 展示所有图表
-    plt.close('all')
-    ploter.show()
-
-
-if __name__ == "__main__":
-    main()
+    return data_pairs
