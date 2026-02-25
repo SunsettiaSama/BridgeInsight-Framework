@@ -3,6 +3,7 @@ import os
 import sys
 import numpy as np
 from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # 添加项目根目录到 sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -39,6 +40,7 @@ def _get_processed_metadata(use_vib_cache=True, use_wind_cache=True,
     
     # 运行风数据工作流
     wind_metadata = run_wind_workflow(
+        vib_metadata = vib_metadata, 
         use_cache=use_wind_cache,
         force_recompute=wind_force_recompute
     )
@@ -147,6 +149,40 @@ def _segment_extreme_wind_windows(metadata_item, data_dict, vib_fs=_VIB_FS, wind
         return []
 
 
+def _process_single_vib_item(args):
+    """
+    内部函数：处理单个振动元数据项（用于多进程）
+    
+    参数:
+        args: 元组，包含 (vib_item, wind_sensor_id, enable_extreme_window, window_duration_minutes)
+    
+    返回:
+        处理结果字典
+    """
+    try:
+        vib_item, wind_sensor_id, enable_extreme_window, window_duration_minutes = args
+        
+        raw_data = _load_vibration_and_wind_data(vib_item, wind_sensor_id)
+        
+        segmented_windows = raw_data
+        if raw_data is not None:
+            if enable_extreme_window:
+                segmented_windows = _segment_extreme_wind_windows(vib_item, raw_data)
+            elif window_duration_minutes is not None:
+                segmented_windows = _segment_windows_by_duration(vib_item, raw_data, window_duration_minutes)
+        
+        return {
+            'vib_metadata': vib_item,
+            'segmented_windows': segmented_windows
+        }
+    
+    except Exception as e:
+        return {
+            'vib_metadata': args[0],
+            'segmented_windows': []
+        }
+
+
 def _load_vibration_and_wind_data(vib_metadata_item, wind_sensor_id):
     """
     内部函数：从单个振动metadata解析并读取对应的振动和风原始数据
@@ -189,9 +225,6 @@ def _load_vibration_and_wind_data(vib_metadata_item, wind_sensor_id):
         # 读取风数据
         wind_data = unpacker.Wind_Data_Unpack(wind_file_path)
         
-        if wind_data is None or len(wind_data) < 3:
-            return None
-        
         # 返回包含所有原始数据的字典
         return {
             'vib': vibration_data,
@@ -205,7 +238,7 @@ def _load_vibration_and_wind_data(vib_metadata_item, wind_sensor_id):
 
 
 # --------------- 主入口函数 ---------------
-def get_data_pairs(wind_sensor_id, vib_sensor_id=None, use_multiprocess=False, 
+def get_data_pairs(wind_sensor_id, vib_sensor_id=None, use_multiprocess=True, 
                    enable_extreme_window=False, window_duration_minutes=None,
                    use_vib_cache=True, use_wind_cache=True):
     """
@@ -303,7 +336,7 @@ def get_data_pairs(wind_sensor_id, vib_sensor_id=None, use_multiprocess=False,
         for idx, vib_item in enumerate(tqdm(filtered_metadata_list, desc="提取数据对")):
             raw_data = _load_vibration_and_wind_data(vib_item, wind_sensor_id)
             
-            segmented_windows = []
+            segmented_windows = raw_data
             if raw_data is not None:
                 if enable_extreme_window:
                     segmented_windows = _segment_extreme_wind_windows(vib_item, raw_data)
@@ -316,28 +349,43 @@ def get_data_pairs(wind_sensor_id, vib_sensor_id=None, use_multiprocess=False,
                 'segmented_windows': segmented_windows
             })
     else:
-        # 多进程处理（暂时保留占位符逻辑）
-        print("多进程模式暂未实现，使用单进程模式")
-        for idx, vib_item in enumerate(tqdm(filtered_metadata_list, desc="提取数据对")):
-            raw_data = _load_vibration_and_wind_data(vib_item, wind_sensor_id)
+        # 多进程处理
+        max_workers = min(4, len(filtered_metadata_list))
+        
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # 构建任务参数列表
+            task_args = [
+                (vib_item, wind_sensor_id, enable_extreme_window, window_duration_minutes)
+                for vib_item in filtered_metadata_list
+            ]
             
-            segmented_windows = []
-            if raw_data is not None:
-                if enable_extreme_window:
-                    segmented_windows = _segment_extreme_wind_windows(vib_item, raw_data)
-                elif window_duration_minutes is not None:
-                    segmented_windows = _segment_windows_by_duration(vib_item, raw_data, window_duration_minutes)
+            # 提交所有任务
+            futures = {
+                executor.submit(_process_single_vib_item, args): args[0]
+                for args in task_args
+            }
             
-            data_pairs.append({
-                'vib_metadata': vib_item,
-                'segment_config': segment_config,
-                'segmented_windows': segmented_windows
-            })
+            # 处理完成的任务
+            for future in tqdm(as_completed(futures), total=len(futures), desc="提取数据对（多进程）"):
+                try:
+                    result = future.result()
+                    data_pairs.append({
+                        'vib_metadata': result['vib_metadata'],
+                        'segment_config': segment_config,
+                        'segmented_windows': result['segmented_windows']
+                    })
+                except Exception as e:
+                    vib_item = futures[future]
+                    data_pairs.append({
+                        'vib_metadata': vib_item,
+                        'segment_config': segment_config,
+                        'segmented_windows': []
+                    })
     
     # 统计结果
-    successful_segmented = sum(1 for pair in data_pairs if len(pair['segmented_windows']) > 0)
-    total_windows = sum(len(pair['segmented_windows']) for pair in data_pairs)
-    failed_count = sum(1 for pair in data_pairs if len(pair['segmented_windows']) == 0)
+    successful_segmented = sum(1 for pair in data_pairs if pair.get('segmented_windows') and len(pair['segmented_windows']) > 0)
+    total_windows = sum(len(pair['segmented_windows']) for pair in data_pairs if pair.get('segmented_windows'))
+    failed_count = sum(1 for pair in data_pairs if not pair.get('segmented_windows') or len(pair['segmented_windows']) == 0)
     
     print(f"\n[处理结果统计]")
     print("-"*80)
