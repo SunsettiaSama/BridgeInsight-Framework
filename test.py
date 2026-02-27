@@ -10,7 +10,9 @@ from src.figs.figs_for_thesis.fig2_3_rms_statistics import RMS_Statistics_Histog
 from src.figs.figs_for_thesis.fig2_2_lackness_of_samples import Lackness_Of_Samples_Analysis as fig2_2
 from src.figs.figs_for_thesis.fig2_5_rms_calendar import plot_vibration_calendar_results as fig2_5
 from src.figs.figs_for_thesis.fig2_10_normal_vib_time_series import main as fig2_10
+from src.figs.figs_for_thesis.fig2_11_normal_vib_time_series_fft_3d import main as fig2_11
+
 
 if __name__ == "__main__":
-    fig2_10()
-
+    fig2_11()
+    # fig2_10()

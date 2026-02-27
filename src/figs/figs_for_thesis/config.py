@@ -97,7 +97,7 @@ def get_full_color_map(style='discrete'):
     
     return cmap
 
-def get_blue_color_map(style='discrete'):
+def get_blue_color_map(style='discrete', start_map_index = 0, end_map_index = 4):
     """
     获取蓝色系配色映射（对应原图中 Bsal/M36 family 1-5）
     :param style: 色图模式，可选 'discrete'（离散色图）或 'gradient'（渐变插值色图）
@@ -113,9 +113,9 @@ def get_blue_color_map(style='discrete'):
     ]
     
     if style == 'discrete':
-        cmap = ListedColormap(blue_hex, name='blue_family_cmap')
+        cmap = ListedColormap(blue_hex[start_map_index:end_map_index if end_map_index is not None else len(blue_hex)], name='blue_family_cmap')
     elif style == 'gradient':
-        cmap = LinearSegmentedColormap.from_list('blue_family_gradient', blue_hex, N=256)
+        cmap = LinearSegmentedColormap.from_list('blue_family_gradient', blue_hex[start_map_index:end_map_index], N=256)
     else:
         raise ValueError("style 参数仅支持 'discrete' 或 'gradient'")
     
@@ -146,6 +146,18 @@ def get_red_color_map(style='discrete'):
         raise ValueError("style 参数仅支持 'discrete' 或 'gradient'")
     
     return cmap
+
+def get_viridis_color_map(start_gray=0.2):
+    """
+    获取自定义灰色梯度色图（用于3D PSD可视化）
+    :param start_gray: 起始灰度值（0-1），值越大越浅
+    :return: matplotlib.colors.Colormap 对象
+    """
+    import numpy as np
+    start_gray = np.clip(start_gray, 0.0, 1.0)
+    original_cmap = plt.cm.gist_yarg
+    colors = original_cmap(np.linspace(start_gray, 1.0, 256))
+    return ListedColormap(colors)
 
 
 # ------------------------------
