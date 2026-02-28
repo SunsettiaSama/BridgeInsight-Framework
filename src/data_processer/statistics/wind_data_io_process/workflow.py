@@ -12,6 +12,7 @@ if project_root not in sys.path:
 from src.data_processer.statistics.wind_data_io_process.step0_get_wind_data import get_all_wind_files
 from src.data_processer.statistics.wind_data_io_process.step1_timestamp_align import run_timestamp_align
 from src.data_processer.statistics.wind_data_io_process.step2_extreme_filter import run_extreme_filter
+from src.data_processer.statistics.wind_data_io_process.step3_out_of_range import run_out_of_range_query
 from src.data_processer.io_unpacker import parse_path_metadata
 
 # 从配置文件导入常量
@@ -126,6 +127,7 @@ def run(vib_metadata,
         Step 0: 获取所有风数据文件路径
         Step 1: 根据振动数据元数据进行时间戳对齐筛选
         Step 2: (可选) 筛选出极端振动对应的风数据样本
+        Step 3: (可选) 查询极端振动时间范围内的越界点信息
     
     参数:
         vib_metadata: 振动数据元数据列表（来自振动数据workflow）
@@ -143,6 +145,7 @@ def run(vib_metadata,
             - hour: 小时
             - file_path: 文件路径
             - extreme_time_ranges: (如果 extreme_only=True) 极端振动时间范围
+            - out_of_range_windows: (如果 extreme_only=True) 越界点详细信息
     """
     # 重置报告收集器
     global report_collector
@@ -230,6 +233,25 @@ def run(vib_metadata,
         # 记录处理参数
         report_collector.set_param('extreme_samples', extreme_stats.get('total_extreme_samples', 0))
         report_collector.set_param('extreme_time_ranges', extreme_stats.get('total_extreme_time_ranges', 0))
+        
+        # ============================================================
+        # Step 3: (可选) 查询极端振动时间范围内的越界点信息
+        # ============================================================
+        report_collector.log("\n[Step 3] 查询越界点信息...")
+        report_collector.log("-"*80)
+        
+        metadata, out_of_range_stats = run_out_of_range_query(
+            filtered_metadata=metadata,
+            min_vel=0, max_vel=70,
+            min_dir=0, max_dir=360,
+            logger=report_collector
+        )
+        
+        # 记录处理参数
+        report_collector.set_param('out_of_range_vel', out_of_range_stats.get('total_out_of_range_vel', 0))
+        report_collector.set_param('out_of_range_dir', out_of_range_stats.get('total_out_of_range_dir', 0))
+        report_collector.set_param('out_of_range_ang', out_of_range_stats.get('total_out_of_range_ang', 0))
+        report_collector.set_param('items_with_out_of_range', out_of_range_stats.get('items_with_out_of_range', 0))
     
     # 保存元数据到文件
     save_dir = os.path.dirname(save_path)
@@ -251,8 +273,12 @@ def run(vib_metadata,
     report_collector.log(f"✓ 原始风数据文件总数: {len(all_wind_files)}")
     report_collector.log(f"✓ 对齐后文件数: {len(aligned_paths)}")
     if extreme_only:
-        report_collector.log(f"✓ 极端振动对应的风数据文件数: {len(metadata)}")
+        report_collector.log(f"✓ 极端振动对应的风数据文件数: {report_collector.get_param('extreme_samples', 0)}")
         report_collector.log(f"✓ 极端时间窗口总数: {report_collector.get_param('extreme_time_ranges', 0)}")
+        report_collector.log(f"✓ 包含越界点的文件数: {report_collector.get_param('items_with_out_of_range', 0)}")
+        report_collector.log(f"✓ 风速越界点总数: {report_collector.get_param('out_of_range_vel', 0)}")
+        report_collector.log(f"✓ 风向越界点总数: {report_collector.get_param('out_of_range_dir', 0)}")
+        report_collector.log(f"✓ 风攻角越界点总数: {report_collector.get_param('out_of_range_ang', 0)}")
     else:
         report_collector.log(f"✓ 最终输出文件数: {len(metadata)}")
     report_collector.log(f"✓ 对齐率: {len(aligned_paths)/len(all_wind_files)*100:.2f}%" if len(all_wind_files) > 0 else "✓ 对齐率: 0%")

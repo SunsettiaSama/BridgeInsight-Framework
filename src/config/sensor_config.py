@@ -133,6 +133,7 @@ AXIS_OF_BRIDGE = 10.6
 # ==================== 风数据采样配置 ====================
 
 # 风速信号采样频率（Hz）
+# 已经经过脚本验证，可以放心使用，详见F:\Research\Vibration Characteristics In Cable Vibration\src\test\check_wind_sample.py
 WIND_FS = 1
 
 # 风速统计时间窗口（秒）

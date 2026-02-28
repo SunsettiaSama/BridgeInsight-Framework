@@ -9,8 +9,11 @@ from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 # ==================== 字号配置 ====================
 FONT_SIZE = 20
 LABEL_FONT_SIZE = 20
-REC_FIG_SIZE = (12, 8) # 矩形配置
-SQUARE_FIG_SIZE = (10, 8) # 正方形配置
+REC_FIG_SIZE = (12, 8) # 矩形配置，Word图像大小为12 cm
+SQUARE_FIG_SIZE = (10, 8) # 正方形配置，Word图像大小为7.5cm
+
+REC_FONT_SIZE = 22
+SQUARE_FONT_SIZE = 24
 
 
 
@@ -53,7 +56,7 @@ VIV_ALPHA = 0.6
 N_BINS = 100
 
 
-from ...config.data_processer.statistics.vibration_io_process.config import *
+from config.data_processer.statistics.vibration_io_process.config import *
 
 
 # 颜色配置（根据阈值区分）
