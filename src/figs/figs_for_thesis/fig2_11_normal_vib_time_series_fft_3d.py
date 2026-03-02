@@ -4,6 +4,8 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import signal
+from scipy.ndimage import gaussian_filter
+from scipy.interpolate import RectBivariateSpline
 import matplotlib.ticker as ticker
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -11,12 +13,15 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.data_processer.io_unpacker import UNPACK
+from src.data_processer.singals.wavelet import wavelet_denoise
 from src.visualize_tools.utils import PlotLib
 from .config import (
-    ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE, get_blue_color_map,
-    get_viridis_color_map
+    ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE, get_gray_to_red_color_map
 )
+cmap_func = get_gray_to_red_color_map
 
+RSR = 10
+CSTR = 10
 
 # ==================== 常量配置 ====================
 class Config:
@@ -36,6 +41,11 @@ class Config:
     WINDOW_DURATION = 60    # 秒
     STEP_DURATION = 1       # 秒
     
+    # 频率范围特定的NFFT配置（用于不同频率范围的细粒度控制）
+    NFFT_LOW = 1024         # 低频范围 (0~2Hz) 的NFFT - 获得更好频率分辨率
+    NFFT_HIGH = 256        # 高频范围 (2~25Hz) 的NFFT - 平衡时频分辨率
+    NFFT_TOTAL = 256       # 全频范围 (0~25Hz) 的NFFT - 平衡时频分辨率
+
     # 绘图配置 - 从 config.py 继承
     FIG_SIZE = SQUARE_FIG_SIZE
     START_MAP_INDEX = 1
@@ -43,13 +53,35 @@ class Config:
 
     # 3D绘图视角
     ELEV = 30
-    AZIM = -150
+    AZIM = 150
     
     # 网格线配置
     GRID_COLOR = 'gray'
     GRID_ALPHA = 0.4
     GRID_LINEWIDTH = 0.5
     GRID_LINESTYLE = '--'
+    
+    # 频率范围配置
+    FREQ_BAND_LOW_MIN = 0      # 低频范围最小值 (Hz)
+    FREQ_BAND_LOW_MAX = 2      # 低频范围最大值 (Hz)
+    FREQ_BAND_HIGH_MIN = 2     # 高频范围最小值 (Hz)
+    FREQ_BAND_HIGH_MAX = 25    # 高频范围最大值 (Hz)
+    
+    # 绘图样本数配置
+    NUM_SAMPLES_TO_PLOT = 5    # 要绘制的样本数
+    
+    # 3D表面平滑配置
+    SMOOTHING_SIGMA = 1.5      # 高斯平滑的标准差（值越大平滑越强）
+    
+    # 数据加密配置（插值）
+    INTERPOLATION_FACTOR = 20   # 插值系数，数据点会增加此倍数（2表示点数加倍）
+
+    # 小波去噪配置
+    ENABLE_WAVELET_DENOISE = True   # 是否启用小波去噪
+    WAVELET_TYPE = 'coif2'            # 小波基类型（coif2）
+    WAVELET_LEVEL = 5               # 分解层数
+    THRESHOLD_TYPE = 'soft'         # 阈值类型（软阈值）
+    THRESHOLD_METHOD = 'sqtwolog'   # 阈值计算方法（平方根双对数法）
 
 
 # ==================== 数据获取函数 ====================
@@ -126,18 +158,54 @@ def get_normal_vib_windows():
     return all_windows
 
 
-# ==================== 绘图函数 ====================
-def plot_3d_vibration_psd(data, fs=Config.FS):
+# ==================== 数据预处理函数 ====================
+def preprocess_data_with_wavelet_denoise(data):
     """
-    绘制3D振动PSD可视化
+    使用小波去噪对数据进行预处理
+    
+    参数：
+        data: 原始振动数据（一维数组）
+    
+    返回：
+        denoised_data: 去噪后的数据
+        denoise_info: 去噪信息字典
+    """
+    if not Config.ENABLE_WAVELET_DENOISE:
+        return data, {}
+    
+    try:
+        denoised_data, denoise_info = wavelet_denoise(
+            signal=data,
+            wavelet=Config.WAVELET_TYPE,
+            level=Config.WAVELET_LEVEL,
+            threshold_type=Config.THRESHOLD_TYPE,
+            threshold_method=Config.THRESHOLD_METHOD
+        )
+        print(f"    ✓ 小波去噪成功 (小波基: {Config.WAVELET_TYPE}, 层数: {Config.WAVELET_LEVEL}, 阈值: {denoise_info['threshold']:.4f})")
+        return denoised_data, denoise_info
+    except Exception as e:
+        print(f"    ⚠ 小波去噪失败: {e}，使用原始数据")
+        return data, {}
+
+
+# ==================== 绘图函数 ====================
+def plot_3d_vibration_psd_frequency_band(data, freq_min, freq_max, fs=Config.FS, nfft=None):
+    """
+    绘制3D振动PSD可视化（指定频率范围）
     
     参数：
         data: 一维或二维振动数据
+        freq_min: 最小频率（Hz）
+        freq_max: 最大频率（Hz）
         fs: 采样频率
+        nfft: FFT大小（可选，默认使用Config.NFFT）
     
     返回：
         (fig, ax): matplotlib 图表对象
     """
+    if nfft is None:
+        nfft = Config.NFFT
+    
     if data.ndim == 2:
         continuous_data = data.flatten()
     else:
@@ -153,8 +221,7 @@ def plot_3d_vibration_psd(data, fs=Config.FS):
         raise ValueError(f"数据长度不足，需要至少 {samples_per_window} 个采样点")
     
     # 计算有效的窗口中心位置范围
-    # nfft代表分辨率，它的中间值才是当前算出来的值
-    nfft_half = int(Config.NFFT / 2)
+    nfft_half = int(nfft / 2)
     window_center_start = nfft_half
     window_center_end = len(continuous_data) - nfft_half
     
@@ -174,9 +241,9 @@ def plot_3d_vibration_psd(data, fs=Config.FS):
         f, p = signal.welch(
             window_data, 
             fs=fs, 
-            nperseg=int(Config.NFFT / 2), 
-            noverlap=int(Config.NFFT / 4), 
-            nfft=Config.NFFT
+            nperseg=int(nfft / 2), 
+            noverlap=int(nfft / 4), 
+            nfft=nfft
         )
         
         if freqs is None:
@@ -190,23 +257,46 @@ def plot_3d_vibration_psd(data, fs=Config.FS):
     
     psd_matrix = np.array(psd_matrix)
     
+    # 对PSD矩阵进行高斯平滑处理
+    psd_matrix_smoothed = gaussian_filter(psd_matrix, sigma=Config.SMOOTHING_SIGMA)
+    
     # 时间轴基于采样点位置，单位为秒，归零化从0开始
     time_axis = np.array(time_points) - time_points[0]
     
-    T, F = np.meshgrid(time_axis, freqs)
+    # 筛选频率范围
+    freq_mask = (freqs >= freq_min) & (freqs <= freq_max)
+    freqs_filtered = freqs[freq_mask]
+    psd_matrix_filtered = psd_matrix_smoothed[:, freq_mask]
+    
+    # 数据加密（插值加密）
+    num_times_orig = len(time_axis)
+    num_freqs_orig = len(freqs_filtered)
+    
+    num_times_interp = (num_times_orig - 1) * Config.INTERPOLATION_FACTOR + 1
+    num_freqs_interp = (num_freqs_orig - 1) * Config.INTERPOLATION_FACTOR + 1
+    
+    time_axis_interp = np.linspace(time_axis[0], time_axis[-1], num_times_interp)
+    freqs_filtered_interp = np.linspace(freqs_filtered[0], freqs_filtered[-1], num_freqs_interp)
+    
+    spline = RectBivariateSpline(time_axis, freqs_filtered, psd_matrix_filtered, kx=3, ky=3)
+    psd_matrix_interp = spline(time_axis_interp, freqs_filtered_interp)
+    
+    T, F = np.meshgrid(time_axis_interp, freqs_filtered_interp)
     
     fig = plt.figure(figsize=Config.FIG_SIZE)
     ax = fig.add_subplot(111, projection='3d')
     
-    cmap = get_blue_color_map(style = 'gradient', start_map_index = Config.START_MAP_INDEX, end_map_index = Config.END_MAP_INDEX)
+    cmap = cmap_func(style='gradient')
     
     surf = ax.plot_surface(
-        T, F, psd_matrix.T,
+        T, F, psd_matrix_interp.T,
         cmap=cmap,
         linewidth=0,
         antialiased=True,
         alpha=0.9,
-        shade=True
+        shade=True, 
+        rstride=RSR,
+        cstride=CSTR
     )
     
     cbar = fig.colorbar(surf, pad=0.1)
@@ -245,9 +335,10 @@ def plot_3d_vibration_psd(data, fs=Config.FS):
 def main():
     """
     Normal_Vib 时域和频域3D绘制主函数
+    为每个样本生成两个频率范围的PSD图（0~5Hz 和 5~25Hz）
     """
     print("="*80)
-    print("Normal_Vib 时域和频域3D绘制")
+    print("Normal_Vib 频域3D绘制（两个频率范围）")
     print("="*80)
     
     print("\n[步骤1] 获取 Normal_Vib 窗口数据...")
@@ -256,24 +347,66 @@ def main():
     print("\n[步骤2] 生成绘图...")
     ploter = PlotLib()
     
-    for i, window_info in enumerate(windows[:5], 1):
+    for i, window_info in enumerate(windows[:Config.NUM_SAMPLES_TO_PLOT], 1):
         data = window_info['data']
-        data_2d = data.reshape(-1, 1)
         
-        fig, ax = plot_3d_vibration_psd(data_2d)
+        print(f"  ✓ 样本 {i}: 正在进行小波去噪预处理...")
+        data_denoised, denoise_info = preprocess_data_with_wavelet_denoise(data)
+        data_2d = data_denoised.reshape(-1, 1)
         
         sensor_id = window_info['sensor_id']
         time_str = window_info['time']
         window_idx = window_info['window_index']
         
-        fig.suptitle(f"{sensor_id} @ {time_str} (窗口 {window_idx})", 
-                    fontproperties=CN_FONT, fontsize=FONT_SIZE)
+        # 生成低频范围图 (0~2Hz) - 使用NFFT_LOW获得更好的频率分辨率
+        print(f"  ✓ 样本 {i}: 生成低频范围 {Config.FREQ_BAND_LOW_MIN}~{Config.FREQ_BAND_LOW_MAX}Hz 图表 (NFFT={Config.NFFT_LOW})...")
+        fig_low, ax_low = plot_3d_vibration_psd_frequency_band(
+            data_2d, 
+            Config.FREQ_BAND_LOW_MIN, 
+            Config.FREQ_BAND_LOW_MAX,
+            nfft=Config.NFFT_LOW
+        )
+        fig_low.suptitle(
+            f"[图1-低频] {sensor_id} @ {time_str} (窗口 {window_idx})\n"
+            f"频率范围: {Config.FREQ_BAND_LOW_MIN}~{Config.FREQ_BAND_LOW_MAX}Hz | NFFT: {Config.NFFT_LOW}",
+            fontproperties=CN_FONT, fontsize=FONT_SIZE
+        )
+        ploter.figs.append(fig_low)
         
-        ploter.figs.append(fig)
-        print(f"  ✓ 已生成图表 {i}")
+        # 生成高频范围图 (2~25Hz) - 使用NFFT_HIGH平衡时频分辨率
+        print(f"  ✓ 样本 {i}: 生成高频范围 {Config.FREQ_BAND_HIGH_MIN}~{Config.FREQ_BAND_HIGH_MAX}Hz 图表 (NFFT={Config.NFFT_HIGH})...")
+        fig_high, ax_high = plot_3d_vibration_psd_frequency_band(
+            data_2d, 
+            Config.FREQ_BAND_HIGH_MIN, 
+            Config.FREQ_BAND_HIGH_MAX,
+            nfft=Config.NFFT_HIGH
+        )
+        fig_high.suptitle(
+            f"[图2-高频] {sensor_id} @ {time_str} (窗口 {window_idx})\n"
+            f"频率范围: {Config.FREQ_BAND_HIGH_MIN}~{Config.FREQ_BAND_HIGH_MAX}Hz | NFFT: {Config.NFFT_HIGH}",
+            fontproperties=CN_FONT, fontsize=FONT_SIZE
+        )
+        ploter.figs.append(fig_high)
+        
+        # 生成完整频率范围图 (0~25Hz) - 不分区间，全频谱展示
+        print(f"  ✓ 样本 {i}: 生成完整频率范围 {Config.FREQ_BAND_LOW_MIN}~{Config.FREQ_BAND_HIGH_MAX}Hz 图表 (NFFT={Config.NFFT_TOTAL})...")
+        fig_full, ax_full = plot_3d_vibration_psd_frequency_band(
+            data_2d, 
+            Config.FREQ_BAND_LOW_MIN, 
+            Config.FREQ_BAND_HIGH_MAX,
+            nfft=Config.NFFT_TOTAL
+        )
+        fig_full.suptitle(
+            f"[图3-完整] {sensor_id} @ {time_str} (窗口 {window_idx})\n"
+            f"频率范围: {Config.FREQ_BAND_LOW_MIN}~{Config.FREQ_BAND_HIGH_MAX}Hz | NFFT: {Config.NFFT_HIGH}",
+            fontproperties=CN_FONT, fontsize=FONT_SIZE
+        )
+        ploter.figs.append(fig_full)
+        
+        print(f"  ✓ 样本 {i} 已生成 3 个图表（共 {len(ploter.figs)} 个）")
     
     print("\n" + "="*80)
-    print(f"✓ 成功生成 {len(ploter.figs)} 个图表")
+    print(f"✓ 成功生成 {len(ploter.figs)} 个图表（{Config.NUM_SAMPLES_TO_PLOT} 个样本 × 3个频率范围）")
     print("="*80 + "\n")
     
     ploter.show()

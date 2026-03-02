@@ -56,7 +56,7 @@ VIV_ALPHA = 0.6
 N_BINS = 100
 
 
-from config.data_processer.statistics.vibration_io_process.config import *
+from src.config.data_processer.statistics.vibration_io_process.config import *
 
 
 # 颜色配置（根据阈值区分）
@@ -150,6 +150,35 @@ def get_red_color_map(style='discrete'):
     
     return cmap
 
+def get_gray_to_red_color_map(style='gradient'):
+    """
+    获取从灰色到红色系的渐变色图（用于表示强度变化）
+    :param style: 色图模式，可选 'discrete'（离散色图）或 'gradient'（渐变插值色图）
+    :return: matplotlib.colors.Colormap 对象
+    """
+    # 从灰色逐步过渡到红色系
+    gray_to_red_hex = [
+        '#C0C0C0',  # 浅灰色（起始）
+        '#A0A0A0',  # 中灰色
+        '#808080',  # 深灰色
+        '#F7FBC9',  # 浅黄色（过渡）
+        '#F5EBAE',  # 黄色
+        '#F0C284',  # 橙黄色
+        '#EF8B67',  # 橙色
+        '#E3625D',  # 浅红色
+        '#B54764',  # 中红色
+        '#992224'   # 深红色（结束）
+    ]
+    
+    if style == 'discrete':
+        cmap = ListedColormap(gray_to_red_hex, name='gray_to_red_cmap')
+    elif style == 'gradient':
+        cmap = LinearSegmentedColormap.from_list('gray_to_red_gradient', gray_to_red_hex, N=256)
+    else:
+        raise ValueError("style 参数仅支持 'discrete' 或 'gradient'")
+    
+    return cmap
+
 def get_viridis_color_map(start_gray=0.2):
     """
     获取自定义灰色梯度色图（用于3D PSD可视化）
@@ -167,14 +196,16 @@ def get_viridis_color_map(start_gray=0.2):
 # 测试代码（可选）
 # ------------------------------
 if __name__ == "__main__":
-    # 获取两种色系的色图
+    # 获取三种色系的色图
     cmap_blue_discrete = get_blue_color_map(style='discrete')
     cmap_blue_gradient = get_blue_color_map(style='gradient')
     cmap_red_discrete = get_red_color_map(style='discrete')
     cmap_red_gradient = get_red_color_map(style='gradient')
+    cmap_gray_to_red_discrete = get_gray_to_red_color_map(style='discrete')
+    cmap_gray_to_red_gradient = get_gray_to_red_color_map(style='gradient')
     
     # 可视化色图效果
-    fig, axes = plt.subplots(2, 2, figsize=(14, 6))
+    fig, axes = plt.subplots(3, 2, figsize=(14, 10))
     
     # 蓝色系离散色图
     axes[0,0].imshow([range(5)], cmap=cmap_blue_discrete, aspect='auto')
@@ -199,6 +230,18 @@ if __name__ == "__main__":
     axes[1,1].imshow([range(256)], cmap=cmap_red_gradient, aspect='auto')
     axes[1,1].set_title("Red Family - Gradient (256 Colors)")
     axes[1,1].set_yticks([])
+    
+    # 灰→红色系离散色图
+    axes[2,0].imshow([range(10)], cmap=cmap_gray_to_red_discrete, aspect='auto')
+    axes[2,0].set_title("Gray-to-Red Family - Discrete (10 Categories)")
+    axes[2,0].set_xticks(range(10))
+    axes[2,0].set_xticklabels([f'Cat {i+1}' for i in range(10)], rotation=45, ha='right')
+    axes[2,0].set_yticks([])
+    
+    # 灰→红色系渐变色图
+    axes[2,1].imshow([range(256)], cmap=cmap_gray_to_red_gradient, aspect='auto')
+    axes[2,1].set_title("Gray-to-Red Family - Gradient (256 Colors)")
+    axes[2,1].set_yticks([])
     
     plt.tight_layout()
     plt.show()

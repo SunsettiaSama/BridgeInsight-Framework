@@ -176,6 +176,182 @@ def wavelet_denoise(
     
     return denoised_signal, info
 
+# -------------------------- 新增：稀疏优化小波去噪函数 --------------------------
+def _ista_solver(
+    coeffs_original: list,
+    signal: np.ndarray,
+    wavelet: str,
+    lambda_sparse: float,
+    max_iter: int = 1000,
+    tol: float = 1e-6
+) -> list:
+    """
+    ISTA（迭代软阈值算法）求解稀疏优化问题：min ||y - Ψx||² + λ||x||₁
+    适配小波系数结构，仅对细节系数做稀疏优化
+    
+    参数:
+        coeffs_original: 原始小波分解系数 [cA, cDn, cDn-1, ..., cD1]
+        signal: 原始带噪信号
+        wavelet: 小波基
+        lambda_sparse: 稀疏正则化系数（控制稀疏度，越大越稀疏）
+        max_iter: 最大迭代次数
+        tol: 收敛阈值
+    
+    返回:
+        coeffs_sparse: 稀疏优化后的小波系数
+    """
+    # 初始化：用原始系数作为初始值
+    coeffs_sparse = [np.copy(c) for c in coeffs_original]
+    cA = coeffs_sparse[0]
+    cD_list = coeffs_sparse[1:]
+    
+    # 计算步长（Lipschitz常数倒数）：工程经验值，无需严格计算
+    step_size = 0.01
+    
+    # 迭代求解
+    for iter_idx in range(max_iter):
+        # 保存上一轮系数用于收敛判断
+        cD_prev = [np.copy(c) for c in cD_list]
+        
+        # 步骤1：重构当前系数对应的信号
+        coeffs_temp = [cA] + cD_list
+        signal_recon = pywt.waverec(coeffs_temp, wavelet)[:len(signal)]
+        
+        # 步骤2：计算残差
+        residual = signal - signal_recon
+        
+        # 步骤3：小波分解残差（用于梯度更新）
+        coeffs_residual = pywt.wavedec(residual, wavelet, level=len(cD_list))
+        cD_residual = coeffs_residual[1:]
+        
+        # 步骤4：梯度下降更新细节系数
+        for i in range(len(cD_list)):
+            cD_list[i] = cD_list[i] + step_size * cD_residual[i]
+        
+        # 步骤5：软阈值操作（L1正则化的核心，保证稀疏性）
+        for i in range(len(cD_list)):
+            # 软阈值：x = sign(x)(|x| - λ*step_size)+
+            cD_list[i] = np.sign(cD_list[i]) * np.maximum(np.abs(cD_list[i]) - lambda_sparse * step_size, 0)
+        
+        # 收敛判断：所有细节系数的L2误差小于tol
+        error = sum(np.linalg.norm(cD_list[i] - cD_prev[i]) for i in range(len(cD_list)))
+        if error < tol:
+            # print(f"ISTA收敛，迭代次数：{iter_idx+1}")
+            break
+    
+    # 组装稀疏系数
+    coeffs_sparse = [cA] + cD_list
+    return coeffs_sparse
+
+def wavelet_denoise_sparse(
+    signal: Union[np.ndarray, list],
+    wavelet: str = 'db4',
+    level: Optional[int] = None,
+    lambda_sparse: Optional[float] = None,
+    max_iter: int = 1000,
+    tol: float = 1e-6
+) -> Tuple[np.ndarray, dict]:
+    """
+    稀疏优化小波去噪接口（前沿方法，替换传统阈值）
+    
+    参数:
+        signal: 一维时序信号（list/numpy数组）
+        wavelet: 小波基名称（如'db4'/'sym8'/'haar'）
+        level: 分解层数（None则自动计算最大合理层数）
+        lambda_sparse: 稀疏正则化系数（None则自动估计）
+        max_iter: ISTA迭代最大次数
+        tol: ISTA收敛阈值
+    
+    返回:
+        denoised_signal: 稀疏优化去噪后的信号
+        info: 包含关键信息的字典
+    """
+    # -------------------------- 1. 输入参数全校验 --------------------------
+    try:
+        signal = np.asarray(signal, dtype=np.float64)
+    except:
+        raise ValueError("输入信号必须是可转为一维数组的数值类型（list/numpy数组）")
+    
+    if len(signal.shape) != 1:
+        raise ValueError(f"输入信号必须是一维！当前维度：{len(signal.shape)}")
+    
+    if len(signal) < 16:
+        warnings.warn("信号长度过短（<16），小波分解效果可能不佳")
+    
+    # 小波基校验
+    try:
+        wavelet_obj = pywt.Wavelet(wavelet)
+    except ValueError:
+        supported_wavelets = pywt.wavelist()
+        raise ValueError(f"小波基{wavelet}不支持！支持的小波基列表：{supported_wavelets[:10]}...（共{len(supported_wavelets)}种）")
+    
+    # 分解层数校验
+    max_possible_level = pywt.dwt_max_level(len(signal), wavelet_obj.dec_len)
+    if level is None:
+        level = min(3, max_possible_level)
+    else:
+        level = int(level)
+        if level < 1:
+            raise ValueError(f"分解层数必须≥1！当前值：{level}")
+        if level > max_possible_level:
+            warnings.warn(f"分解层数{level}超过最大支持层数{max_possible_level}，自动降级为{max_possible_level}")
+            level = max_possible_level
+    
+    # -------------------------- 2. 小波分解 --------------------------
+    coeffs_original = pywt.wavedec(signal, wavelet=wavelet, level=level)
+    
+    # -------------------------- 3. 自动估计稀疏正则化系数λ --------------------------
+    if lambda_sparse is None:
+        # 提取细节系数
+        all_cD = np.concatenate(coeffs_original[1:])
+        # 基于噪声标准差估计λ（工程经验公式）
+        sigma = np.median(np.abs(all_cD)) / 0.6745
+        lambda_sparse = sigma * np.sqrt(2 * np.log(len(signal))) * 0.1  # 0.1是经验缩放因子
+    
+    # -------------------------- 4. 稀疏优化求解（ISTA） --------------------------
+    coeffs_sparse = _ista_solver(
+        coeffs_original=coeffs_original,
+        signal=signal,
+        wavelet=wavelet,
+        lambda_sparse=lambda_sparse,
+        max_iter=max_iter,
+        tol=tol
+    )
+    
+    # -------------------------- 5. 小波重构 --------------------------
+    denoised_signal = pywt.waverec(coeffs_sparse, wavelet)[:len(signal)]
+    
+    # -------------------------- 6. 整理返回信息 --------------------------
+    info = {
+        'original_signal_shape': signal.shape,
+        'wavelet': wavelet,
+        'level': level,
+        'max_possible_level': max_possible_level,
+        'lambda_sparse': lambda_sparse,
+        'ista_max_iter': max_iter,
+        'ista_tol': tol,
+        'coeffs_original': coeffs_original,
+        'coeffs_sparse': coeffs_sparse,
+        'pywavelets_version': pywt.__version__
+    }
+    
+    return denoised_signal, info
+
+# -------------------------- 新增：SNR计算函数（用于对比效果） --------------------------
+def calculate_snr(clean_signal: np.ndarray, denoised_signal: np.ndarray) -> float:
+    """
+    计算信噪比（越高表示去噪效果越好）
+    """
+    noise = clean_signal - denoised_signal
+    signal_power = np.sum(clean_signal ** 2)
+    noise_power = np.sum(noise ** 2)
+    
+    if noise_power == 0:
+        return np.inf
+    return 10 * np.log10(signal_power / noise_power)
+
+
+
 # -------------------------- 测试用例（验证无低级错误） --------------------------
 if __name__ == "__main__":
     # 生成测试信号（带噪声的正弦波）

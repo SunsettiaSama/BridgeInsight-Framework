@@ -27,7 +27,7 @@ class Config:
     
     # 数据截取配置
     TRIM_START_SECOND = 0  # 从第几秒开始截取（秒）
-    TRIM_END_SECOND = 10  # 截取到第几秒（秒），设为None表示不截取
+    TRIM_END_SECOND = 3  # 截取到第几秒（秒），设为None表示不截取
     
     # 绘图配置
     FIG_SIZE = SQUARE_FIG_SIZE
@@ -49,8 +49,8 @@ class Config:
 # ==================== 数据获取函数 ====================
 def get_extreme_windows_from_metadata():
     """
-    从 RVSample/annotation_results.json 中读取元数据，
-    筛选出标注为 Normal_Vib (annotation=="0") 的窗口数据
+    从 VIVSample/annotation_results.json 中读取元数据，
+    筛选出标注为 VIV (annotation=="1") 的窗口数据
     
     返回：
         list: 极端窗口数据列表，每项为包含窗口数据和元数据的字典
@@ -60,7 +60,7 @@ def get_extreme_windows_from_metadata():
         "results", 
         "figs", 
         "figs_for_thesis", 
-        "RVSample", 
+        "VIVSample", 
         "annotation_results.json"
     )
     
@@ -73,17 +73,17 @@ def get_extreme_windows_from_metadata():
     
     print(f"✓ 读取到 {len(annotation_data)} 条标注记录")
     
-    normal_records = [item for item in annotation_data if item.get('annotation') == '0']
-    print(f"✓ 其中 Normal_Vib (annotation=='0') 的记录：{len(normal_records)} 条")
+    viv_records = [item for item in annotation_data if item.get('annotation') == '1']
+    print(f"✓ 其中 VIV (annotation=='1') 的记录：{len(viv_records)} 条")
     
-    if not normal_records:
-        raise ValueError("无 Normal_Vib 标注的记录")
+    if not viv_records:
+        raise ValueError("无 VIV 标注的记录")
     
     unpacker = UNPACK(init_path=False)
     all_extreme_windows = []
     
     print("\n[加载数据] 正在加载极端窗口数据...")
-    for i, record in enumerate(normal_records):
+    for i, record in enumerate(viv_records):
         metadata = record['metadata']
         file_path = metadata['file_path']
         extreme_indices = metadata['extreme_rms_indices']
