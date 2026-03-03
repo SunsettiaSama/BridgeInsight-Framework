@@ -10,7 +10,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.data_processer.io_unpacker import UNPACK
-from src.data_processer.singals.wavelet import wavelet_denoise
+from src.data_processer.signals.wavelet import wavelet_denoise
 from src.visualize_tools.utils import PlotLib
 from .config import ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE
 

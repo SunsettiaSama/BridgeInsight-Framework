@@ -83,21 +83,22 @@ class Config:
     CUSTOM_THRESHOLD = WaveletDenoisingConfig.get_threshold('custom_1')  # 使用自定义阈值常量
 
 
+
 # ==================== 数据获取函数 ====================
-def get_viv_windows():
+def get_rwiv_windows():
     """
-    从 VIVSample/annotation_results.json 中读取元数据，
-    筛选出标注为 VIV (annotation=="1") 的窗口数据
+    从 RWIVSample/annotation_results.json 中读取元数据，
+    筛选出标注为 RWIV (annotation=="2") 的窗口数据
     
     返回：
-        list: 极端窗口数据列表，每项为包含窗口数据和元数据的字典
+        list: 窗口数据列表，每项为包含窗口数据和元数据的字典
     """
     annotation_file = os.path.join(
         project_root, 
         "results", 
         "figs", 
         "figs_for_thesis", 
-        "VIVSample", 
+        "RWIVSample", 
         "annotation_results.json"
     )
     
@@ -110,17 +111,17 @@ def get_viv_windows():
     
     print(f"✓ 读取到 {len(annotation_data)} 条标注记录")
     
-    viv_records = [item for item in annotation_data if item.get('annotation') == '1']
-    print(f"✓ 其中 VIV (annotation=='1') 的记录：{len(viv_records)} 条")
+    rwiv_records = [item for item in annotation_data if item.get('annotation') == '2']
+    print(f"✓ 其中 RWIV (annotation=='2') 的记录：{len(rwiv_records)} 条")
     
-    if not viv_records:
-        raise ValueError("无 VIV 标注的记录")
+    if not rwiv_records:
+        raise ValueError("无 RWIV 标注的记录")
     
     unpacker = UNPACK(init_path=False)
     all_windows = []
     
-    print("\n[加载数据] 正在加载极端窗口数据...")
-    for i, record in enumerate(viv_records):
+    print("\n[加载数据] 正在加载窗口数据...")
+    for i, record in enumerate(rwiv_records):
         metadata = record['metadata']
         file_path = metadata['file_path']
         sensor_id = record['sensor_id']
@@ -152,7 +153,7 @@ def get_viv_windows():
         except Exception as e:
             print(f"  ⚠ 加载失败 {sensor_id} {time_str}: {e}")
     
-    print(f"✓ 成功加载 {len(all_windows)} 个极端窗口")
+    print(f"✓ 成功加载 {len(all_windows)} 个窗口")
     
     return all_windows
 
@@ -333,15 +334,15 @@ def plot_3d_vibration_psd_frequency_band(data, freq_min, freq_max, fs=Config.FS,
 
 def main():
     """
-    VIV 时域和频域3D绘制主函数
-    为每个样本生成两个频率范围的PSD图（0~2Hz 和 2~25Hz）
+    风雨联合诱发振动 (RWIV) 时域和频域3D绘制主函数
+    为每个样本生成三个频率范围的PSD图（0~2Hz、2~25Hz 和 0~25Hz）
     """
     print("="*80)
-    print("VIV 频域3D绘制（两个频率范围）")
+    print("RWIV 频域3D绘制（三个频率范围）")
     print("="*80)
     
-    print("\n[步骤1] 获取 VIV 窗口数据...")
-    windows = get_viv_windows()
+    print("\n[步骤1] 获取 RWIV 窗口数据...")
+    windows = get_rwiv_windows()
     
     print("\n[步骤2] 生成绘图...")
     ploter = PlotLib()

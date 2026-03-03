@@ -13,7 +13,7 @@ from src.data_processer.io_unpacker import UNPACK
 from src.data_processer.signals.wavelet import wavelet_denoise
 from src.visualize_tools.utils import PlotLib
 from .config import ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE
-
+from src.config.wavelet.config import WaveletDenoisingConfig
 
 # ==================== 常量配置 ====================
 class Config:
@@ -38,29 +38,29 @@ class Config:
     GRID_LINEWIDTH = 0.5
     GRID_LINESTYLE = '--'
     
-    # 小波去噪配置
-    ENABLE_WAVELET_DENOISE = True   # 是否启用小波去噪
-    WAVELET_TYPE = 'db4'            # 小波基类型（Daubechies 4）
-    WAVELET_LEVEL = 3               # 分解层数
-    THRESHOLD_TYPE = 'soft'         # 阈值类型（软阈值）
-    THRESHOLD_METHOD = 'sqtwolog'   # 阈值计算方法（平方根双对数法）
+    # 小波去噪配置（使用自定义阈值）
+    ENABLE_WAVELET_DENOISE = True                           # 是否启用小波去噪
+    WAVELET_TYPE = WaveletDenoisingConfig.WAVELET_TYPE      # 小波基类型
+    WAVELET_LEVEL = WaveletDenoisingConfig.WAVELET_LEVEL    # 分解层数
+    THRESHOLD_TYPE = WaveletDenoisingConfig.THRESHOLD_TYPE  # 阈值类型
+    CUSTOM_THRESHOLD = WaveletDenoisingConfig.get_threshold('custom_1')  # 使用自定义阈值常量
 
 
 # ==================== 数据获取函数 ====================
-def get_extreme_windows_from_metadata():
+def get_rwiv_windows():
     """
-    从 VIVSample/annotation_results.json 中读取元数据，
-    筛选出标注为 VIV (annotation=="1") 的窗口数据
+    从 RWIVSample/annotation_results.json 中读取元数据，
+    筛选出标注为 RWIV (annotation=="2") 的窗口数据
     
     返回：
-        list: 极端窗口数据列表，每项为包含窗口数据和元数据的字典
+        list: 窗口数据列表，每项为包含窗口数据和元数据的字典
     """
     annotation_file = os.path.join(
         project_root, 
         "results", 
         "figs", 
         "figs_for_thesis", 
-        "VIVSample", 
+        "RWIVSample", 
         "annotation_results.json"
     )
     
@@ -73,20 +73,19 @@ def get_extreme_windows_from_metadata():
     
     print(f"✓ 读取到 {len(annotation_data)} 条标注记录")
     
-    viv_records = [item for item in annotation_data if item.get('annotation') == '1']
-    print(f"✓ 其中 VIV (annotation=='1') 的记录：{len(viv_records)} 条")
+    rwiv_records = [item for item in annotation_data if item.get('annotation') == '2']
+    print(f"✓ 其中 RWIV (annotation=='2') 的记录：{len(rwiv_records)} 条")
     
-    if not viv_records:
-        raise ValueError("无 VIV 标注的记录")
+    if not rwiv_records:
+        raise ValueError("无 RWIV 标注的记录")
     
     unpacker = UNPACK(init_path=False)
-    all_extreme_windows = []
+    all_windows = []
     
-    print("\n[加载数据] 正在加载极端窗口数据...")
-    for i, record in enumerate(viv_records):
+    print("\n[加载数据] 正在加载窗口数据...")
+    for i, record in enumerate(rwiv_records):
         metadata = record['metadata']
         file_path = metadata['file_path']
-        extreme_indices = metadata['extreme_rms_indices']
         sensor_id = record['sensor_id']
         time_str = record['time']
         window_idx = record['window_index']
@@ -107,13 +106,13 @@ def get_extreme_windows_from_metadata():
                     'window_index': window_idx,
                     'file_path': file_path
                 }
-                all_extreme_windows.append(window_info)
+                all_windows.append(window_info)
         except Exception as e:
             print(f"  ⚠ 加载失败 {sensor_id} {time_str}: {e}")
     
-    print(f"✓ 成功加载 {len(all_extreme_windows)} 个极端窗口")
+    print(f"✓ 成功加载 {len(all_windows)} 个窗口")
     
-    return all_extreme_windows
+    return all_windows
 
 
 # ==================== 数据预处理函数 ====================
@@ -149,7 +148,7 @@ def preprocess_data_with_wavelet_denoise(data):
 # ==================== 绘图函数 ====================
 def plot_extreme_window(window_info, fs=Config.FS):
     """
-    绘制单个极端窗口的时域波形
+    绘制单个窗口的时域波形
     
     参数：
         window_info: 包含窗口数据和元数据的字典
@@ -201,21 +200,21 @@ def plot_extreme_window(window_info, fs=Config.FS):
 
 def main():
     """
-    绘图主函数：通过 vibration_io_process 工作流获取极端窗口数据并绘制
+    绘图主函数：获取RWIV窗口数据并绘制时域波形
     """
     try:
         print("="*80)
-        print("极端振动窗口时域波形绘制")
+        print("风雨联合诱发振动 (RWIV) 时域波形绘制")
         print("="*80)
         
-        print("\n[步骤1] 获取元数据和极端窗口数据...")
-        extreme_windows = get_extreme_windows_from_metadata()
+        print("\n[步骤1] 获取元数据和窗口数据...")
+        windows = get_rwiv_windows()
         
         print("\n[步骤2] 生成绘图...")
         figs = []
         ploter = PlotLib()
         
-        for i, window_info in enumerate(extreme_windows, 1):
+        for i, window_info in enumerate(windows, 1):
             print(f"  ✓ 样本 {i}: 正在进行小波去噪预处理...")
             fig, ax = plot_extreme_window(window_info)
             if fig is not None and ax is not None:

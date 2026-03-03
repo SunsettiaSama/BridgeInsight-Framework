@@ -10,6 +10,10 @@ from src.figs.figs_for_thesis.fig2_11_normal_vib_time_series_fft_3d import main 
 from src.figs.figs_for_thesis.fig2_12_VIV_vib_time_series import main as fig2_12
 from src.figs.figs_for_thesis.fig2_10_normal_vib_time_series import main as fig2_10
 from src.figs.figs_for_thesis.fig2_13_VIV_vib_time_series_fft_3d import main as fig2_13
+from src.figs.figs_for_thesis.fig2_14_RWIV_vib_time_series import main as fig2_14
+from src.figs.figs_for_thesis.fig2_15_RWIV_vib_time_series_fft_3d import main as fig2_15
+
 
 if __name__ == "__main__":
-    fig2_12()
+    fig2_14()
+    # fig2_15()
