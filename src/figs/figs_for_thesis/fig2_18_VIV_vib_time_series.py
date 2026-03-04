@@ -40,8 +40,8 @@ class Config:
     
     # 小波去噪配置
     ENABLE_WAVELET_DENOISE = True   # 是否启用小波去噪
-    WAVELET_TYPE = 'db4'            # 小波基类型（Daubechies 4）
-    WAVELET_LEVEL = 3               # 分解层数
+    WAVELET_TYPE = 'coif2'            # 小波基类型（coif2）
+    WAVELET_LEVEL = 5              # 分解层数
     THRESHOLD_TYPE = 'soft'         # 阈值类型（软阈值）
     THRESHOLD_METHOD = 'sqtwolog'   # 阈值计算方法（平方根双对数法）
 
