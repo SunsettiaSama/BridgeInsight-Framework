@@ -25,7 +25,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.data_processer.io_unpacker import UNPACK
-from src.data_processer.signals.wavelet import wavelet_denoise
+from src.data_processer.signals.wavelets import denoise
 from src.visualize_tools.utils import PlotLib
 from .config import (
     ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE, get_gray_to_red_color_map
@@ -196,7 +196,7 @@ def preprocess_data_with_wavelet_denoise(data):
         return data, {}
     
     try:
-        denoised_data, denoise_info = wavelet_denoise(
+        denoised_data, denoise_info = denoise(
             signal=data,
             wavelet=Config.WAVELET_TYPE,
             level=Config.WAVELET_LEVEL,

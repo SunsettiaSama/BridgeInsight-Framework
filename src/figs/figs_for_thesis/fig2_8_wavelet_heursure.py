@@ -14,7 +14,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.data_processer.io_unpacker import UNPACK
-from src.data_processer.signals.wavelet import wavelet_denoise
+from src.data_processer.signals.wavelets import denoise
 from src.visualize_tools.utils import PlotLib
 from .config import (
     ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE, get_gray_to_red_color_map
@@ -79,7 +79,7 @@ class Config:
     
     # 小波去噪配置
     ENABLE_WAVELET_DENOISE = True   # 是否启用小波去噪
-    WAVELET_TYPE = 'coif2'           # 小波基类型
+    WAVELET_TYPE = 'db3'           # 小波基类型
     WAVELET_LEVEL = 5                # 分解层数
     THRESHOLD_TYPE = 'soft'          # 阈值类型（软阈值）
     THRESHOLD_METHOD = 'heursure'    # 阈值计算方法
@@ -185,7 +185,7 @@ def preprocess_data_with_wavelet_denoise(data):
         return data, {}
     
     try:
-        denoised_data, denoise_info = wavelet_denoise(
+        denoised_data, denoise_info = denoise(
             signal=data,
             wavelet=Config.WAVELET_TYPE,
             level=Config.WAVELET_LEVEL,
