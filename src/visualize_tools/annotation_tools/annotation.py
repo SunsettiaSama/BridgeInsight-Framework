@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import random
 import tkinter as tk
 from tkinter import Tk, Label, Button, Entry, StringVar, messagebox, Frame, Toplevel, Radiobutton, FLAT, StringVar, filedialog
 from tkinter import ttk
@@ -71,12 +72,24 @@ class FigureCache:
                 # 删除最旧的（最不常用）图像
                 oldest_idx, oldest_fig = self.cache.popitem(last=False)
                 plt.close(oldest_fig)
+        
+        # 检查 matplotlib 内存状态
+        current_fig_count = len(plt.get_fignums())
+        if current_fig_count > self.max_size * 1.5:
+            print(f"⚠ 警告: 当前 matplotlib figure 数目: {current_fig_count}，超过安全阈值 {self.max_size * 1.5}")
     
     def clear(self):
         """清空缓冲"""
         for fig in self.cache.values():
             plt.close(fig)
         self.cache.clear()
+        
+        # 清理所有剩余的 matplotlib figure
+        remaining_figs = plt.get_fignums()
+        if remaining_figs:
+            print(f"⚠ 清理剩余 {len(remaining_figs)} 个 matplotlib figures")
+            for fig_num in remaining_figs:
+                plt.close(fig_num)
 
 
 # ==================== 数据提供者 ====================
@@ -373,6 +386,7 @@ class AnnotationWindowGUI:
         self.annotation_data = {}
         self.extreme_windows = []
         self.filtered_indices = []
+        self.current_canvas = None
         
         self.save_result_path = save_result_path or DEFAULT_ANNOTATION_RESULT_PATH
         self.selected_mode = None
@@ -422,6 +436,7 @@ class AnnotationWindowGUI:
         self.entry_text = StringVar()
         self.entry = Entry(input_frame, textvariable=self.entry_text, font=("Arial", 9))
         self.entry.pack(side=tk.LEFT, padx=2, fill=tk.X, expand=True)
+        self.entry.bind('<Return>', self._on_entry_return)
         
         Button(input_frame, text="◀ (←)", command=self.prev_window, width=4).pack(side=tk.LEFT, padx=1)
         Button(input_frame, text="▶ (→)", command=self.next_window, width=4).pack(side=tk.LEFT, padx=1)
@@ -657,6 +672,9 @@ class AnnotationWindowGUI:
         
         if not self.filtered_indices:
             raise ValueError("没有任何窗口通过阈值、日期和传感器检查")
+        
+        random.shuffle(self.filtered_indices)
+        print(f"✓ 已打乱窗口顺序")
     
     def _check_window_threshold(self, window_info: Dict) -> bool:
         """检查窗口是否通过阈值检查"""
@@ -731,7 +749,7 @@ class AnnotationWindowGUI:
             # 存入缓冲
             self.figure_cache.put(actual_window_index, fig)
         
-        # 清除旧的canvas
+        # 清除旧的canvas和widget
         for widget in self.canvas_frame.winfo_children():
             widget.destroy()
         
@@ -739,6 +757,9 @@ class AnnotationWindowGUI:
         canvas = FigureCanvasTkAgg(fig, master=self.canvas_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        
+        # 保存 canvas 引用以便后续清理
+        self.current_canvas = canvas
         
         window_key = self._get_window_key(window_info)
         current_annotation = self.annotation_data.get(window_key, "")
@@ -759,6 +780,12 @@ class AnnotationWindowGUI:
             annotation = self.entry_text.get()
             self.annotation_data[window_key] = annotation
     
+    def _on_entry_return(self, event=None):
+        """处理 Entry 上的 Return 键，进行下一个窗口并回到 Entry"""
+        self.next_window()
+        self.entry.focus_set()
+        return 'break'
+    
     def next_window(self, event=None):
         """显示下一个窗口"""
         if self.current_window_index < len(self.filtered_indices) - 1:
@@ -771,16 +798,104 @@ class AnnotationWindowGUI:
             self.current_window_index -= 1
             self.show_window()
     
+    def _prompt_save_mode(self):
+        """
+        弹出对话框让用户选择保存模式
+        
+        Returns:
+            str: 'append' 表示追加，'overwrite' 表示覆盖，'cancel' 表示取消
+        """
+        result_var = StringVar(value="cancel")
+        
+        def on_append():
+            result_var.set("append")
+            dialog_root.destroy()
+        
+        def on_overwrite():
+            result_var.set("overwrite")
+            dialog_root.destroy()
+        
+        def on_cancel():
+            result_var.set("cancel")
+            dialog_root.destroy()
+        
+        dialog_root = Toplevel(self.root)
+        dialog_root.title("保存模式选择")
+        dialog_root.geometry("400x180")
+        dialog_root.transient(self.root)
+        dialog_root.grab_set()
+        
+        # 标题
+        Label(
+            dialog_root, 
+            text="文件已存在，请选择保存模式：", 
+            font=("SimHei", 12),
+            fg="blue"
+        ).pack(pady=15)
+        
+        # 选项框架
+        options_frame = Frame(dialog_root)
+        options_frame.pack(padx=20, pady=10, fill='both', expand=True)
+        
+        mode_var = StringVar(value="append")
+        
+        Radiobutton(
+            options_frame, 
+            text="追加 - 将新标注合并到现有文件中（推荐）", 
+            variable=mode_var, 
+            value="append",
+            font=("SimHei", 11),
+            justify='left'
+        ).pack(anchor='w', pady=8)
+        
+        Radiobutton(
+            options_frame, 
+            text="覆盖 - 新标注将替换现有文件中的所有数据", 
+            variable=mode_var, 
+            value="overwrite",
+            font=("SimHei", 11),
+            justify='left'
+        ).pack(anchor='w', pady=8)
+        
+        # 按钮框架
+        button_frame = Frame(dialog_root)
+        button_frame.pack(pady=15)
+        
+        Button(
+            button_frame, 
+            text="确认", 
+            width=12,
+            command=lambda: (result_var.set(mode_var.get()), dialog_root.destroy())
+        ).pack(side='left', padx=5)
+        
+        Button(
+            button_frame, 
+            text="取消", 
+            width=12,
+            command=on_cancel
+        ).pack(side='left', padx=5)
+        
+        dialog_root.wait_window()
+        return result_var.get()
+    
     def save_results(self, event=None):
-        """保存标注结果，支持追加和覆盖"""
+        """
+        保存标注结果，支持追加和覆盖
+        
+        当指定的保存路径不同于默认路径且文件已存在时，
+        会提示用户选择是追加还是覆盖
+        """
         try:
             # 确保保存路径的目录存在
             save_dir = os.path.dirname(self.save_result_path)
             if save_dir and not os.path.exists(save_dir):
                 os.makedirs(save_dir)
             
-            # 1. 检查文件是否存在，加载已有数据
+            # 判断是否应该追加
+            should_append = True
             existing_data = {}
+            
+            # 检查文件是否存在
             if os.path.exists(self.save_result_path):
                 try:
                     with open(self.save_result_path, 'r', encoding='utf-8') as f:
@@ -790,9 +905,33 @@ class AnnotationWindowGUI:
                             f"{item['file_path']}_{item['window_index']}": item 
                             for item in existing_results
                         }
-                    print(f"✓ 加载了 {len(existing_data)} 条已有标注")
+                    
+                    # 如果文件存在且有数据，询问用户是否追加
+                    if existing_data:
+                        print(f"✓ 检测到现有文件中有 {len(existing_data)} 条标注")
+                        # 弹出对话框询问用户
+                        save_mode = self._prompt_save_mode()
+                        
+                        if save_mode == "cancel":
+                            print("✗ 保存已取消")
+                            return
+                        elif save_mode == "overwrite":
+                            should_append = False
+                            existing_data = {}  # 清空已有数据，实现覆盖
+                            print("✓ 已选择覆盖模式")
+                        else:  # append
+                            print("✓ 已选择追加模式")
+                    else:
+                        print("✓ 现有文件为空，将进行追加操作")
+                        
+                except json.JSONDecodeError as e:
+                    print(f"⚠ 现有文件格式错误: {e}，将进行覆盖")
+                    should_append = False
+                    existing_data = {}
                 except Exception as e:
-                    print(f"⚠ 加载现有文件失败: {e}")
+                    print(f"⚠ 加载现有文件失败: {e}，将进行覆盖")
+                    should_append = False
+                    existing_data = {}
             
             # 2. 构建新的结果列表，只保存有意义的标注
             results = []
@@ -821,11 +960,12 @@ class AnnotationWindowGUI:
                     
                     results.append(result_item)
             
-            # 3. 合并新旧数据（保留已有的数据）
-            for key, item in existing_data.items():
-                # 检查是否在新数据中
-                if not any(f"{r['file_path']}_{r['window_index']}" == key for r in results):
-                    results.append(item)
+            # 3. 如果选择追加，合并新旧数据（保留已有的数据）
+            if should_append:
+                for key, item in existing_data.items():
+                    # 检查是否在新数据中
+                    if not any(f"{r['file_path']}_{r['window_index']}" == key for r in results):
+                        results.append(item)
             
             # 4. 按照 file_path 和 window_index 排序，便于查看
             results.sort(key=lambda x: (x['file_path'], x['window_index']))
@@ -836,14 +976,16 @@ class AnnotationWindowGUI:
             
             # 6. 显示统计信息
             total_saved = len(results)
+            save_mode_text = "追加" if should_append else "覆盖"
+            
             messagebox.showinfo("保存成功", 
-                              f"标注结果已保存\n"
+                              f"标注结果已{save_mode_text}保存\n"
                               f"新增标注: {new_count} 个\n"
                               f"更新标注: {updated_count} 个\n"
                               f"总保存数: {total_saved} 个\n"
                               f"保存路径: {self.save_result_path}")
             
-            print(f"✓ 保存完成: 新增{new_count}个，更新{updated_count}个，总计{total_saved}个")
+            print(f"✓ 保存完成({save_mode_text}): 新增{new_count}个，更新{updated_count}个，总计{total_saved}个")
             
         except Exception as e:
             messagebox.showerror("保存失败", f"保存结果失败: {str(e)}")
