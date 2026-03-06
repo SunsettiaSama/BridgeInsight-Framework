@@ -24,8 +24,8 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.data_processer.statistics.wind_data_io_process.workflow import run as run_wind_workflow
-from src.data_processer.statistics.vibration_io_process.workflow import run as run_vib_workflow
+from src.data_processer.preprocess.wind_data_io_process.workflow import run as run_wind_workflow
+from src.data_processer.preprocess.vibration_io_process.workflow import run as run_vib_workflow
 from src.visualize_tools.utils import PlotLib
 
 from .config import ENG_FONT, CN_FONT, REC_FONT_SIZE, REC_FIG_SIZE, get_blue_color_map

@@ -23,13 +23,15 @@ import matplotlib.pyplot as plt
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 
+from src.figs.figs_for_thesis.fig2_15_wind_turbulence import USE_MULTIPROCESS
+
 # 添加项目根目录到 sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # 导入数据处理工作流
-from src.data_processer.statistics.workflow import get_data_pairs
+from src.data_processer.preprocess.workflow import get_data_pairs
 
 # 导入可视化工具
 from src.visualize_tools.utils import PlotLib
@@ -45,6 +47,7 @@ from src.config.sensor_config import (
 # 导入绘图配置
 from .config import ENG_FONT, CN_FONT, FONT_SIZE, REC_FIG_SIZE
 
+USE_MULTIPROCESS = True
 
 # --------------- 全局配置 ---------------
 plt.style.use('default')

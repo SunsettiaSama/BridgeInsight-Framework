@@ -14,8 +14,8 @@ from src.data_processer.io_unpacker import UNPACK
 from src.config.io_config import WIND_DATA_ROOT
 
 # 导入子模块工作流接口
-from src.data_processer.statistics.vibration_io_process.workflow import run as run_vib_workflow
-from src.data_processer.statistics.wind_data_io_process.workflow import run as run_wind_workflow
+from src.data_processer.preprocess.vibration_io_process.workflow import run as run_vib_workflow
+from src.data_processer.preprocess.wind_data_io_process.workflow import run as run_wind_workflow
 
 # --------------- 采样频率和窗口配置 ---------------
 _VIB_FS = 50

@@ -11,13 +11,13 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # 导入各步骤模块
-from src.data_processer.statistics.vibration_io_process.step0_get_vib_data import get_all_vibration_files
-from src.data_processer.statistics.vibration_io_process.step1_lackness_filter import run_lackness_filter
-from src.data_processer.statistics.vibration_io_process.step2_rms_statistics import run_rms_statistics
+from src.data_processer.preprocess.vibration_io_process.step0_get_vib_data import get_all_vibration_files
+from src.data_processer.preprocess.vibration_io_process.step1_lackness_filter import run_lackness_filter
+from src.data_processer.preprocess.vibration_io_process.step2_rms_statistics import run_rms_statistics
 from src.data_processer.io_unpacker import parse_path_metadata
 
 # 从配置文件导入常量
-from src.config.data_processer.statistics.vibration_io_process.config import (
+from src.config.data_processer.preprocess.vibration_io_process.config import (
     MISSING_RATE_THRESHOLD,
     EXPECTED_LENGTH,
     FILTER_RESULT_PATH,

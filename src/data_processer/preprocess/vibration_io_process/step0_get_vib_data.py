@@ -7,7 +7,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # 从配置文件导入常量
-from src.config.data_processer.statistics.vibration_io_process.config import (
+from src.config.data_processer.preprocess.vibration_io_process.config import (
     ALL_VIBRATION_ROOT,
     VIBRATION_FILE_SUFFIX,
     TARGET_VIBRATION_SENSORS

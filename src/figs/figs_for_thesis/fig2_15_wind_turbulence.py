@@ -41,8 +41,8 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # 导入数据处理工作流
-from src.data_processer.statistics.wind_data_io_process.workflow import run as run_wind_workflow
-from src.data_processer.statistics.vibration_io_process.workflow import run as run_vib_workflow
+from src.data_processer.preprocess.wind_data_io_process.workflow import run as run_wind_workflow
+from src.data_processer.preprocess.vibration_io_process.workflow import run as run_vib_workflow
 from src.data_processer.io_unpacker import UNPACK
 
 # 导入可视化工具

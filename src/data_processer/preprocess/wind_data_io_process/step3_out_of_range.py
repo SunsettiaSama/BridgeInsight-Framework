@@ -17,7 +17,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # 从配置文件导入常量
-from src.config.data_processer.statistics.wind_data_io_process.config import (
+from src.config.data_processer.preprocess.wind_data_io_process.config import (
     FS as WIND_FS,
     OUT_OF_RANGE_VELOCITY_MIN,
     OUT_OF_RANGE_VELOCITY_MAX,
@@ -290,10 +290,10 @@ def run_out_of_range_query(filtered_metadata, min_vel=OUT_OF_RANGE_VELOCITY_MIN,
 
 if __name__ == "__main__":
     # 测试接口
-    from src.data_processer.statistics.wind_data_io_process.step0_get_wind_data import get_all_wind_files
-    from src.data_processer.statistics.wind_data_io_process.step1_timestamp_align import run_timestamp_align
-    from src.data_processer.statistics.wind_data_io_process.step2_extreme_filter import run_extreme_filter
-    from src.data_processer.statistics.vibration_io_process.workflow import run as run_vib_workflow
+    from src.data_processer.preprocess.wind_data_io_process.step0_get_wind_data import get_all_wind_files
+    from src.data_processer.preprocess.wind_data_io_process.step1_timestamp_align import run_timestamp_align
+    from src.data_processer.preprocess.wind_data_io_process.step2_extreme_filter import run_extreme_filter
+    from src.data_processer.preprocess.vibration_io_process.workflow import run as run_vib_workflow
     from src.data_processer.io_unpacker import parse_path_metadata
     
     print("="*80)

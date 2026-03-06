@@ -15,7 +15,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # 从配置文件导入常量
-from src.config.data_processer.statistics.wind_data_io_process.config import FS as WIND_FS
+from src.config.data_processer.preprocess.wind_data_io_process.config import FS as WIND_FS
 from src.config.sensor_config import VIB_TO_WIND_SENSOR_MAP, DEFAULT_WIND_SENSORS
 
 # 硬编码参数（与振动数据保持一致）
@@ -186,7 +186,7 @@ def run_extreme_filter(wind_metadata, vib_metadata, logger=None):
 
 if __name__ == "__main__":
     # 测试接口
-    from src.data_processer.statistics.vibration_io_process.workflow import run as run_vib_workflow
+    from src.data_processer.preprocess.vibration_io_process.workflow import run as run_vib_workflow
     from step0_get_wind_data import get_all_wind_files
     from step1_timestamp_align import run_timestamp_align
     from src.data_processer.io_unpacker import parse_path_metadata

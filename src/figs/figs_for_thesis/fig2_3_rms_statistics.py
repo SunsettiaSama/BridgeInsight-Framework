@@ -48,8 +48,8 @@ from .config import (
 )
 
 # 导入数据处理模块
-from ...data_processer.statistics.vibration_io_process.step0_get_vib_data import get_all_vibration_files
-from ...data_processer.statistics.vibration_io_process.step1_lackness_filter import run_lackness_filter
+from ...data_processer.preprocess.vibration_io_process.step0_get_vib_data import get_all_vibration_files
+from ...data_processer.preprocess.vibration_io_process.step1_lackness_filter import run_lackness_filter
 
 RESULT_SAVE_PATH = r'F:\Research\Vibration Characteristics In Cable Vibration\results\rms_statistics.txt'
 

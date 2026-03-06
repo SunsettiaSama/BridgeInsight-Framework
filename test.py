@@ -8,7 +8,7 @@ from src.visualize_tools.annotation_tools.annotation import AnnotationGUI
 
 if __name__ == "__main__":
     # fig2_16_normal_vib_time_series()
-
+    fig2_8_wavelet_heursure()
     app = AnnotationGUI()
     app.run()
 

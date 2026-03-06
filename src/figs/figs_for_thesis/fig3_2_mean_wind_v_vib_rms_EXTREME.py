@@ -29,7 +29,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # 导入数据处理工作流
-from src.data_processer.statistics.workflow import get_data_pairs
+from src.data_processer.preprocess.workflow import get_data_pairs
 
 # 导入可视化工具
 from src.visualize_tools.utils import PlotLib

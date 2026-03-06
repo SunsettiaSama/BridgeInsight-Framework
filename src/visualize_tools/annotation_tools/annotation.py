@@ -20,7 +20,7 @@ if project_root not in sys.path:
 
 from tkinter import Tk as TK_Root
 from src.data_processer.io_unpacker import UNPACK
-from src.data_processer.statistics.vibration_io_process.workflow import run as run_vib_workflow
+from src.data_processer.preprocess.vibration_io_process.workflow import run as run_vib_workflow
 from src.figs.figs_for_thesis.config import get_viridis_color_map
 
 # ==================== 全局绘图配置 ====================

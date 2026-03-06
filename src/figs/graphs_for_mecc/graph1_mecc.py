@@ -6,11 +6,11 @@ from scipy.io import loadmat
 from scipy import signal
 from tqdm import tqdm
 from sklearn.metrics import f1_score, confusion_matrix
-from ..NN.dataset_modules.imgs import MyDataset
+from src.deep_learning_module.datasets.VIVImgDataset import MyDataset
 
 # 自定义模块（需确保路径/依赖正确）
-from ..visualize_tools.utils import PlotLib   # 假设自定义类在utils中，可根据实际路径调整
-from ..method.base_mode_calculator import Cal_Mount
+from src.visualize_tools.utils import PlotLib   # 假设自定义类在utils中，可根据实际路径调整
+from src.method.base_mode_calculator import Cal_Mount
 
 # ===================== 全局配置与常量定义 =====================
 # 数据集路径（抽离为常量，便于修改）

@@ -13,7 +13,7 @@ if project_root not in sys.path:
 from src.data_processer.io_unpacker import UNPACK
 
 # 从配置文件导入常量
-from src.config.data_processer.statistics.vibration_io_process.config import (
+from src.config.data_processer.preprocess.vibration_io_process.config import (
     MISSING_RATE_THRESHOLD,
     EXPECTED_LENGTH
 )
