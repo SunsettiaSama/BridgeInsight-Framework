@@ -2,7 +2,7 @@ import os
 import sys
 import json
 import tkinter as tk
-from tkinter import Tk, Label, Button, Entry, StringVar, messagebox, Frame, Toplevel, Radiobutton, FLAT, StringVar
+from tkinter import Tk, Label, Button, Entry, StringVar, messagebox, Frame, Toplevel, Radiobutton, FLAT, StringVar, filedialog
 from tkinter import ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
@@ -20,15 +20,16 @@ if project_root not in sys.path:
 from tkinter import Tk as TK_Root
 from src.data_processer.io_unpacker import UNPACK
 from src.data_processer.statistics.vibration_io_process.workflow import run as run_vib_workflow
+from src.figs.figs_for_thesis.config import get_viridis_color_map
 
 # ==================== 全局绘图配置 ====================
 plt.style.use('default')
-plt.rcParams['font.sans-serif'] = ['Times New Roman', 'SimHei']
+plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
-FONT_SIZE = 12
-LABEL_FONT_SIZE = 14
-ENG_FONT = plt.matplotlib.font_manager.FontProperties(family='Times New Roman', size=LABEL_FONT_SIZE)
+FONT_SIZE = 11
+LABEL_FONT_SIZE = 12
+ENG_FONT = plt.matplotlib.font_manager.FontProperties(family='DejaVu Sans', size=LABEL_FONT_SIZE)
 CN_FONT = plt.matplotlib.font_manager.FontProperties(family='SimHei', size=LABEL_FONT_SIZE)
 
 FIG_SIZE = (12, 8)
@@ -224,7 +225,7 @@ class AnnotationFigureGenerator:
         self.fs = fs
     
     def generate_figure(self, window_info: Dict) -> Tuple[Optional[plt.Figure], Optional[str]]:
-        """生成单个窗口的时域+频域上下子图"""
+        """生成单个窗口的图像：左侧时域+频域，右侧频域变化"""
         try:
             data = window_info['data']
             sensor_id = window_info['sensor_id']
@@ -234,10 +235,16 @@ class AnnotationFigureGenerator:
             if len(data) == 0:
                 return None, "窗口数据为空"
             
-            fig, axes = plt.subplots(2, 1, figsize=FIG_SIZE)
+            fig = plt.figure(figsize=(18, 8))
             
-            self._plot_time_domain(axes[0], data, sensor_id, time_str, window_idx)
-            self._plot_frequency_domain(axes[1], data, sensor_id, time_str, window_idx)
+            gs = fig.add_gridspec(2, 2, width_ratios=[1, 1.2], wspace=0.3)
+            ax_time = fig.add_subplot(gs[0, 0])
+            ax_freq = fig.add_subplot(gs[1, 0])
+            ax_freq_change = fig.add_subplot(gs[:, 1])
+            
+            self._plot_time_domain(ax_time, data, sensor_id, time_str, window_idx)
+            self._plot_frequency_domain(ax_freq, data, sensor_id, time_str, window_idx)
+            self._plot_frequency_evolution(ax_freq_change, data, sensor_id, time_str, window_idx)
             
             plt.tight_layout()
             
@@ -295,6 +302,56 @@ class AnnotationFigureGenerator:
         ax.tick_params(axis='both', which='major', labelsize=FONT_SIZE)
         
         ax.set_xlim(0, freq_limit)
+    
+    def _plot_frequency_evolution(self, ax, data: np.ndarray, sensor_id: str, 
+                                  time_str: str, window_idx: int):
+        """绘制频域随时间变化的频带堆积图"""
+        freq_limit = 25
+        fs_int = int(self.fs)
+        window_total = int(len(data) // fs_int)
+        
+        psd_list = []
+        time_labels = []
+        
+        for i in range(window_total):
+            start_idx = i * fs_int
+            end_idx = (i + 1) * fs_int
+            
+            if end_idx <= len(data):
+                segment = data[start_idx:end_idx]
+                f, psd = signal.welch(segment, fs=self.fs, nperseg=int(self.fs * 0.8),
+                                     noverlap=int(self.fs * 0.4), nfft=NFFT)
+                
+                mask = f <= freq_limit
+                psd_limited = psd[mask]
+                psd_list.append(psd_limited)
+                time_labels.append(f"{i}s")
+        
+        if not psd_list:
+            return
+        
+        spec_array = np.array(psd_list)
+        
+        f_limited = f[f <= freq_limit]
+        
+        cmap_gray = get_viridis_color_map(start_gray=0.2)
+
+        im = ax.imshow(spec_array, aspect='auto', origin='lower', cmap=cmap_gray, 
+                       extent=[0, freq_limit, 0, window_total],
+                       interpolation='bilinear')
+        
+        title = f"{sensor_id} @ {time_str} (窗口 {window_idx}) - 频域演变"
+        ax.set_title(title, fontproperties=CN_FONT, fontsize=LABEL_FONT_SIZE)
+        
+        ax.set_xlabel('频率 (Hz)', labelpad=10, fontproperties=CN_FONT, fontsize=LABEL_FONT_SIZE)
+        ax.set_ylabel('时间 (s)', labelpad=10, fontproperties=CN_FONT, fontsize=LABEL_FONT_SIZE)
+        
+        ax.set_yticks(np.arange(0, window_total + 1, max(1, window_total // 10)))
+        ax.tick_params(axis='both', which='major', labelsize=FONT_SIZE)
+        
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label('功率谱密度 $(m/s^2)^2/Hz$', fontproperties=CN_FONT, fontsize=LABEL_FONT_SIZE)
+        cbar.ax.tick_params(labelsize=FONT_SIZE)
 
 
 # ==================== 用户界面 ====================
@@ -304,7 +361,7 @@ class AnnotationWindowGUI:
     def __init__(self, root, save_result_path: str = None):
         self.root = root
         self.root.title("振动数据标注系统")
-        self.root.geometry("1600x1000")  # 增大窗口
+        self.root.geometry("1800x1000")
         
         self.root.bind('<Return>', self.next_window)
         self.root.bind('<Right>', self.next_window)
@@ -323,7 +380,7 @@ class AnnotationWindowGUI:
         self.amplitude_threshold = None
         self.date_start = None
         self.date_end = None
-        self.sensor_ids = []  # 要筛选的传感器列表
+        self.sensor_ids = []
         
         self.data_provider = None
         self.figure_generator = AnnotationFigureGenerator(fs=FS)
@@ -331,7 +388,6 @@ class AnnotationWindowGUI:
         
         self._init_ui()
         
-        # 在UI初始化后显示模式选择对话框
         self.root.after(100, self._show_mode_selection_dialog)
     
     def _init_ui(self):
@@ -345,8 +401,12 @@ class AnnotationWindowGUI:
         self.status_label = Label(top_frame, text="加载中...", fg="blue", font=("Arial", 11, "bold"))
         self.status_label.pack(side=tk.LEFT, padx=5)
         
+        Button(top_frame, text="选择保存位置", command=self._select_save_path).pack(side=tk.RIGHT, padx=2)
         Button(top_frame, text="保存结果", command=self.save_results).pack(side=tk.RIGHT, padx=2)
         Button(top_frame, text="关闭", command=self.on_closing).pack(side=tk.RIGHT, padx=2)
+        
+        self.save_path_label = Label(top_frame, text="", fg="gray", font=("Arial", 9))
+        self.save_path_label.pack(side=tk.RIGHT, padx=10)
         
         self.canvas_frame = Frame(main_frame)
         self.canvas_frame.pack(fill=tk.BOTH, expand=True, pady=5)
@@ -354,7 +414,6 @@ class AnnotationWindowGUI:
         bottom_frame = Frame(main_frame)
         bottom_frame.pack(fill=tk.X, pady=5)
         
-        # 输入标注的区域
         input_frame = Frame(bottom_frame)
         input_frame.pack(fill=tk.X, padx=2, pady=2)
         
@@ -368,6 +427,8 @@ class AnnotationWindowGUI:
         Button(input_frame, text="▶ (→)", command=self.next_window, width=4).pack(side=tk.LEFT, padx=1)
         
         self.entry_text.trace_add('write', self._on_annotation_changed)
+        
+        self._update_save_path_label()
     
     def _show_mode_selection_dialog(self):
         """显示模式选择对话框（作为主窗口的子窗口）"""
@@ -488,7 +549,6 @@ class AnnotationWindowGUI:
             # 解析传感器ID
             sensor_str = sensor_var.get().strip()
             if sensor_str:
-                # 支持单个或多个传感器，用逗号分隔
                 self.sensor_ids = [s.strip() for s in sensor_str.split(',')]
                 print(f"✓ 筛选传感器: {self.sensor_ids}")
             
@@ -518,6 +578,28 @@ class AnnotationWindowGUI:
         
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+    
+    def _select_save_path(self):
+        """打开文件对话框选择保存位置"""
+        file_path = filedialog.asksaveasfilename(
+            title="选择保存位置",
+            defaultextension=".json",
+            filetypes=[("JSON文件", "*.json"), ("所有文件", "*.*")],
+            initialfile="annotation_results.json"
+        )
+        
+        if file_path:
+            self.save_result_path = file_path
+            self._update_save_path_label()
+            messagebox.showinfo("成功", f"保存位置已更新:\n{file_path}")
+    
+    def _update_save_path_label(self):
+        """更新保存路径标签"""
+        if hasattr(self, 'save_path_label'):
+            display_path = self.save_result_path
+            if len(display_path) > 50:
+                display_path = "..." + display_path[-47:]
+            self.save_path_label.config(text=f"保存位置: {display_path}")
     
     def _load_data(self):
         """加载数据"""
