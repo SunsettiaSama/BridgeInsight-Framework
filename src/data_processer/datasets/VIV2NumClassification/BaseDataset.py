@@ -6,9 +6,11 @@ import numpy as np
 from torch.utils.data import Dataset
 import copy
 import logging
+import sys
 
-# 导入标准化配置基类
-from ..configs.datasets.base_dataset_config import BaseDatasetConfig
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from config.data_processer.datasets.data_factory import BaseDatasetConfig
 
 # 类型变量，用于约束数据集实例类型
 DatasetType = TypeVar("DatasetType", bound="BaseDataset")

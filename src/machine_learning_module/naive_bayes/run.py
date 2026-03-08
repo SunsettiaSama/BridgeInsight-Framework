@@ -7,43 +7,43 @@ import logging
 import sys
 import os
 from pathlib import Path
-from .train import train_svm
-from .eval import infer_svm
-from config.machine_learning_module.svm.workflow_config import SVMWorkflowConfig
+from .train import train_naive_bayes
+from .eval import infer_naive_bayes
+from config.machine_learning_module.naive_bayes.workflow_config import NaiveBayesWorkflowConfig
 
 
-class SVMWorkflow:
-    """SVM 完整工作流类"""
+class NaiveBayesWorkflow:
+    """朴素贝叶斯完整工作流类"""
     
     def __init__(self, config=None):
         """
         初始化工作流
-        :param config: SVMWorkflowConfig 或其他配置对象
+        :param config: NaiveBayesWorkflowConfig 或其他配置对象
         """
-        self.config = config or SVMWorkflowConfig()
+        self.config = config or NaiveBayesWorkflowConfig()
         self.logger = self._setup_logging()
         self.train_result = None
         self.eval_result = None
     
     def _setup_logging(self):
         """设置日志系统"""
-        logger = logging.getLogger('SVMWorkflow')
-        logger.setLevel(self.config.LOG_LEVEL)
+        logger = logging.getLogger('NaiveBayesWorkflow')
+        log_level = self.config.LOG_LEVEL
+        logger.setLevel(log_level)
         
-        # 清除已有的处理器
         logger.handlers.clear()
         
-        # 日志格式化器
-        formatter = logging.Formatter(self.config.LOG_FORMAT)
+        log_format = self.config.LOG_FORMAT
+        formatter = logging.Formatter(log_format, datefmt='%Y-%m-%d %H:%M:%S')
         
-        # 控制台处理器
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
         
-        # 文件处理器
-        if self.config.LOG_FILE:
-            file_handler = logging.FileHandler(self.config.LOG_FILE, encoding='utf-8')
+        log_file = self.config.LOG_FILE
+        if log_file:
+            os.makedirs(os.path.dirname(log_file) or '.', exist_ok=True)
+            file_handler = logging.FileHandler(log_file, encoding='utf-8')
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
         
@@ -51,7 +51,7 @@ class SVMWorkflow:
     
     def run(self, train_dataloader=None, val_dataloader=None, infer_dataloader=None, infer_has_label=True):
         """
-        执行完整的SVM工作流
+        执行完整的朴素贝叶斯工作流
         :param train_dataloader: 训练集DataLoader（训练阶段需要）
         :param val_dataloader: 验证集DataLoader（可选）
         :param infer_dataloader: 推理集DataLoader（推理阶段需要）
@@ -59,12 +59,11 @@ class SVMWorkflow:
         :return: 包含训练和推理结果的字典
         """
         self.logger.info("=" * 50)
-        self.logger.info(f"开始执行SVM工作流 - 模式: {self.config.MODE}")
+        self.logger.info(f"开始执行朴素贝叶斯工作流 - 模式: {self.config.MODE}")
         self.logger.info("=" * 50)
         
         results = {}
         
-        # 训练阶段
         if self.config.ENABLE_TRAIN:
             self.logger.info("开始训练阶段...")
             if train_dataloader is None:
@@ -75,7 +74,6 @@ class SVMWorkflow:
             results['train'] = self.train_result
             self.logger.info("训练阶段完成")
         
-        # 推理阶段
         if self.config.ENABLE_EVAL:
             self.logger.info("开始推理阶段...")
             if infer_dataloader is None:
@@ -87,7 +85,7 @@ class SVMWorkflow:
             self.logger.info("推理阶段完成")
         
         self.logger.info("=" * 50)
-        self.logger.info("SVM工作流执行完成")
+        self.logger.info("朴素贝叶斯工作流执行完成")
         self.logger.info("=" * 50)
         
         return results
@@ -99,10 +97,10 @@ class SVMWorkflow:
         :param val_dataloader: 验证集DataLoader
         :return: 训练结果
         """
-        self.logger.info("正在运行SVM训练...")
+        self.logger.info("正在运行朴素贝叶斯训练...")
         
         tc = self.config.TRAIN_CONFIG
-        result = train_svm(
+        result = train_naive_bayes(
             train_dataloader, val_dataloader,
             model_save_path=tc.get('model_save_path'),
             result_save_path=tc.get('result_save_path')
@@ -112,7 +110,7 @@ class SVMWorkflow:
         if result['val_metrics']:
             self.logger.info(f"验证集准确率: {result['val_metrics']['accuracy']:.4f}")
         
-        self.logger.info(f"模型参数: {result['model_params']}")
+        self.logger.info(f"模型参数 - 特征维度: {result['feature_dim']}, 类别数: {result['class_num']}")
         
         return result
     
@@ -123,13 +121,13 @@ class SVMWorkflow:
         :param has_label: 推理数据是否有标签
         :return: 推理结果
         """
-        self.logger.info("正在运行SVM推理...")
+        self.logger.info("正在运行朴素贝叶斯推理...")
         
         ec = self.config.EVAL_CONFIG
-        model_path = ec.get('model_load_path', 'results/classification_results/machine_learning/svm/svm_model.pkl')
+        model_path = ec.get('model_load_path', 'results/classification_results/machine_learning/naive_bayes/nb_model.pkl')
         infer_result_path = ec.get('result_path')
         
-        result = infer_svm(infer_dataloader, model_path, has_label, infer_result_path=infer_result_path)
+        result = infer_naive_bayes(infer_dataloader, model_path, has_label, infer_result_path=infer_result_path)
         
         self.logger.info(f"推理样本数: {result['sample_num']}")
         self.logger.info(f"类别数: {result['class_num']}")
@@ -147,7 +145,7 @@ class SVMWorkflow:
         }
 
 
-def run_svm_workflow(
+def run_naive_bayes_workflow(
     train_dataloader=None,
     val_dataloader=None,
     infer_dataloader=None,
@@ -157,7 +155,7 @@ def run_svm_workflow(
     enable_eval=True
 ):
     """
-    便捷函数：直接运行SVM工作流
+    便捷函数：直接运行朴素贝叶斯工作流
     
     :param train_dataloader: 训练集DataLoader
     :param val_dataloader: 验证集DataLoader（可选）
@@ -169,13 +167,12 @@ def run_svm_workflow(
     :return: 工作流结果字典
     """
     if config is None:
-        config = SVMWorkflowConfig()
+        config = NaiveBayesWorkflowConfig()
     
-    # 根据参数更新配置
     config.ENABLE_TRAIN = enable_train
     config.ENABLE_EVAL = enable_eval
     
-    workflow = SVMWorkflow(config)
+    workflow = NaiveBayesWorkflow(config)
     results = workflow.run(
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
@@ -187,7 +184,6 @@ def run_svm_workflow(
 
 
 if __name__ == "__main__":
-    # 示例用法
     from torch.utils.data import Dataset, DataLoader
     import torch
     
@@ -205,7 +201,6 @@ if __name__ == "__main__":
             label = torch.randint(0, self.num_classes, (1,)).item()
             return data, label
     
-    # 创建DataLoader
     train_dataset = MockDataset(1000)
     val_dataset = MockDataset(200)
     infer_dataset = MockDataset(300)
@@ -214,13 +209,12 @@ if __name__ == "__main__":
     val_dataloader = DataLoader(val_dataset, batch_size=32, shuffle=False)
     infer_dataloader = DataLoader(infer_dataset, batch_size=32, shuffle=False)
     
-    # 运行工作流（训练和推理）
-    config = SVMWorkflowConfig()
+    config = NaiveBayesWorkflowConfig()
     config.MODE = 'train_eval'
     config.ENABLE_TRAIN = True
     config.ENABLE_EVAL = True
     
-    results = run_svm_workflow(
+    results = run_naive_bayes_workflow(
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
         infer_dataloader=infer_dataloader,

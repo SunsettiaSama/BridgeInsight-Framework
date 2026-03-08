@@ -6,11 +6,16 @@ from src.figs.figs_for_thesis.fig2_16_normal_vib_time_series import main as fig2
 
 from src.visualize_tools.annotation_tools.annotation import AnnotationGUI
 
+from src.test.data_processer.datasets.test_integration_workflow import TestCompleteWorkflow
+from src.test.data_processer.datasets.test_annotation_dataset import TestAnnotationDatasetConfig
+from src.test.data_processer.datasets.test_viv_dataset import TestVIVDatasetLoading
+
 if __name__ == "__main__":
     # fig2_16_normal_vib_time_series()
-    fig2_8_wavelet_heursure()
-    app = AnnotationGUI()
-    app.run()
+    # fig2_8_wavelet_heursure()
+    # app = AnnotationGUI()
+    # app.run()
+    TestAnnotationDatasetConfig()
 
 
 

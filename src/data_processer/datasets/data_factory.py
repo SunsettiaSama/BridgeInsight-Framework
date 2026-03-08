@@ -1,7 +1,11 @@
-# NN/datasets/dataset_manager.py
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 from typing import Type
-from ..configs.base_config import BaseConfig
-from ..configs.registry import CONFIG_CLASS_REGISTRY, DATASET_CLASS_REGISTRY  # 复用统一注册表
+from config.base_config import BaseConfig
+from config.registry import CONFIG_CLASS_REGISTRY, DATASET_CLASS_REGISTRY
 
 
 def get_dataset(config: BaseConfig) -> object:

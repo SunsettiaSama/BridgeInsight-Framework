@@ -4,54 +4,45 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import logging
-import sys
 import os
-from pathlib import Path
-from .train import train_svm
-from .eval import infer_svm
-from config.machine_learning_module.svm.workflow_config import SVMWorkflowConfig
+from .train import train_ca_nb
+from .eval import infer_ca_nb
 
 
-class SVMWorkflow:
-    """SVM 完整工作流类"""
+class CANBWorkflow:
+    """元胞自动机+朴素贝叶斯完整工作流类"""
     
     def __init__(self, config=None):
         """
         初始化工作流
-        :param config: SVMWorkflowConfig 或其他配置对象
+        :param config: 工作流配置对象（如果为None，使用默认参数）
         """
-        self.config = config or SVMWorkflowConfig()
+        self.config = config or {}
         self.logger = self._setup_logging()
         self.train_result = None
         self.eval_result = None
     
     def _setup_logging(self):
         """设置日志系统"""
-        logger = logging.getLogger('SVMWorkflow')
-        logger.setLevel(self.config.LOG_LEVEL)
+        logger = logging.getLogger('CANBWorkflow')
+        logger.setLevel(logging.INFO)
         
-        # 清除已有的处理器
         logger.handlers.clear()
         
-        # 日志格式化器
-        formatter = logging.Formatter(self.config.LOG_FORMAT)
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
         
-        # 控制台处理器
-        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler = logging.StreamHandler()
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
-        
-        # 文件处理器
-        if self.config.LOG_FILE:
-            file_handler = logging.FileHandler(self.config.LOG_FILE, encoding='utf-8')
-            file_handler.setFormatter(formatter)
-            logger.addHandler(file_handler)
         
         return logger
     
     def run(self, train_dataloader=None, val_dataloader=None, infer_dataloader=None, infer_has_label=True):
         """
-        执行完整的SVM工作流
+        执行完整的元胞自动机+朴素贝叶斯工作流
         :param train_dataloader: 训练集DataLoader（训练阶段需要）
         :param val_dataloader: 验证集DataLoader（可选）
         :param infer_dataloader: 推理集DataLoader（推理阶段需要）
@@ -59,13 +50,15 @@ class SVMWorkflow:
         :return: 包含训练和推理结果的字典
         """
         self.logger.info("=" * 50)
-        self.logger.info(f"开始执行SVM工作流 - 模式: {self.config.MODE}")
+        self.logger.info("开始执行元胞自动机+朴素贝叶斯工作流")
         self.logger.info("=" * 50)
         
         results = {}
         
-        # 训练阶段
-        if self.config.ENABLE_TRAIN:
+        enable_train = self.config.get('enable_train', True)
+        enable_eval = self.config.get('enable_eval', True)
+        
+        if enable_train:
             self.logger.info("开始训练阶段...")
             if train_dataloader is None:
                 self.logger.error("训练模式下，train_dataloader 不能为空")
@@ -75,8 +68,7 @@ class SVMWorkflow:
             results['train'] = self.train_result
             self.logger.info("训练阶段完成")
         
-        # 推理阶段
-        if self.config.ENABLE_EVAL:
+        if enable_eval:
             self.logger.info("开始推理阶段...")
             if infer_dataloader is None:
                 self.logger.error("推理模式下，infer_dataloader 不能为空")
@@ -87,7 +79,7 @@ class SVMWorkflow:
             self.logger.info("推理阶段完成")
         
         self.logger.info("=" * 50)
-        self.logger.info("SVM工作流执行完成")
+        self.logger.info("元胞自动机+朴素贝叶斯工作流执行完成")
         self.logger.info("=" * 50)
         
         return results
@@ -99,12 +91,18 @@ class SVMWorkflow:
         :param val_dataloader: 验证集DataLoader
         :return: 训练结果
         """
-        self.logger.info("正在运行SVM训练...")
+        self.logger.info("正在运行元胞自动机+朴素贝叶斯训练...")
         
-        tc = self.config.TRAIN_CONFIG
-        result = train_svm(
+        _base = "results/classification_results/machine_learning/ca_bayes"
+        tc = self.config.get('TRAIN_CONFIG', {
+            'ca_params_path': f'{_base}/ca_params.pkl',
+            'nb_model_path': f'{_base}/ca_nb_model.pkl',
+            'result_save_path': f'{_base}/ca_nb_train_result.json'
+        })
+        result = train_ca_nb(
             train_dataloader, val_dataloader,
-            model_save_path=tc.get('model_save_path'),
+            ca_params_path=tc.get('ca_params_path'),
+            nb_model_path=tc.get('nb_model_path'),
             result_save_path=tc.get('result_save_path')
         )
         
@@ -112,7 +110,7 @@ class SVMWorkflow:
         if result['val_metrics']:
             self.logger.info(f"验证集准确率: {result['val_metrics']['accuracy']:.4f}")
         
-        self.logger.info(f"模型参数: {result['model_params']}")
+        self.logger.info(f"CA特征维度: {result['ca_feature_dim']}, 类别数: {result['class_num']}")
         
         return result
     
@@ -123,18 +121,25 @@ class SVMWorkflow:
         :param has_label: 推理数据是否有标签
         :return: 推理结果
         """
-        self.logger.info("正在运行SVM推理...")
+        self.logger.info("正在运行元胞自动机+朴素贝叶斯推理...")
         
-        ec = self.config.EVAL_CONFIG
-        model_path = ec.get('model_load_path', 'results/classification_results/machine_learning/svm/svm_model.pkl')
-        infer_result_path = ec.get('result_path')
+        _base = "results/classification_results/machine_learning/ca_bayes"
+        ec = self.config.get('EVAL_CONFIG', {
+            'ca_params_path': f'{_base}/ca_params.pkl',
+            'nb_model_path': f'{_base}/ca_nb_model.pkl',
+            'result_path': f'{_base}/ca_nb_infer_result.json'
+        })
+        result = infer_ca_nb(
+            infer_dataloader, has_label,
+            ca_params_path=ec.get('ca_params_path'),
+            nb_model_path=ec.get('nb_model_path'),
+            infer_result_path=ec.get('result_path')
+        )
         
-        result = infer_svm(infer_dataloader, model_path, has_label, infer_result_path=infer_result_path)
+        self.logger.info(f"推理样本数: {result.get('sample_count', 'N/A')}")
+        self.logger.info(f"类别数: {result.get('class_count', 'N/A')}")
         
-        self.logger.info(f"推理样本数: {result['sample_num']}")
-        self.logger.info(f"类别数: {result['class_num']}")
-        
-        if has_label and 'accuracy' in result['metrics']:
+        if has_label and 'metrics' in result and 'accuracy' in result['metrics']:
             self.logger.info(f"推理准确率: {result['metrics']['accuracy']:.4f}")
         
         return result
@@ -147,7 +152,7 @@ class SVMWorkflow:
         }
 
 
-def run_svm_workflow(
+def run_ca_nb_workflow(
     train_dataloader=None,
     val_dataloader=None,
     infer_dataloader=None,
@@ -157,7 +162,7 @@ def run_svm_workflow(
     enable_eval=True
 ):
     """
-    便捷函数：直接运行SVM工作流
+    便捷函数：直接运行元胞自动机+朴素贝叶斯工作流
     
     :param train_dataloader: 训练集DataLoader
     :param val_dataloader: 验证集DataLoader（可选）
@@ -169,13 +174,12 @@ def run_svm_workflow(
     :return: 工作流结果字典
     """
     if config is None:
-        config = SVMWorkflowConfig()
+        config = {}
     
-    # 根据参数更新配置
-    config.ENABLE_TRAIN = enable_train
-    config.ENABLE_EVAL = enable_eval
+    config['enable_train'] = enable_train
+    config['enable_eval'] = enable_eval
     
-    workflow = SVMWorkflow(config)
+    workflow = CANBWorkflow(config)
     results = workflow.run(
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
@@ -187,7 +191,6 @@ def run_svm_workflow(
 
 
 if __name__ == "__main__":
-    # 示例用法
     from torch.utils.data import Dataset, DataLoader
     import torch
     
@@ -205,7 +208,6 @@ if __name__ == "__main__":
             label = torch.randint(0, self.num_classes, (1,)).item()
             return data, label
     
-    # 创建DataLoader
     train_dataset = MockDataset(1000)
     val_dataset = MockDataset(200)
     infer_dataset = MockDataset(300)
@@ -214,13 +216,9 @@ if __name__ == "__main__":
     val_dataloader = DataLoader(val_dataset, batch_size=32, shuffle=False)
     infer_dataloader = DataLoader(infer_dataset, batch_size=32, shuffle=False)
     
-    # 运行工作流（训练和推理）
-    config = SVMWorkflowConfig()
-    config.MODE = 'train_eval'
-    config.ENABLE_TRAIN = True
-    config.ENABLE_EVAL = True
+    config = {'enable_train': True, 'enable_eval': True}
     
-    results = run_svm_workflow(
+    results = run_ca_nb_workflow(
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
         infer_dataloader=infer_dataloader,

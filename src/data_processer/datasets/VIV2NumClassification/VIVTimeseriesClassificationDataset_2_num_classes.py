@@ -3,9 +3,13 @@ import numpy as np
 from scipy.io import loadmat
 from pathlib import Path
 from typing import Tuple, Union, Literal, List
-from .base_datasets import BaseDataset
-from ..configs.datasets.VIVTimeseriesClassificationDataset import VIVTimeSeriesClassificationDatasetConfig
-import logging 
+import logging
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from data_processer.datasets.VIV2NumClassification.BaseDataset import BaseDataset
+from config.data_processer.datasets.VIV2NumClassification.VIVTimeseriesClassificationDataset_2_num_classes import VIVTimeSeriesClassificationDatasetConfig 
 
 
 class VIVTimeSeriesClassificationDataset(BaseDataset):
