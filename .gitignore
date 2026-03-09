@@ -26,6 +26,9 @@ Software/
 .venv/
 backUp/
 config/
+src/config/
+env_deploy/ 
+
 
 
 *.log
