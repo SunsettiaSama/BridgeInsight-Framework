@@ -1,8 +1,0 @@
-
-
-
-
-"data_dir": './datasets/train/data/',
-"batch_first": True,    # LSTM开启batch_first
-"normalize": True,      # 开启归一化
-"fix_seq_len": 100      # 固定序列长度为100
