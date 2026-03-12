@@ -1,21 +1,21 @@
 
 
-from src.figs.figs_for_thesis.fig2_8_wavelet_heursure import main as fig2_8_wavelet_heursure
-from src.figs.figs_for_thesis.fig2_14_rebuild_wind_velocity import main as fig2_14_rebuild_wind_velocity
-from src.figs.figs_for_thesis.fig2_16_normal_vib_time_series import main as fig2_16_normal_vib_time_series
-
+from src.figure_paintings.figs_for_thesis.fig2_7_wavelet_vib_sample_show import main as fig2_7_wavelet_vib_sample_show
+from src.figure_paintings.figs_for_thesis.fig2_7_x_main_module_on_statistic import main as fig2_7_x_main_module_on_statistic
 from src.visualize_tools.annotation_tools.annotation import AnnotationGUI
+from src.data_processer.preprocess.vibration_io_process.workflow import run as run_vibration_io_process
 
-from src.test.data_processer.datasets.test_integration_workflow import TestCompleteWorkflow
-from src.test.data_processer.datasets.test_annotation_dataset import TestAnnotationDatasetConfig
-from src.test.data_processer.datasets.test_viv_dataset import TestVIVDatasetLoading
 
 if __name__ == "__main__":
+
+    run_vibration_io_process(force_recompute = True) 
+
     # fig2_16_normal_vib_time_series()
     # fig2_8_wavelet_heursure()
     # app = AnnotationGUI()
     # app.run()
-    TestAnnotationDatasetConfig()
+    # fig2_7_wavelet_vib_sample_show()
+    # fig2_7_x_main_module_on_statistic()
 
 
 

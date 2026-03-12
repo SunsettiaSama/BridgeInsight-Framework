@@ -21,7 +21,7 @@ if project_root not in sys.path:
 from tkinter import Tk as TK_Root
 from src.data_processer.io_unpacker import UNPACK
 from src.data_processer.preprocess.vibration_io_process.workflow import run as run_vib_workflow
-from src.figs.figs_for_thesis.config import get_viridis_color_map
+from src.figure_paintings.figs_for_thesis.config import get_viridis_color_map
 
 # ==================== 全局绘图配置 ====================
 plt.style.use('default')
@@ -40,10 +40,18 @@ WINDOW_SIZE = 3000
 FIGURE_CACHE_SIZE = 20  # 缓存最多20张图像
 
 # ==================== 保存路径常量 ====================
-DEFAULT_ANNOTATION_RESULT_PATH = os.path.join(
-    os.path.dirname(__file__), 
-    "../../annotation_results/annotation_results.json"
-)
+def _get_default_annotation_result_path():
+    """获取项目根目录下的注释结果保存路径"""
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    result_dir = os.path.join(project_root, "results", "dataset_annotation")
+    
+    # 确保目录存在
+    if not os.path.exists(result_dir):
+        os.makedirs(result_dir)
+    
+    return os.path.join(result_dir, "annotation_results.json")
+
+DEFAULT_ANNOTATION_RESULT_PATH = _get_default_annotation_result_path()
 
 
 # ==================== 图像缓冲器 ====================
@@ -387,6 +395,7 @@ class AnnotationWindowGUI:
         self.extreme_windows = []
         self.filtered_indices = []
         self.current_canvas = None
+        self.skipped_windows_info = []  # 记录本次跳过的图像信息
         
         self.save_result_path = save_result_path or DEFAULT_ANNOTATION_RESULT_PATH
         self.selected_mode = None
@@ -764,11 +773,22 @@ class AnnotationWindowGUI:
         window_key = self._get_window_key(window_info)
         current_annotation = self.annotation_data.get(window_key, "")
         
+        # 构建状态文本，包含跳过信息
         status_text = f"窗口 {self.current_window_index + 1}/{len(self.filtered_indices)} " \
                      f"(总计{len(self.extreme_windows)}) - {window_info['sensor_id']} @ {window_info['time']}"
+        
+        # 如果有跳过的窗口信息，附加在状态文本后面
+        if self.skipped_windows_info:
+            skipped_text = " | 已跳过: " + ", ".join(self.skipped_windows_info)
+            status_text += skipped_text
+            self.skipped_windows_info = []  # 显示后清空
+        
         self.status_label.config(text=status_text, fg="green")
         
         self.entry_text.set(current_annotation)
+        
+        # 强制 UI 更新，确保图像完全渲染后再设置焦点
+        self.root.update()
         self.entry.focus_set()
     
     def _on_annotation_changed(self, *args):
@@ -786,17 +806,52 @@ class AnnotationWindowGUI:
         self.entry.focus_set()
         return 'break'
     
+    def _is_window_annotated(self, window_index: int) -> bool:
+        """检查指定索引的窗口是否已被标注过"""
+        if 0 <= window_index < len(self.filtered_indices):
+            window_info = self.extreme_windows[self.filtered_indices[window_index]]
+            window_key = self._get_window_key(window_info)
+            annotation = self.annotation_data.get(window_key, "").strip()
+            return bool(annotation)
+        return False
+    
+    def _get_window_display_name(self, window_index: int) -> str:
+        """获取窗口的显示名称"""
+        if 0 <= window_index < len(self.filtered_indices):
+            window_info = self.extreme_windows[self.filtered_indices[window_index]]
+            return f"{window_info['sensor_id']}@{window_info['time']}"
+        return ""
+    
     def next_window(self, event=None):
-        """显示下一个窗口"""
-        if self.current_window_index < len(self.filtered_indices) - 1:
-            self.current_window_index += 1
-            self.show_window()
+        """显示下一个窗口，自动跳过已标注的窗口"""
+        if self.current_window_index >= len(self.filtered_indices) - 1:
+            return
+        
+        next_index = self.current_window_index + 1
+        skipped_names = []
+        
+        # 循环找到第一个未标注的窗口
+        while next_index < len(self.filtered_indices):
+            if not self._is_window_annotated(next_index):
+                # 记录跳过的窗口信息
+                if skipped_names:
+                    self.skipped_windows_info = skipped_names
+                
+                self.current_window_index = next_index
+                self.show_window()
+                return
+            else:
+                # 记录被跳过的窗口
+                skipped_names.append(self._get_window_display_name(next_index))
+                next_index += 1
     
     def prev_window(self, event=None):
-        """显示上一个窗口"""
-        if self.current_window_index > 0:
-            self.current_window_index -= 1
-            self.show_window()
+        """显示上一个窗口，不跳过已标注的窗口"""
+        if self.current_window_index <= 0:
+            return
+        
+        self.current_window_index -= 1
+        self.show_window()
     
     def _prompt_save_mode(self):
         """
@@ -807,21 +862,9 @@ class AnnotationWindowGUI:
         """
         result_var = StringVar(value="cancel")
         
-        def on_append():
-            result_var.set("append")
-            dialog_root.destroy()
-        
-        def on_overwrite():
-            result_var.set("overwrite")
-            dialog_root.destroy()
-        
-        def on_cancel():
-            result_var.set("cancel")
-            dialog_root.destroy()
-        
         dialog_root = Toplevel(self.root)
         dialog_root.title("保存模式选择")
-        dialog_root.geometry("400x180")
+        dialog_root.geometry("450x220")
         dialog_root.transient(self.root)
         dialog_root.grab_set()
         
@@ -829,13 +872,13 @@ class AnnotationWindowGUI:
         Label(
             dialog_root, 
             text="文件已存在，请选择保存模式：", 
-            font=("SimHei", 12),
+            font=("SimHei", 12, "bold"),
             fg="blue"
-        ).pack(pady=15)
+        ).pack(pady=10)
         
         # 选项框架
         options_frame = Frame(dialog_root)
-        options_frame.pack(padx=20, pady=10, fill='both', expand=True)
+        options_frame.pack(padx=20, pady=5, fill='both', expand=True)
         
         mode_var = StringVar(value="append")
         
@@ -844,22 +887,22 @@ class AnnotationWindowGUI:
             text="追加 - 将新标注合并到现有文件中（推荐）", 
             variable=mode_var, 
             value="append",
-            font=("SimHei", 11),
+            font=("SimHei", 10),
             justify='left'
-        ).pack(anchor='w', pady=8)
+        ).pack(anchor='w', pady=6)
         
         Radiobutton(
             options_frame, 
             text="覆盖 - 新标注将替换现有文件中的所有数据", 
             variable=mode_var, 
             value="overwrite",
-            font=("SimHei", 11),
+            font=("SimHei", 10),
             justify='left'
-        ).pack(anchor='w', pady=8)
+        ).pack(anchor='w', pady=6)
         
         # 按钮框架
         button_frame = Frame(dialog_root)
-        button_frame.pack(pady=15)
+        button_frame.pack(pady=10)
         
         Button(
             button_frame, 
@@ -872,7 +915,7 @@ class AnnotationWindowGUI:
             button_frame, 
             text="取消", 
             width=12,
-            command=on_cancel
+            command=lambda: (result_var.set("cancel"), dialog_root.destroy())
         ).pack(side='left', padx=5)
         
         dialog_root.wait_window()

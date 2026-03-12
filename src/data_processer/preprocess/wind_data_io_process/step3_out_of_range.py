@@ -7,6 +7,7 @@ Step 3: 查询越界点数据
 import os
 import sys
 import numpy as np
+import warnings
 from collections import defaultdict
 from multiprocessing import Pool, Manager
 from tqdm import tqdm
@@ -102,7 +103,14 @@ def _process_metadata_item(args):
     
     try:
         wind_velocity, wind_direction, wind_attack_angle = load_wind_data(file_path)
-    except:
+    except (IOError, OSError, ValueError, TypeError) as e:
+        warnings.warn(
+            f"无法加载风数据文件: {file_path}\n"
+            f"错误类型: {type(e).__name__}\n"
+            f"错误信息: {str(e)}",
+            category=RuntimeWarning,
+            stacklevel=2
+        )
         return None, {}, {}
     
     if wind_velocity is None:

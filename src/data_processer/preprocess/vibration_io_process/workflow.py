@@ -14,6 +14,9 @@ if project_root not in sys.path:
 from src.data_processer.preprocess.vibration_io_process.step0_get_vib_data import get_all_vibration_files
 from src.data_processer.preprocess.vibration_io_process.step1_lackness_filter import run_lackness_filter
 from src.data_processer.preprocess.vibration_io_process.step2_rms_statistics import run_rms_statistics
+from src.data_processer.preprocess.vibration_io_process.step3_dominant_freq_statistics import (
+    run_dominant_freq_statistics, save_dominant_freq_results
+)
 from src.data_processer.io_unpacker import parse_path_metadata
 
 # 从配置文件导入常量
@@ -21,7 +24,8 @@ from src.config.data_processer.preprocess.vibration_io_process.config import (
     MISSING_RATE_THRESHOLD,
     EXPECTED_LENGTH,
     FILTER_RESULT_PATH,
-    WORKFLOW_CACHE_PATH
+    WORKFLOW_CACHE_PATH,
+    DOMINANT_FREQ_STATISTICS_RESULT_PATH
 )
 
 
@@ -224,6 +228,28 @@ def run(threshold=MISSING_RATE_THRESHOLD,
         report_collector.set_param('rms_threshold_95', rms_statistics['rms_threshold_95'])
     
     # ============================================================
+    # Step 3: 主频分布统计分析
+    # ============================================================
+    report_collector.log("\n[Step 3] 执行主频分布统计分析...")
+    report_collector.log("-"*80)
+    
+    freq_statistics = run_dominant_freq_statistics(
+        file_paths=filtered_paths,
+        logger=report_collector
+    )
+    
+    # 记录主频统计参数
+    if freq_statistics:
+        report_collector.set_param('freq_p95', freq_statistics['freq_p95'])
+        report_collector.set_param('freq_stats', freq_statistics['freq_stats'])
+        # 保存主频统计结果
+        save_dominant_freq_results(
+            statistics=freq_statistics,
+            save_path=DOMINANT_FREQ_STATISTICS_RESULT_PATH,
+            logger=report_collector
+        )
+    
+    # ============================================================
     # 构建扁平化元数据
     # ============================================================
     report_collector.log("\n[数据处理] 构建元数据...")
@@ -267,6 +293,14 @@ def run(threshold=MISSING_RATE_THRESHOLD,
     report_collector.log(f"✓ 原始文件总数: {len(all_file_paths)}")
     report_collector.log(f"✓ 筛选后文件数: {len(metadata)}")
     report_collector.log(f"✓ 筛选通过率: {len(metadata)/len(all_file_paths)*100:.2f}%")
+    
+    if rms_statistics:
+        report_collector.log(f"✓ RMS 95%分位值: {rms_statistics['rms_threshold_95']:.4f} m/s²")
+    
+    if freq_statistics:
+        report_collector.log(f"✓ 主频 95%分位值: {freq_statistics['freq_p95']:.4f} Hz")
+        report_collector.log(f"✓ 主频样本总数: {freq_statistics['freq_stats']['total_samples']}")
+    
     report_collector.log("="*80 + "\n")
     
     # 保存工作流缓存和报告
@@ -309,6 +343,15 @@ if __name__ == "__main__":
         print(f"  RMS 95%分位值阈值: {rms_threshold:.4f} m/s²")
         files_with_extreme = report_collector.get_param('files_with_extreme_vibration', 0)
         print(f"  包含极端振动的文件数: {files_with_extreme} / {len(metadata)}")
+    
+    freq_p95 = report_collector.get_param('freq_p95')
+    if freq_p95:
+        print(f"  主频 95%分位值: {freq_p95:.4f} Hz")
+        freq_stats = report_collector.get_param('freq_stats')
+        if freq_stats:
+            print(f"  主频样本总数: {freq_stats['total_samples']}")
+            print(f"  主频范围: {freq_stats['min']:.4f} ~ {freq_stats['max']:.4f} Hz")
+            print(f"  主频均值: {freq_stats['mean']:.4f} Hz")
     
     # 示例：强制重新计算
     # metadata = run(force_recompute=True)

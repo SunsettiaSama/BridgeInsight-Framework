@@ -70,7 +70,7 @@ if project_root not in sys.path:
 
 # 1. 从 config.py 导入配置
 try:
-    from src.figs.figs_for_thesis.config import (
+    from src.figure_paintings.figs_for_thesis.config import (
         FONT_SIZE, ENG_FONT, CN_FONT, SQUARE_FIG_SIZE, ANNOTATION_COLOR, 
         get_blue_color_map
     )

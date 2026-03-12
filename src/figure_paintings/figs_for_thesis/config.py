@@ -6,6 +6,11 @@ import matplotlib.pyplot as plt
 from matplotlib.font_manager import FontProperties
 from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 
+
+from src.config.data_processer.preprocess.vibration_io_process.config import *
+
+
+
 # ==================== 字号配置 ====================
 FONT_SIZE = 20
 LABEL_FONT_SIZE = 20
@@ -54,10 +59,6 @@ VIV_ALPHA = 0.6
 # ==================== 其他绘图配置 ====================
 # 高粒度分箱数
 N_BINS = 100
-
-
-from src.config.data_processer.statistics.vibration_io_process.config import *
-
 
 # 颜色配置（根据阈值区分）
 BELOW_THRESHOLD_COLOR = '#8074C8'  # 小于标准差阈值的颜色
