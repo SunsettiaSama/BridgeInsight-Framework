@@ -8,12 +8,12 @@ from src.data_processer.preprocess.vibration_io_process.workflow import run as r
 
 if __name__ == "__main__":
 
-    run_vibration_io_process(force_recompute = True) 
+    # run_vibration_io_process(force_recompute = True) 
 
     # fig2_16_normal_vib_time_series()
     # fig2_8_wavelet_heursure()
-    # app = AnnotationGUI()
-    # app.run()
+    app = AnnotationGUI()
+    app.run()
     # fig2_7_wavelet_vib_sample_show()
     # fig2_7_x_main_module_on_statistic()
 

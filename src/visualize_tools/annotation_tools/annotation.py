@@ -13,6 +13,8 @@ import numpy as np
 from typing import Optional, Dict, List, Tuple
 from collections import OrderedDict
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from multiprocessing import cpu_count
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if project_root not in sys.path:
@@ -38,6 +40,9 @@ NFFT = 2048
 FS = 50.0
 WINDOW_SIZE = 3000
 FIGURE_CACHE_SIZE = 20  # 缓存最多20张图像
+
+PARALLEL_CHECK_NUM_WORKERS = min(4, cpu_count())
+PARALLEL_CHECK_MODE = 'thread'
 
 # ==================== 保存路径常量 ====================
 def _get_default_annotation_result_path():
@@ -395,7 +400,7 @@ class AnnotationWindowGUI:
         self.extreme_windows = []
         self.filtered_indices = []
         self.current_canvas = None
-        self.skipped_windows_info = []  # 记录本次跳过的图像信息
+        self.skipped_windows_info = []
         
         self.save_result_path = save_result_path or DEFAULT_ANNOTATION_RESULT_PATH
         self.selected_mode = None
@@ -408,6 +413,9 @@ class AnnotationWindowGUI:
         self.data_provider = None
         self.figure_generator = AnnotationFigureGenerator(fs=FS)
         self.figure_cache = FigureCache(max_size=FIGURE_CACHE_SIZE)
+        
+        self.num_workers = PARALLEL_CHECK_NUM_WORKERS
+        self.check_mode = PARALLEL_CHECK_MODE
         
         self._init_ui()
         
@@ -668,14 +676,17 @@ class AnnotationWindowGUI:
                 print(f"⚠ 加载已有标注失败: {e}")
     
     def _build_filtered_indices(self):
-        """根据阈值、日期和传感器条件构建通过检查的窗口索引列表"""
+        """根据阈值、日期和传感器条件构建通过检查的窗口索引列表（并行检查）"""
         self.filtered_indices = []
         
-        for i, window_info in enumerate(self.extreme_windows):
-            if (self._check_window_threshold(window_info) and 
-                self._check_window_date(window_info) and
-                self._check_window_sensor(window_info)):
-                self.filtered_indices.append(i)
+        indices_to_check = list(range(len(self.extreme_windows)))
+        
+        if self.check_mode == 'process':
+            passed_indices = self._parallel_check_process(indices_to_check)
+        else:
+            passed_indices = self._parallel_check_thread(indices_to_check)
+        
+        self.filtered_indices = passed_indices
         
         print(f"✓ 阈值检查完成: {len(self.filtered_indices)}/{len(self.extreme_windows)} 个窗口通过检查")
         
@@ -684,6 +695,55 @@ class AnnotationWindowGUI:
         
         random.shuffle(self.filtered_indices)
         print(f"✓ 已打乱窗口顺序")
+    
+    def _parallel_check_thread(self, indices: List[int]) -> List[int]:
+        """使用线程池进行并行检查"""
+        passed_indices = []
+        
+        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+            futures = {
+                executor.submit(self._check_window_all, i): i 
+                for i in indices
+            }
+            
+            for future in as_completed(futures):
+                i = futures[future]
+                result = future.result()
+                if result:
+                    passed_indices.append(i)
+        
+        return passed_indices
+    
+    def _parallel_check_process(self, indices: List[int]) -> List[int]:
+        """使用进程池进行并行检查"""
+        passed_indices = []
+        
+        check_params = [
+            (i, self.extreme_windows[i], self.rms_threshold, 
+             self.amplitude_threshold, self.date_start, self.date_end, self.sensor_ids)
+            for i in indices
+        ]
+        
+        with ProcessPoolExecutor(max_workers=self.num_workers) as executor:
+            futures = {
+                executor.submit(_process_window_check, param): i 
+                for i, param in zip(indices, check_params)
+            }
+            
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    passed_indices.append(result)
+        
+        return passed_indices
+    
+    def _check_window_all(self, window_index: int) -> bool:
+        """检查单个窗口是否通过所有条件检查"""
+        window_info = self.extreme_windows[window_index]
+        
+        return (self._check_window_threshold(window_info) and 
+                self._check_window_date(window_info) and
+                self._check_window_sensor(window_info))
     
     def _check_window_threshold(self, window_info: Dict) -> bool:
         """检查窗口是否通过阈值检查"""
@@ -1064,6 +1124,48 @@ class AnnotationGUI:
     
     def __call__(self, *args, **kwargs):
         self.run(**kwargs)
+
+
+def _process_window_check(check_params: Tuple) -> Optional[int]:
+    """
+    进程池中的窗口检查函数（不依赖GUI实例）
+    返回通过检查的窗口索引，或None如果未通过
+    """
+    (window_index, window_info, rms_threshold, 
+     amplitude_threshold, date_start, date_end, sensor_ids) = check_params
+    
+    data = window_info['data']
+    
+    if rms_threshold is not None:
+        rms_value = np.sqrt(np.mean(np.square(data)))
+        if rms_value < rms_threshold:
+            return None
+    
+    if amplitude_threshold is not None:
+        max_amplitude = np.max(np.abs(data))
+        if max_amplitude < amplitude_threshold:
+            return None
+    
+    if date_start is not None or date_end is not None:
+        try:
+            time_str = window_info['time']
+            month_day = time_str.split()[0]
+            window_date = datetime.strptime(month_day, "%m/%d")
+            
+            if date_start is not None and window_date < date_start:
+                return None
+            
+            if date_end is not None and window_date > date_end:
+                return None
+        except:
+            pass
+    
+    if sensor_ids:
+        sensor_id = window_info['sensor_id']
+        if sensor_id not in sensor_ids:
+            return None
+    
+    return window_index
 
 
 Data_Process = AnnotationGUI
