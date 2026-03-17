@@ -8,8 +8,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from data_processer.datasets.VIV2NumClassification.BaseDataset import BaseDataset
-from config.data_processer.datasets.VIV2NumClassification.VIVTimeseriesClassificationDataset import VIVTimeSeriesClassificationDatasetConfig 
+from src.data_processer.datasets.BaseDataset import BaseDataset 
+from src.config.data_processer.datasets.VIV2NumClassification.VIVTimeSeriesClassificationDatasetConfig import VIVTimeSeriesClassificationDatasetConfig 
 
 
 class VIVTimeSeriesClassificationDataset(BaseDataset):
