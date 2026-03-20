@@ -1,6 +1,5 @@
 # 忽略所有非源代码目录
 data/
-models/
 logs/
 AfterTraining/ 
 BGE_model/
