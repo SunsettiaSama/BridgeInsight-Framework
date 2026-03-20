@@ -17,6 +17,10 @@ from src.figure_paintings.figs_for_thesis.fig2_25_RWIV_Outplan_Sample_ABNORMAL i
 from src.figure_paintings.figs_for_thesis.fig2_26_VIV_With_RWIV import main as fig2_26
 from src.figure_paintings.figs_for_thesis.fig2_27_dataset_display import main as fig2_27
 
+import torch
+import numpy as np
+
+
 
 if __name__ == "__main__":
     # config = RegressionDatasetConfig(data_dir="./data/regression")
@@ -31,4 +35,4 @@ if __name__ == "__main__":
     # fig2_24()
     # fig2_25()
     # fig2_26()
-    fig2_27()
+    # fig2_27() 

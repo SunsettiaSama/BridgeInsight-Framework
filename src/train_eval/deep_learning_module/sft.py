@@ -21,7 +21,7 @@ from contextlib import nullcontext
 
 # 导入基类和SFT配置类
 from .base_trainer import BaseTrainer, FocalLoss
-from ..configs.trainer.sft import SFTTrainerConfig
+from src.deep_learning_module.configs.base_config import BaseConfig
 
 class SFTTrainer(BaseTrainer):
     """
@@ -38,7 +38,7 @@ class SFTTrainer(BaseTrainer):
     """
     def __init__(
         self,
-        config: SFTTrainerConfig,
+        config: BaseConfig,
         model: Optional[nn.Module] = None,  # 改为可选参数
         train_dataloader: Optional[Union[DataLoader, Dataset]] = None,  # 支持Dataset类型
         val_dataloader: Optional[Union[DataLoader, Dataset]] = None,  # 支持Dataset类型
@@ -55,7 +55,7 @@ class SFTTrainer(BaseTrainer):
         super().__init__(config)
 
         # 类型断言，确保配置为SFT专属配置
-        self.sft_config: SFTTrainerConfig = self.config  # type: ignore
+        self.sft_config: BaseConfig = self.config  # type: ignore
 
         # 可选属性，支持延迟绑定（支持Dataset类型）
         self.model: Optional[nn.Module] = model

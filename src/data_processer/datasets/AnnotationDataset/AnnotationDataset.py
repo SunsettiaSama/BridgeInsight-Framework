@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-import scipy.io as sio
 from scipy import signal
 import sys
 import matplotlib.pyplot as plt
@@ -16,9 +15,10 @@ from matplotlib.figure import Figure
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from src.data_processer.datasets.BaseDataset import BaseDataset
-from src.config.data_processer.datasets.DatasetsFromAnnotation.AnnotationDatasetConfig import (
+from src.config.data_processer.datasets.AnnotationDataset.AnnotationDatasetConfig import (
     AnnotationDatasetConfig
 )
+from src.data_processer.preprocess.get_data_vib import VICWindowExtractor, LRUVICCache
 
 logger = logging.getLogger(__name__)
 
@@ -54,20 +54,33 @@ class AnnotationDataset(BaseDataset):
         self.annotation_config = config
         self.label_mapping = config.label_to_class if config.enable_label_mapping else None
         
-        # 5. 调用基类初始化（处理路径、划分、缓存等）
+        # 5. 初始化VIC窗口提取器（始终初始化，因为会在运行时自动检测格式）
+        enable_denoise = getattr(config, 'enable_denoise', False)
+        enable_extreme_window = getattr(config, 'enable_extreme_window', False)
+        self.vic_extractor = VICWindowExtractor(
+            enable_denoise=enable_denoise,
+            enable_extreme_window=enable_extreme_window
+        )
+        
+        # 6. 初始化LRU缓存（始终初始化，因为会在运行时自动检测格式）
+        cache_max_items = getattr(config, 'cache_max_items', 1000)
+        self.vic_cache = LRUVICCache(max_items=cache_max_items)
+        logger.info(f"初始化缓存: max_items={cache_max_items}")
+        
+        # 7. 调用基类初始化（处理路径、划分、缓存等）
         super().__init__(config)
         
-        # 6. 计算全局归一化统计
+        # 8. 计算全局归一化统计
         self.global_norm_stats = self._calc_global_normalize_stats()
         
-        # 7. 回归任务：构建滑窗索引映射
+        # 9. 回归任务：构建滑窗索引映射
         if config.task_type == "regression":
             self.window_indices = self._build_regression_window_indices()
             logger.info(f"回归任务：生成 {len(self.window_indices)} 个窗口样本")
         else:
             self.window_indices = None
         
-        # 8. 初始化可视化器（延迟初始化，在第一次调用show()时创建）
+        # 10. 初始化可视化器（延迟初始化，在第一次调用show()时创建）
         self._visualizer = None
         
         logger.info(f"标注数据集加载完成：{len(self.file_paths)} 个样本，任务类型={config.task_type}")
@@ -118,6 +131,7 @@ class AnnotationDataset(BaseDataset):
         """
         sample_annotations = {}
         filtered_count = 0
+        sample_counter = 0
         
         for item in self.annotation_data:
             # 1. 提取关键信息
@@ -125,9 +139,19 @@ class AnnotationDataset(BaseDataset):
             annotation = item.get(config.annotation_field)
             data_path = item.get(config.data_path_field)
             
-            if not sample_id or not data_path:
-                logger.warning(f"跳过不完整的标注记录：{item}")
+            # 检查必需字段
+            if not data_path:
+                logger.warning(f"跳过：缺少 data_path_field('{config.data_path_field}') 字段")
+                filtered_count += 1
                 continue
+            
+            # 如果没有 sample_id，自动生成一个唯一ID
+            if not sample_id:
+                # 使用文件路径和window_index生成唯一ID
+                window_index = item.get("window_index", 0)
+                file_name = Path(data_path).stem
+                sample_id = f"{file_name}_w{window_index}_{sample_counter}"
+                sample_counter += 1
             
             # 2. 检查是否为空标注
             if config.only_annotated and not annotation:
@@ -204,44 +228,24 @@ class AnnotationDataset(BaseDataset):
     
     def _parse_sample(self, file_path: Path) -> dict:
         """
-        解析单个样本文件
+        解析单个样本文件（基于标注中的window_index提取VIC数据窗口）
+        
+        使用缓存机制避免频繁IO读取：
+        1. 查询LRU缓存
+        2. 缓存未命中时通过VICWindowExtractor读取
+        3. 缓存结果用于后续访问
         
         参数:
             file_path: 样本文件路径
         
         返回:
-            {data, label, sample_id}
+            {data, label, sample_id, metadata}
+            其中 data shape: (window_size, 1) 表示单个窗口的振动序列
         """
         config = self.annotation_config
         
         try:
-            if config.data_format == "mat":
-                loaded = sio.loadmat(str(file_path))
-                data = loaded.get(config.mat_data_key)
-                
-                if data is None:
-                    raise ValueError(f"未找到数据键 '{config.mat_data_key}' 在文件 {file_path}")
-                
-                # 展平到2D (seq_len, feat_dim)
-                if data.ndim > 2:
-                    data = data.reshape(data.shape[0], -1)
-                
-            elif config.data_format == "vic":
-                # .VIC格式需要特殊处理（依赖io_unpacker）
-                from src.data_processer.io_unpacker import DataManager
-                manager = DataManager()
-                data = manager.load_vic_file(str(file_path))
-            
-            elif config.data_format == "npy":
-                data = np.load(str(file_path))
-            
-            else:
-                raise ValueError(f"不支持的数据格式：{config.data_format}")
-            
-            # 匹配样本到标注
-            sample_id = file_path.stem  # 使用文件名作为sample_id
-            
-            # 查找对应的标注
+            # 1. 查找对应的标注信息（包含window_index）
             anno_info = None
             for sid, info in self.sample_annotations.items():
                 if file_path.samefile(Path(info["file_path"])):
@@ -249,8 +253,81 @@ class AnnotationDataset(BaseDataset):
                     break
             
             if anno_info is None:
-                raise ValueError(f"未找到样本 {sample_id} 的标注信息")
+                raise ValueError(f"未找到样本 {file_path} 的标注信息")
             
+            # 2. 自动检测数据格式（优先使用元数据，其次使用文件扩展名，最后使用配置）
+            data_format = config.data_format
+            
+            # 尝试从元数据中获取 data_type
+            metadata_data_type = anno_info["metadata"].get("data_type", "").lower()
+            if metadata_data_type:
+                if metadata_data_type == "vic":
+                    data_format = "vic"
+                elif metadata_data_type in ["npy", "numpy"]:
+                    data_format = "npy"
+            
+            # 如果没有获取到，尝试从文件扩展名判断
+            if data_format == config.data_format:
+                file_ext = Path(file_path).suffix.lower()
+                if file_ext == ".vic":
+                    data_format = "vic"
+                elif file_ext in [".npy", ".npz"]:
+                    data_format = "npy"
+                elif file_ext == ".csv":
+                    data_format = "csv"
+            
+            # 3. 根据检测到的数据格式加载数据
+            if data_format == "vic":
+                # 使用VICWindowExtractor提取窗口
+                window_index = anno_info["metadata"].get("window_index", 0)
+                window_size = config.window_size
+                
+                # 构建缓存键
+                cache_key = (str(file_path), window_index, window_size)
+                
+                # 先检查缓存
+                if self.vic_cache is not None:
+                    cached_data = self.vic_cache.get(cache_key)
+                    if cached_data is not None:
+                        logger.debug(f"缓存命中: {Path(file_path).name} @ window {window_index}")
+                        data = cached_data
+                    else:
+                        # 缓存未命中，通过提取器读取（传递完整metadata）
+                        data = self.vic_extractor.extract_window(
+                            str(file_path),
+                            window_index,
+                            window_size,
+                            metadata=anno_info["metadata"]
+                        )
+                        # 将结果存入缓存
+                        self.vic_cache.put(cache_key, data)
+                else:
+                    # 没有缓存，直接使用提取器（传递完整metadata）
+                    data = self.vic_extractor.extract_window(
+                        str(file_path),
+                        window_index,
+                        window_size,
+                        metadata=anno_info["metadata"]
+                    )
+            
+            elif data_format == "npy":
+                # NPY格式也支持窗口提取
+                data = np.load(str(file_path))
+                if hasattr(config, 'window_size'):
+                    window_index = anno_info["metadata"].get("window_index", 0)
+                    window_size = config.window_size
+                    start_idx = window_index * window_size
+                    end_idx = start_idx + window_size
+                    data = data[start_idx:end_idx]
+                    
+                    if data.ndim == 1:
+                        data = data.reshape(-1, 1)
+            
+            else:
+                raise ValueError(f"不支持的数据格式：{data_format}。仅支持 'vic' 和 'npy'")
+            
+            # 4. 获取标签和样本ID
+            sample_id = file_path.stem
             label = anno_info["class_id"]
             
             return {
@@ -498,6 +575,31 @@ class AnnotationDataset(BaseDataset):
     def get_val_dataset(self) -> "AnnotationDataset":
         """获取验证集实例（继承自BaseDataset）"""
         return self._create_dataset_instance("val")
+    
+    def get_cache_stats(self) -> dict:
+        """
+        获取缓存统计信息
+        
+        返回:
+            缓存统计字典（仅当使用VIC格式时有效）
+        """
+        if self.vic_cache is not None:
+            return self.vic_cache.get_stats()
+        else:
+            return {"status": "cache disabled"}
+    
+    def log_cache_stats(self):
+        """打印缓存统计信息"""
+        if self.vic_cache is not None:
+            self.vic_cache.log_stats()
+        else:
+            logger.info("缓存未启用（非VIC格式或不支持缓存）")
+    
+    def clear_cache(self):
+        """清空所有缓存"""
+        if self.vic_cache is not None:
+            self.vic_cache.clear()
+            logger.info("VIC窗口缓存已清空")
     
     def __len__(self) -> int:
         """获取数据集大小"""

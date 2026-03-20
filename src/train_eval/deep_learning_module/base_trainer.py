@@ -19,7 +19,7 @@ from sklearn.metrics import (
 )
 
 # 导入最新的训练器配置基类
-from src.NN.configs.trainer.base_config import BaseTrainerConfig
+from src.deep_learning_module.configs.base_config import BaseConfig
 import torch.nn.functional as F  # 新增：用于FocalLoss计算
 if TYPE_CHECKING:
     from torch.utils.data import DataLoader, Dataset
@@ -195,9 +195,9 @@ class TrainStepState:
 
 class BaseTrainer(ABC):
     """
-    基于最新BaseTrainerConfig的训练器抽象基类，定义统一训练接口与通用功能
+    基于最新BaseConfig的训练器抽象基类，定义统一训练接口与通用功能
     核心特性：
-    1.  接收并封装BaseTrainerConfig配置实例，替代原有全局配置，实现配置与训练器解耦；
+    1.  接收并封装BaseConfig配置实例，替代原有全局配置，实现配置与训练器解耦；
     2.  兼容单卡/多卡分布式、混合精度、梯度累积、断点续训等通用场景；
     3.  封装通用功能（模型保存/加载、日志初始化、指标更新等），减少子类重复代码；
     4.  定义抽象方法，强制子类实现任务专属逻辑（数据加载、模型初始化、训练/验证步骤等）；
@@ -205,9 +205,9 @@ class BaseTrainer(ABC):
     6.  新增_get_loss和_get_optimizer方法，统一管理损失函数与优化器实例化；
     7.  集成TrainStepState管理训练步状态，支持模型结构+训练状态的JSON保存。
     """
-    def __init__(self, trainer_config: BaseTrainerConfig):
-        # 核心配置实例（最新BaseTrainerConfig）
-        self.config: BaseTrainerConfig = trainer_config
+    def __init__(self, trainer_config: BaseConfig):
+        # 核心配置实例（最新BaseConfig）
+        self.config: BaseConfig = trainer_config
         # 初始化基础属性
         self.epoch: int = 0
         self.global_step: int = 0

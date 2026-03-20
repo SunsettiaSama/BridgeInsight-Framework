@@ -26,6 +26,251 @@ from src.config.data_processer.preprocess.vib_metadata2data_config import (
 from src.data_processer.signals.wavelets.denoise import denoise
 
 
+
+"""
+VIC数据窗口提取器和缓存管理模块
+
+职责：
+1. 从VIC文件加载完整数据
+2. 根据window_index和window_size提取指定窗口
+3. 通过LRU缓存避免频繁IO
+4. 支持可配置的缓存大小限制
+"""
+
+import logging
+from typing import Optional, Tuple
+from pathlib import Path
+import numpy as np
+from collections import OrderedDict
+
+logger = logging.getLogger(__name__)
+
+
+class VICWindowExtractor:
+    """
+    VIC文件窗口提取器
+    
+    职责：
+    - 从VIC文件加载数据并提取指定窗口
+    - 支持去噪和极端窗口处理
+    - 实现元数据到数据的对齐逻辑
+    - 提供缓存接口支持外部缓存机制
+    """
+    
+    WINDOW_SIZE = 3000  # 默认窗口大小：60秒 @ 50Hz
+    FS = 50.0           # 采样频率
+    
+    def __init__(self, enable_denoise: bool = False, enable_extreme_window: bool = False):
+        """
+        初始化VIC窗口提取器
+        
+        参数:
+            enable_denoise: 是否启用去噪处理
+            enable_extreme_window: 是否只提取极端窗口
+        """
+        from src.data_processer.io_unpacker import UNPACK
+        self.unpacker = UNPACK(init_path=False)
+        self.enable_denoise = enable_denoise
+        self.enable_extreme_window = enable_extreme_window
+    
+    def extract_window(
+        self,
+        file_path: str,
+        window_index: int,
+        window_size: Optional[int] = None,
+        metadata: Optional[Dict] = None
+    ) -> np.ndarray:
+        """
+        从VIC文件中提取单个窗口
+        
+        参数:
+            file_path: VIC文件路径
+            window_index: 窗口号（从0开始）
+            window_size: 窗口大小（采样点数），默认3000
+            metadata: 元数据字典，包含extreme_rms_indices和其他信息
+        
+        返回:
+            窗口数据，shape: (window_size, 1) 的2D数组
+        
+        异常:
+            ValueError: 窗口超出范围或参数错误
+        """
+        if window_size is None:
+            window_size = self.WINDOW_SIZE
+        
+        # 1. 加载完整VIC数据
+        vic_data = self.unpacker.VIC_DATA_Unpack(str(file_path))
+        
+        # 2. 计算窗口索引范围
+        start_idx = window_index * window_size
+        end_idx = start_idx + window_size
+        
+        # 3. 边界检查
+        if end_idx > len(vic_data):
+            raise ValueError(
+                f"窗口超出数据范围: window_index={window_index}, "
+                f"需要索引范围[{start_idx}, {end_idx}], "
+                f"但数据长度={len(vic_data)}"
+            )
+        
+        if start_idx < 0:
+            raise ValueError(f"窗口起始索引不能为负: {start_idx}")
+        
+        # 4. 提取窗口
+        window_data = vic_data[start_idx:end_idx]
+        
+        # 5. 应用去噪（可选）
+        if self.enable_denoise and metadata:
+            window_data = self._apply_denoise(window_data, window_index, metadata)
+        
+        # 6. 转为2D格式 (seq_len, 1)
+        if window_data.ndim == 1:
+            window_data = window_data.reshape(-1, 1)
+        
+        return window_data.astype(np.float32)
+    
+    def _apply_denoise(self, window_data: np.ndarray, window_index: int, metadata: Dict) -> np.ndarray:
+        """
+        对窗口应用分层去噪策略
+        
+        参数:
+            window_data: 窗口数据
+            window_index: 窗口索引
+            metadata: 元数据，包含extreme_rms_indices
+        
+        返回:
+            去噪后的窗口数据
+        """
+        if not STRATIFIED_DENOISE_ENABLED:
+            return window_data
+        
+        extreme_indices = metadata.get("extreme_rms_indices", [])
+        
+        # 如果是极端窗口，保留原始特征，不去噪
+        if window_index in extreme_indices:
+            logger.debug(f"跳过去噪（极端窗口）: window_index={window_index}")
+            return window_data
+        
+        # 低频窗口应用去噪
+        try:
+            denoised_data = denoise(
+                window_data,
+                wavelet=WAVELET_NAME,
+                level=WAVELET_DECOMPOSITION_LEVEL,
+                threshold_type=THRESHOLD_TYPE,
+                threshold_method=THRESHOLD_METHOD,
+                layer_wise_threshold=LAYER_WISE_THRESHOLD
+            )
+            logger.debug(f"应用去噪: window_index={window_index}")
+            return denoised_data
+        except Exception as e:
+            logger.warning(f"去噪处理失败: {e}，使用原始数据")
+            return window_data
+
+
+class LRUVICCache:
+    """
+    LRU缓存管理器，用于缓存VIC窗口数据
+    
+    特性：
+    - LRU淘汰策略：当达到容量时，自动删除最少使用的条目
+    - 缓存命中统计
+    - 可配置的最大条目数
+    
+    缓存键格式: (file_path, window_index, window_size)
+    """
+    
+    def __init__(self, max_items: int = 1000):
+        """
+        初始化LRU缓存
+        
+        参数:
+            max_items: 最多缓存的条目数（默认1000）
+        """
+        self.max_items = max_items
+        self.cache = OrderedDict()
+        self.hits = 0
+        self.misses = 0
+        
+        logger.info(f"初始化LRU缓存: max_items={max_items}")
+    
+    def get(self, key: Tuple) -> Optional[np.ndarray]:
+        """
+        从缓存中获取数据
+        
+        参数:
+            key: 缓存键 (file_path, window_index, window_size)
+        
+        返回:
+            缓存的数据，或None（缓存未命中）
+        """
+        if key not in self.cache:
+            self.misses += 1
+            return None
+        
+        # 移到末尾（标记为最近使用）
+        self.cache.move_to_end(key)
+        self.hits += 1
+        return self.cache[key]
+    
+    def put(self, key: Tuple, data: np.ndarray):
+        """
+        将数据存入缓存
+        
+        参数:
+            key: 缓存键 (file_path, window_index, window_size)
+            data: 要缓存的数据
+        """
+        if key in self.cache:
+            self.cache.move_to_end(key)
+        
+        self.cache[key] = data
+        
+        # 若超过容量，删除最旧的条目
+        if len(self.cache) > self.max_items:
+            oldest_key = next(iter(self.cache))
+            del self.cache[oldest_key]
+            logger.debug(f"LRU缓存满，删除最旧条目: {oldest_key}")
+    
+    def clear(self):
+        """清空缓存"""
+        self.cache.clear()
+        self.hits = 0
+        self.misses = 0
+        logger.info("LRU缓存已清空")
+    
+    def get_stats(self) -> dict:
+        """
+        获取缓存统计信息
+        
+        返回:
+            统计字典
+        """
+        total = self.hits + self.misses
+        hit_rate = (self.hits / total * 100) if total > 0 else 0
+        
+        return {
+            "hits": self.hits,
+            "misses": self.misses,
+            "total": total,
+            "hit_rate": hit_rate,
+            "size": len(self.cache),
+            "max_size": self.max_items
+        }
+    
+    def log_stats(self):
+        """打印缓存统计信息"""
+        stats = self.get_stats()
+        logger.info(
+            f"缓存统计 - 命中: {stats['hits']}, "
+            f"未命中: {stats['misses']}, "
+            f"命中率: {stats['hit_rate']:.1f}%, "
+            f"当前大小: {stats['size']}/{stats['max_size']}"
+        )
+
+
+
+
 def parse_single_metadata_to_vibration_data(
     metadata: Dict,
     enable_extreme_window: bool = False,

@@ -1,9 +1,8 @@
 
 # NN/trainers/trainer_manager.py
 from typing import Type
-from ..configs.base_config import BaseConfig
-from ..configs.registry import CONFIG_CLASS_REGISTRY, TRAINER_CLASS_REGISTRY  # 依赖统一注册表
-# 假设你有训练器基类，可根据实际路径调整导入
+from src.deep_learning_module.configs.base_config import BaseConfig
+from src.deep_learning_module.configs.registry import CONFIG_CLASS_REGISTRY, TRAINER_CLASS_REGISTRY
 from .base_trainer import BaseTrainer  
 
 def get_trainer(config: BaseConfig) -> BaseTrainer:

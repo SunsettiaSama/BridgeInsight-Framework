@@ -23,7 +23,7 @@ from src.config.data_processer.datasets.TestDatasets.BinaryClassificationDataset
 from src.config.data_processer.datasets.TestDatasets.RegressionDatasetConfig import RegressionDatasetConfig
 
 # 3. 标注数据集Config
-from src.config.data_processer.datasets.DatasetsFromAnnotation.AnnotationDatasetConfig import AnnotationDatasetConfig
+from src.config.data_processer.datasets.AnnotationDataset.AnnotationDatasetConfig import AnnotationDatasetConfig
 
 # 4. VIV数据集Config
 from src.config.data_processer.datasets.VIV2NumClassification.VIVTimeSeriesClassificationDatasetConfig import VIVTimeSeriesClassificationDatasetConfig
