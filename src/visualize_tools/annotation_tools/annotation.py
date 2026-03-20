@@ -114,6 +114,7 @@ class AnnotationDataProvider:
     MODE_NORMAL = 'normal'
     MODE_EXTREME = 'extreme'
     MODE_SUPER_EXTREME = 'super_extreme'
+    MODE_REVIEW = 'review'  # 复盘模式
 
     def __init__(self, use_cache: bool = True, force_recompute: bool = False, mode: str = MODE_EXTREME):
         self.use_cache = use_cache
@@ -138,6 +139,8 @@ class AnnotationDataProvider:
             windows = self._process_extreme_mode(metadata)
         elif self.mode == self.MODE_SUPER_EXTREME:
             windows = self._process_super_extreme_mode(metadata)
+        elif self.mode == self.MODE_REVIEW:
+            windows = self._process_review_mode(metadata)
         else:
             raise ValueError(f"未知的筛选模式: {self.mode}")
         
@@ -196,6 +199,71 @@ class AnnotationDataProvider:
         """超级极端模式：使用0.25%分位数据（待实现）"""
         print("\n⚠ 超级极端模式正在开发中，暂时使用极端模式")
         return self._process_extreme_mode(metadata)
+    
+    def _process_review_mode(self, metadata: List[Dict]) -> List[Dict]:
+        """复盘模式：加载已标注过的窗口进行复盘"""
+        print("\n[步骤2] 加载复盘模式数据（已标注的窗口）...")
+        
+        # 检查是否存在标注结果文件
+        if not os.path.exists(DEFAULT_ANNOTATION_RESULT_PATH):
+            raise ValueError(f"未找到标注结果文件: {DEFAULT_ANNOTATION_RESULT_PATH}")
+        
+        # 加载已有的标注数据
+        try:
+            with open(DEFAULT_ANNOTATION_RESULT_PATH, 'r', encoding='utf-8') as f:
+                annotation_results = json.load(f)
+            print(f"✓ 加载了 {len(annotation_results)} 条标注记录")
+        except Exception as e:
+            raise ValueError(f"加载标注结果文件失败: {e}")
+        
+        # 构建 file_path 和 window_index 的映射
+        annotated_windows = {}
+        for item in annotation_results:
+            key = f"{item['file_path']}_{item['window_index']}"
+            annotated_windows[key] = item
+        
+        # 获取极端窗口数据中与标注数据匹配的窗口
+        review_windows = []
+        extreme_records = [m for m in metadata if len(m.get('extreme_rms_indices', [])) > 0]
+        
+        for record in extreme_records:
+            file_path = record['file_path']
+            extreme_indices = record['extreme_rms_indices']
+            sensor_id = record['sensor_id']
+            time_str = f"{record['month']}/{record['day']} {record['hour']}:00"
+            
+            try:
+                vibration_data = self.unpacker.VIC_DATA_Unpack(file_path)
+                vibration_data = np.array(vibration_data)
+                
+                for window_idx in extreme_indices:
+                    window_key = f"{file_path}_{window_idx}"
+                    
+                    # 只加载已标注过的窗口
+                    if window_key in annotated_windows:
+                        start_sample = window_idx * WINDOW_SIZE
+                        end_sample = (window_idx + 1) * WINDOW_SIZE
+                        
+                        if end_sample <= len(vibration_data):
+                            window_data = vibration_data[start_sample:end_sample]
+                            window_info = {
+                                'metadata': record,
+                                'data': window_data,
+                                'window_index': window_idx,
+                                'sensor_id': sensor_id,
+                                'time': time_str,
+                                'file_path': file_path,
+                                'mode': self.MODE_REVIEW,
+                                'existing_annotation': annotated_windows[window_key].get('annotation', '')
+                            }
+                            review_windows.append(window_info)
+            except Exception as e:
+                print(f"  ⚠ 加载失败 {sensor_id} {time_str}: {e}")
+        
+        if not review_windows:
+            raise ValueError("未找到任何已标注的极端窗口用于复盘")
+        
+        return review_windows
     
     def _load_extreme_windows(self, extreme_records: List[Dict]) -> List[Dict]:
         """从极端记录中加载极端窗口数据"""
@@ -436,6 +504,11 @@ class AnnotationWindowGUI:
         Button(top_frame, text="保存结果", command=self.save_results).pack(side=tk.RIGHT, padx=2)
         Button(top_frame, text="关闭", command=self.on_closing).pack(side=tk.RIGHT, padx=2)
         
+        # 总览按钮（复盘模式下显示）
+        self.overview_button = Button(top_frame, text="📊 总览", command=self._show_overview, bg="#FFE5CC")
+        self.overview_button.pack(side=tk.RIGHT, padx=2)
+        self.overview_button.pack_forget()  # 默认隐藏
+        
         self.save_path_label = Label(top_frame, text="", fg="gray", font=("Arial", 9))
         self.save_path_label.pack(side=tk.RIGHT, padx=10)
         
@@ -507,6 +580,12 @@ class AnnotationWindowGUI:
         Radiobutton(super_frame, text="超级极端模式 - 0.25%分位数据", 
                       variable=mode_var, value=AnnotationDataProvider.MODE_SUPER_EXTREME).pack(anchor=tk.W)
         Label(super_frame, text="待0.25%分位数据实现后启用", fg="gray", font=("Arial", 8)).pack(anchor=tk.W, padx=20)
+        
+        review_frame = Frame(scrollable_frame, relief=FLAT, borderwidth=1)
+        review_frame.pack(fill=tk.X, padx=15, pady=5)
+        Radiobutton(review_frame, text="复盘模式 - 复盘已标注的样本", 
+                      variable=mode_var, value=AnnotationDataProvider.MODE_REVIEW).pack(anchor=tk.W)
+        Label(review_frame, text="加载已标注过的样本进行复盘，检查标注是否正确", fg="gray", font=("Arial", 8)).pack(anchor=tk.W, padx=20)
         
         # 日期范围筛选
         Label(scrollable_frame, text="日期范围筛选（格式: MM/DD，留空则不筛选）", 
@@ -650,10 +729,19 @@ class AnnotationWindowGUI:
             self.status_label.config(text="正在应用阈值检查...", fg="blue")
             self.root.update()
             
-            self._build_filtered_indices()
-            
-            self._load_existing_annotations()
-            self.show_window()
+            # 复盘模式下不进行阈值检查
+            if self.selected_mode == AnnotationDataProvider.MODE_REVIEW:
+                self.filtered_indices = list(range(len(self.extreme_windows)))
+                self._load_existing_annotations()
+                self.show_window()
+                
+                # 在复盘模式下显示总览按钮
+                self.overview_button.pack(side=tk.RIGHT, padx=2)
+                self.status_label.config(text="✓ 复盘模式已加载", fg="green")
+            else:
+                self._build_filtered_indices()
+                self._load_existing_annotations()
+                self.show_window()
             
         except Exception as e:
             messagebox.showerror("加载失败", f"加载数据失败: {str(e)}")
@@ -674,6 +762,15 @@ class AnnotationWindowGUI:
                 print(f"✓ 加载了 {len(self.annotation_data)} 条已有标注")
             except Exception as e:
                 print(f"⚠ 加载已有标注失败: {e}")
+        
+        # 复盘模式下，从window_info中的existing_annotation加载
+        if self.selected_mode == AnnotationDataProvider.MODE_REVIEW:
+            for window_info in self.extreme_windows:
+                if 'existing_annotation' in window_info:
+                    key = self._get_window_key(window_info)
+                    existing_anno = window_info['existing_annotation'].strip()
+                    if existing_anno:
+                        self.annotation_data[key] = existing_anno
     
     def _build_filtered_indices(self):
         """根据阈值、日期和传感器条件构建通过检查的窗口索引列表（并行检查）"""
@@ -850,6 +947,11 @@ class AnnotationWindowGUI:
         # 强制 UI 更新，确保图像完全渲染后再设置焦点
         self.root.update()
         self.entry.focus_set()
+        
+        # 复盘模式下，将光标移到末尾
+        if self.selected_mode == AnnotationDataProvider.MODE_REVIEW:
+            self.entry.icursor(tk.END)
+            self.entry.selection_range(0, 0)  # 清除选择，仅将光标放在末尾
     
     def _on_annotation_changed(self, *args):
         """当标注内容改变时调用"""
@@ -883,8 +985,14 @@ class AnnotationWindowGUI:
         return ""
     
     def next_window(self, event=None):
-        """显示下一个窗口，自动跳过已标注的窗口"""
+        """显示下一个窗口，自动跳过已标注的窗口（复盘模式除外）"""
         if self.current_window_index >= len(self.filtered_indices) - 1:
+            return
+        
+        # 复盘模式下，直接跳到下一个窗口，不进行跳过逻辑
+        if self.selected_mode == AnnotationDataProvider.MODE_REVIEW:
+            self.current_window_index += 1
+            self.show_window()
             return
         
         next_index = self.current_window_index + 1
@@ -1094,6 +1202,94 @@ class AnnotationWindowGUI:
             messagebox.showerror("保存失败", f"保存结果失败: {str(e)}")
             import traceback
             print(f"❌ 保存错误: {traceback.format_exc()}")
+    
+    def _show_overview(self):
+        """显示当前样本的元数据总览"""
+        if not self.filtered_indices or self.current_window_index >= len(self.filtered_indices):
+            messagebox.showwarning("提示", "当前无有效样本")
+            return
+        
+        actual_window_index = self.filtered_indices[self.current_window_index]
+        window_info = self.extreme_windows[actual_window_index]
+        metadata = window_info['metadata']
+        data = window_info['data']
+        
+        # 计算数据统计信息
+        rms_value = np.sqrt(np.mean(np.square(data)))
+        max_amplitude = np.max(np.abs(data))
+        min_amplitude = np.min(np.abs(data))
+        mean_value = np.mean(data)
+        std_value = np.std(data)
+        
+        # 构建总览信息
+        overview_text = f"""
+========== 样本元数据总览 ==========
+
+【基本信息】
+传感器ID: {window_info['sensor_id']}
+时间: {window_info['time']}
+文件路径: {window_info['file_path']}
+窗口索引: {window_info['window_index']}
+
+【标注信息】
+当前标注: {self.annotation_data.get(self._get_window_key(window_info), '(未标注)')}
+
+【Metadata信息】
+月份: {metadata.get('month', 'N/A')}
+日期: {metadata.get('day', 'N/A')}
+小时: {metadata.get('hour', 'N/A')}
+实际长度: {metadata.get('actual_length', 'N/A')} 个采样点
+缺失率: {metadata.get('missing_rate', 'N/A'):.4f}
+
+【极端窗口信息】
+极端RMS指标数: {len(metadata.get('extreme_rms_indices', []))} 个
+极端窗口索引: {metadata.get('extreme_rms_indices', [])[:10]}{'...' if len(metadata.get('extreme_rms_indices', [])) > 10 else ''}
+
+【数据统计信息】
+RMS值: {rms_value:.6f} m/s²
+最大振幅: {max_amplitude:.6f} m/s²
+最小振幅: {min_amplitude:.6f} m/s²
+平均值: {mean_value:.6f} m/s²
+标准差: {std_value:.6f} m/s²
+采样点数: {len(data)} 点
+采样频率: {FS} Hz
+时间长度: {len(data) / FS:.2f} 秒
+
+【模式信息】
+当前模式: {window_info.get('mode', 'N/A')}
+"""
+        
+        # 创建总览窗口
+        overview_window = Toplevel(self.root)
+        overview_window.title("样本元数据总览")
+        overview_window.geometry("700x700")
+        
+        # 添加文本框
+        text_frame = Frame(overview_window)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        scrollbar = ttk.Scrollbar(text_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, yscrollcommand=scrollbar.set, font=("Courier", 10))
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=text_widget.yview)
+        
+        text_widget.insert(1.0, overview_text)
+        text_widget.config(state=tk.DISABLED)
+        
+        # 底部按钮
+        button_frame = Frame(overview_window)
+        button_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        Button(button_frame, text="关闭", command=overview_window.destroy).pack(side=tk.RIGHT, padx=2)
+        Button(button_frame, text="复制到剪贴板", command=lambda: self._copy_to_clipboard(overview_text)).pack(side=tk.RIGHT, padx=2)
+    
+    def _copy_to_clipboard(self, text: str):
+        """复制文本到剪贴板"""
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        messagebox.showinfo("成功", "已复制到剪贴板")
     
     def on_closing(self):
         """关闭窗口前的处理"""

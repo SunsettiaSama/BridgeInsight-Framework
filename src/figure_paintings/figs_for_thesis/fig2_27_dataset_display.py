@@ -37,40 +37,23 @@ def load_annotation_results(annotation_path):
         return json.load(f)
 
 
-def load_sample_data(file_path, window_index, window_size=WINDOW_SIZE):
-    """加载单个样本数据"""
-    from src.data_processer.io_unpacker import UNPACK
-    import numpy as np
-    
-    unpacker = UNPACK(init_path=False)
-    vibration_data = np.array(unpacker.VIC_DATA_Unpack(file_path))
-    
-    start_sample = window_index * window_size
-    end_sample = (window_index + 1) * window_size
-    
-    return vibration_data[start_sample:end_sample]
-
-
 def plot_time_domain(ax, data, fs=FS):
     """绘制时域波形"""
     import numpy as np
     
-    _, _, FONT_SIZE, LABEL_FONT_SIZE, CN_FONT, ENG_FONT, _ = _get_config()
-    
     time_axis = np.arange(len(data)) / fs
     ax.plot(time_axis, data, color='#333333', linewidth=0.8)
-    ax.set_ylabel(r'$a$ $(m/s^2)$', fontproperties=ENG_FONT, fontsize=8)
-    ax.set_xlabel('Time (s)', fontproperties=ENG_FONT, fontsize=8)
-    ax.grid(True, color='gray', alpha=0.3, linewidth=0.5, linestyle='--')
-    ax.tick_params(axis='both', which='major', labelsize=7)
+    
+    # 隐藏标注文字，但保留坐标轴和边框
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    ax.grid(True, color='gray', alpha=0.2, linewidth=0.3)
 
 
 def plot_frequency_domain(ax, data, fs=FS):
     """绘制频域谱"""
     import numpy as np
     from scipy import signal
-    
-    _, _, FONT_SIZE, LABEL_FONT_SIZE, CN_FONT, ENG_FONT, _ = _get_config()
     
     f, psd = signal.welch(data, fs=fs, nperseg=int(NFFT/2), 
                           noverlap=int(NFFT/4), nfft=NFFT)
@@ -80,11 +63,12 @@ def plot_frequency_domain(ax, data, fs=FS):
     psd_limited = psd[mask]
     
     ax.plot(f_limited, psd_limited, color='#333333', linewidth=0.8)
-    ax.set_ylabel('PSD', fontproperties=ENG_FONT, fontsize=8)
-    ax.set_xlabel('Freq (Hz)', fontproperties=ENG_FONT, fontsize=8)
-    ax.grid(True, color='gray', alpha=0.3, linewidth=0.5, linestyle='--')
-    ax.tick_params(axis='both', which='major', labelsize=7)
     ax.set_xlim(0, FREQ_LIMIT)
+    
+    # 隐藏标注文字，但保留坐标轴和边框
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    ax.grid(True, color='gray', alpha=0.2, linewidth=0.3)
 
 
 def plot_frequency_evolution(ax, data, fs=FS):
@@ -124,14 +108,20 @@ def plot_frequency_evolution(ax, data, fs=FS):
                    extent=[0, FREQ_LIMIT, 0, window_total],
                    interpolation='bilinear')
     
-    ax.set_ylabel('Time (s)', fontproperties=ENG_FONT, fontsize=8)
-    ax.set_xlabel('Freq (Hz)', fontproperties=ENG_FONT, fontsize=8)
-    ax.tick_params(axis='both', which='major', labelsize=7)
+    # 隐藏标注文字，但保留坐标轴和边框
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
 
 
 def create_dataset_display_figure(annotation_data, num_samples=30):
     """
     创建数据集展示图(20-50个子图)
+    对齐annotation.py的逻辑：先读文件 → 提取窗口 → 绘图
+    
+    布局: 每个样本占用2行3列，左侧占2/3，右侧占1/3
+    - [0,0]: 时域波形 (左上，占2/3宽度)
+    - [1,0]: 频域谱   (左下，占2/3宽度)  
+    - [0,1:3], [1,1:3]: 时频域演化 (右侧占1/3宽度)
     
     Args:
         annotation_data: 标注数据列表
@@ -142,6 +132,8 @@ def create_dataset_display_figure(annotation_data, num_samples=30):
     """
     import numpy as np
     import matplotlib.pyplot as plt
+    from matplotlib.gridspec import GridSpec
+    from collections import defaultdict
     
     SQUARE_FIG_SIZE, SQUARE_FONT_SIZE, FONT_SIZE, LABEL_FONT_SIZE, CN_FONT, ENG_FONT, get_viridis_color_map = _get_config()
     
@@ -154,60 +146,85 @@ def create_dataset_display_figure(annotation_data, num_samples=30):
     else:
         selected_data = annotation_data[:num_samples]
     
-    # 计算网格布局 (尽量接近正方形)
+    # 计算网格布局 - 每个样本占2行3列（时域1列占2/3，演化2列占1/3）
     num_cols = int(np.ceil(np.sqrt(num_samples)))
     num_rows = int(np.ceil(num_samples / num_cols))
     
-    # 创建图像，子图高度为行数*2，宽度为列数*2
-    fig, axes = plt.subplots(num_rows, num_cols * 3, figsize=SQUARE_FIG_SIZE)
+    # 总的子图网格：2*num_rows 行，3*num_cols 列
+    total_rows = 2 * num_rows
+    total_cols = 3 * num_cols
     
-    # 展平axes以便遍历
-    if num_rows == 1 and num_cols * 3 == 1:
-        axes = np.array([[axes]])
-    elif num_rows == 1:
-        axes = axes.reshape(1, -1)
-    elif num_cols * 3 == 1:
-        axes = axes.reshape(-1, 1)
-    else:
-        axes = axes.reshape(num_rows, num_cols * 3)
+    # 设置列宽比例：左侧占2/3，右侧占1/3
+    # 每个样本的比例是 [2, 1, 1]
+    width_ratios = [2, 1, 1] * num_cols
+    
+    fig = plt.figure(figsize=SQUARE_FIG_SIZE)
+    
+    # 添加总标题（对齐annotation.py风格）
+    total_labels = len(set(item['annotation'] for item in selected_data))
+    fig_title = f"Dataset Display - {num_samples} Samples ({total_labels} Labels)"
+    fig.suptitle(fig_title, fontproperties=ENG_FONT, fontsize=SQUARE_FONT_SIZE, 
+                fontweight='bold', y=0.98)
+    
+    gs = GridSpec(total_rows, total_cols, figure=fig, hspace=0.3, wspace=0.3, width_ratios=width_ratios)
+    
+    # 缓存已加载的数据文件，避免重复加载
+    file_cache = {}
     
     # 绘制每个样本
     for idx, sample_data in enumerate(selected_data):
-        row = idx // num_cols
-        col_base = (idx % num_cols) * 3
+        sample_row = idx // num_cols  # 样本在网格中的行
+        sample_col = idx % num_cols   # 样本在网格中的列
         
-        ax_time = axes[row, col_base] if num_rows > 1 else axes[col_base]
-        ax_freq = axes[row, col_base + 1] if num_rows > 1 else axes[col_base + 1]
-        ax_evo = axes[row, col_base + 2] if num_rows > 1 else axes[col_base + 2]
+        # 计算在大网格中的位置
+        ax_row_start = sample_row * 2
+        ax_col_start = sample_col * 3
+        
+        # 获取子图
+        ax_time = fig.add_subplot(gs[ax_row_start, ax_col_start])           # 时域 (上左)
+        ax_freq = fig.add_subplot(gs[ax_row_start + 1, ax_col_start])       # 频域 (下左)
+        ax_evo = fig.add_subplot(gs[ax_row_start:ax_row_start+2, ax_col_start+1:ax_col_start+3])  # 演化 (右侧)
         
         file_path = sample_data['file_path']
         window_index = sample_data['window_index']
         
-        data = load_sample_data(file_path, window_index)
+        # 对齐annotation.py的逻辑：使用缓存避免重复加载同一文件
+        if file_path not in file_cache:
+            try:
+                from src.data_processer.io_unpacker import UNPACK
+                unpacker = UNPACK(init_path=False)
+                vibration_data = np.array(unpacker.VIC_DATA_Unpack(file_path))
+                file_cache[file_path] = vibration_data
+            except Exception as e:
+                print(f"⚠ 加载文件失败 {file_path}: {e}")
+                continue
         
-        plot_time_domain(ax_time, data)
-        plot_frequency_domain(ax_freq, data)
-        plot_frequency_evolution(ax_evo, data)
+        vibration_data = file_cache[file_path]
+        
+        # 提取窗口数据
+        start_sample = window_index * WINDOW_SIZE
+        end_sample = (window_index + 1) * WINDOW_SIZE
+        
+        if end_sample > len(vibration_data):
+            print(f"⚠ 窗口范围超出数据长度: [{start_sample}, {end_sample}] 超过 {len(vibration_data)}")
+            continue
+        
+        window_data = vibration_data[start_sample:end_sample]
+        
+        # 绘图
+        plot_time_domain(ax_time, window_data)
+        plot_frequency_domain(ax_freq, window_data)
+        plot_frequency_evolution(ax_evo, window_data)
     
-    # 隐藏未使用的子图
-    total_subplots = num_rows * num_cols * 3
-    used_subplots = len(selected_data) * 3
-    
-    for idx in range(used_subplots, total_subplots):
-        row = idx // (num_cols * 3)
-        col = idx % (num_cols * 3)
-        if num_rows == 1:
-            axes[col].set_visible(False)
-        else:
-            axes[row, col].set_visible(False)
-    
-    plt.tight_layout()
     return fig
 
 
 def create_label_distribution_pie_chart(annotation_data):
     """
-    创建标签分布饼状图
+    创建标签分布饼状图 (3D效果、倾斜、使用legend、带有元数据标题)
+    - 饼图内显示百分比
+    - Legend显示标签名和计数
+    - 字体统一使用ENG_FONT
     
     Args:
         annotation_data: 标注数据列表
@@ -226,6 +243,13 @@ def create_label_distribution_pie_chart(annotation_data):
     # 创建饼状图
     fig, ax = plt.subplots(figsize=SQUARE_FIG_SIZE)
     
+    # 获取标题信息：总样本数和标签类别数
+    total_samples = len(annotation_data)
+    total_labels = len(label_counts)
+    fig_title = f"Label Distribution - {total_samples} Samples, {total_labels} Categories"
+    fig.suptitle(fig_title, fontproperties=ENG_FONT, fontsize=SQUARE_FONT_SIZE, 
+                fontweight='bold', y=0.98)
+    
     # 获取标签和计数
     label_names = list(label_counts.keys())
     counts = list(label_counts.values())
@@ -235,21 +259,41 @@ def create_label_distribution_pie_chart(annotation_data):
               '#F7FBC9', '#F5EBAE', '#F0C284', '#EF8B67', '#E3625D']
     colors = colors[:len(label_names)]
     
-    # 绘制饼状图
-    wedges, texts, autotexts = ax.pie(counts, labels=label_names, autopct='%1.1f%%',
-                                       colors=colors, startangle=90)
+    # 绘制饼状图，添加3D效果和倾斜
+    # 通过explode参数创建分离效果（类似3D）
+    explode = [0.05] * len(label_names)
     
-    # 设置文字属性
-    for text in texts:
-        text.set_fontsize(FONT_SIZE)
-        text.set_fontproperties(CN_FONT)
+    # 绘制饼状图（不提供labels，避免直接标注）
+    wedges, autotexts = ax.pie(
+        counts, 
+        colors=colors,
+        explode=explode,
+        startangle=45,  # 倾斜角度
+        shadow=True,    # 添加阴影创建3D效果
+        textprops={'fontproperties': ENG_FONT, 'fontsize': FONT_SIZE - 2, 'fontweight': 'bold'}
+    )
     
-    for autotext in autotexts:
+    # 设置autotexts（百分比）属性 - 统一字体风格
+    total_count = sum(counts)
+    for i, autotext in enumerate(autotexts):
         autotext.set_color('white')
         autotext.set_fontsize(FONT_SIZE)
         autotext.set_fontweight('bold')
+        autotext.set_fontproperties(ENG_FONT)
+        # 更新文本为百分比格式
+        percentage = (counts[i] / total_count) * 100
+        autotext.set_text(f'{percentage:.1f}%')
     
-    ax.set_title('标签分布', fontproperties=CN_FONT, fontsize=LABEL_FONT_SIZE)
+    # 使用legend展示标签名称和计数信息
+    legend_labels = [f'{name}: {count} ({count/sum(counts)*100:.1f}%)' 
+                     for name, count in zip(label_names, counts)]
+    legend = ax.legend(legend_labels, loc='center left', bbox_to_anchor=(1, 0, 0.5, 1),
+                      fontsize=FONT_SIZE - 2, frameon=True, fancybox=True, shadow=True)
+    
+    # 统一legend的字体
+    for text in legend.get_texts():
+        text.set_fontproperties(ENG_FONT)
+        text.set_fontsize(FONT_SIZE - 2)
     
     return fig
 
