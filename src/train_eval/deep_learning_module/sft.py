@@ -20,8 +20,8 @@ import torch.distributed as dist
 from contextlib import nullcontext
 
 # 导入基类和SFT配置类
-from .base_trainer import BaseTrainer, FocalLoss
-from src.deep_learning_module.configs.base_config import BaseConfig
+from .base import BaseTrainer, FocalLoss
+from src.config.trainer.base_config import BaseConfig
 
 class SFTTrainer(BaseTrainer):
     """
