@@ -19,7 +19,7 @@ from sklearn.metrics import (
 )
 
 # 导入最新的训练器配置基类
-from src.config.trainer.base_config import BaseConfig
+from src.config.train_eval.deep_learning_module.base_config import BaseConfig
 import torch.nn.functional as F  # 新增：用于FocalLoss计算
 if TYPE_CHECKING:
     from torch.utils.data import DataLoader, Dataset

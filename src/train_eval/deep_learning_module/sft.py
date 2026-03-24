@@ -3,7 +3,8 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 import time
 import torch
 import torch.nn as nn
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast
+from torch.cuda.amp import GradScaler
 from torch.optim.lr_scheduler import (
     StepLR, CosineAnnealingLR, ReduceLROnPlateau, ExponentialLR, OneCycleLR
 )
@@ -11,6 +12,9 @@ from torch.utils.data import DataLoader, Dataset  # 导入Dataset类
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from pathlib import Path
+import json
+import yaml
+import shutil
 from sklearn.metrics import (
     accuracy_score, f1_score, precision_score, recall_score,
     mean_squared_error, mean_absolute_error, r2_score, top_k_accuracy_score,
@@ -21,7 +25,7 @@ from contextlib import nullcontext
 
 # 导入基类和SFT配置类
 from .base import BaseTrainer, FocalLoss
-from src.config.trainer.base_config import BaseConfig
+from src.config.train_eval.deep_learning_module.base_config import BaseConfig
 
 class SFTTrainer(BaseTrainer):
     """
@@ -693,7 +697,8 @@ class SFTTrainer(BaseTrainer):
         )
 
         # 3. 前向传播（混合精度）
-        forward_context = autocast(enabled=self.sft_config.use_mixed_precision)
+        device_type = "cuda" if isinstance(self.device, torch.device) and self.device.type == "cuda" else "cpu"
+        forward_context = autocast(device_type=device_type, enabled=self.sft_config.use_mixed_precision)
         forward_start = time.time()
         with forward_context:
             outputs = model(inputs)
@@ -809,7 +814,8 @@ class SFTTrainer(BaseTrainer):
             raise RuntimeError("模型/损失函数尚未初始化，无法进行验证步骤")
 
         model.eval()
-        val_context = nullcontext() if not self.sft_config.use_mixed_precision else autocast(enabled=True)
+        device_type = "cuda" if isinstance(self.device, torch.device) and self.device.type == "cuda" else "cpu"
+        val_context = nullcontext() if not self.sft_config.use_mixed_precision else autocast(device_type=device_type, enabled=True)
 
         with torch.no_grad(), val_context:
             # 批次数据合法性校验
@@ -1046,6 +1052,114 @@ class SFTTrainer(BaseTrainer):
         finally:
             # 确保资源清理（无论正常结束还是异常终止）
             self._after_train()
+
+    # --------------------------
+    # 覆盖：模型保存机制（创建模型名称+时间文件夹，附加配置文件）
+    # --------------------------
+    def save_checkpoint(self, is_best: bool = False, epoch: Optional[int] = None) -> None:
+        """
+        覆盖基类保存方法，在保存模型时创建「模型名称+时间」文件夹，并保存三个配置文件
+        Args:
+            is_best: 是否为最优模型
+            epoch: 当前训练轮数（默认使用self.epoch）
+        """
+        current_epoch = epoch or self.epoch
+        
+        # 生成时间戳（格式：YYYYMMDD_HHMMSS）
+        timestamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+        
+        # 获取模型名称（优先从配置中获取model_type/model_name，否则使用模型类名）
+        raw_model = self.model.module if hasattr(self.model, "module") else self.model
+        model_name = getattr(self.sft_config, "model_name", None) or getattr(self.sft_config, "model_type", None) or raw_model.__class__.__name__
+        
+        # 创建以「模型名称_时间」命名的文件夹
+        model_time_folder = f"{model_name}_{timestamp}"
+        checkpoint_base_dir = Path(self.sft_config.output_dir) / "checkpoints" / model_time_folder
+        checkpoint_base_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 构建断点字典
+        checkpoint = {
+            "epoch": current_epoch,
+            "global_step": self.step_state.global_step,
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "scheduler_state_dict": self.scheduler.state_dict() if self.scheduler else None,
+            "scaler_state_dict": self.scaler.state_dict() if self.scaler else None,
+            "criterion_state_dict": self.criterion.state_dict() if hasattr(self.criterion, "state_dict") else None,
+            "best_metric": self.best_metric,
+            "best_epoch": self.best_epoch,
+            "config": self.sft_config.dict()
+        }
+
+        # 辅助函数：保存模型结构+训练步状态到JSON
+        def save_info_json(pth_path: Path):
+            model_info = self._get_model_structure_info()
+            step_state_dict = self.step_state.to_dict()
+            json_path = pth_path.with_suffix(".json")
+            info_dict = {
+                "metadata": {
+                    "save_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+                    "checkpoint_path": str(pth_path)
+                },
+                "model_structure": model_info,
+                "train_step_state": step_state_dict
+            }
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(info_dict, f, ensure_ascii=False, indent=2)
+            self.logger.info(f"已保存断点信息至：{json_path}")
+
+        # 保存最新断点+JSON（使用新的目录结构）
+        latest_checkpoint_path = checkpoint_base_dir / "latest_checkpoint.pth"
+        torch.save(checkpoint, latest_checkpoint_path)
+        self.logger.info(f"已保存最新断点至：{latest_checkpoint_path}")
+        save_info_json(latest_checkpoint_path)
+
+        # 保存最优断点+JSON
+        if is_best:
+            best_checkpoint_path = checkpoint_base_dir / "best_checkpoint.pth"
+            torch.save(checkpoint, best_checkpoint_path)
+            self.logger.info(f"已保存最优断点至：{best_checkpoint_path}（最优指标：{self.best_metric:.4f}，第{current_epoch}轮）")
+            save_info_json(best_checkpoint_path)
+
+        # 保存中间断点+JSON
+        if self.sft_config.save_freq > 0 and current_epoch % self.sft_config.save_freq == 0:
+            intermediate_checkpoint_path = checkpoint_base_dir / f"epoch_{current_epoch}_checkpoint.pth"
+            torch.save(checkpoint, intermediate_checkpoint_path)
+            self.logger.info(f"已保存中间断点至：{intermediate_checkpoint_path}")
+            save_info_json(intermediate_checkpoint_path)
+
+        # ============ 新增：保存三个配置文件到同一目录 ============
+        try:
+            # 保存Trainer配置（sft.yaml）
+            trainer_config_path = checkpoint_base_dir / "trainer_config.yaml"
+            with open(trainer_config_path, "w", encoding="utf-8") as f:
+                # 将config字典转换为YAML格式
+                config_dict = self.sft_config.dict()
+                yaml.dump(config_dict, f, default_flow_style=False, allow_unicode=True)
+            self.logger.info(f"已保存Trainer配置至：{trainer_config_path}")
+
+            # 保存数据集配置（若available）
+            if hasattr(self.sft_config, "dataset_config_path") and self.sft_config.dataset_config_path:
+                dataset_config_src = Path(self.sft_config.dataset_config_path)
+                if dataset_config_src.exists():
+                    dataset_config_path = checkpoint_base_dir / "dataset_config.yaml"
+                    shutil.copy(dataset_config_src, dataset_config_path)
+                    self.logger.info(f"已保存数据集配置至：{dataset_config_path}")
+            else:
+                self.logger.warning("未找到数据集配置路径，跳过数据集配置保存")
+
+            # 保存模型配置（若available）
+            if hasattr(self.sft_config, "model_config_path") and self.sft_config.model_config_path:
+                model_config_src = Path(self.sft_config.model_config_path)
+                if model_config_src.exists():
+                    model_config_path = checkpoint_base_dir / "model_config.yaml"
+                    shutil.copy(model_config_src, model_config_path)
+                    self.logger.info(f"已保存模型配置至：{model_config_path}")
+            else:
+                self.logger.warning("未找到模型配置路径，跳过模型配置保存")
+
+        except Exception as e:
+            self.logger.warning(f"保存配置文件时出现异常：{str(e)}")
 
     # --------------------------
     # 新增：独立评估方法（支持Dataset自动转换）

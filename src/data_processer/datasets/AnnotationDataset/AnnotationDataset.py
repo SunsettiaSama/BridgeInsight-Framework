@@ -371,7 +371,7 @@ class AnnotationDataset(BaseDataset):
         sample = self._parse_sample(file_path)
         
         data = sample["data"]  # shape: (seq_len, feat_dim)
-        label = sample["label"]
+        label = int(sample["label"])
         
         # 处理序列长度
         if self.annotation_config.fix_seq_len is not None:
@@ -607,6 +607,15 @@ class AnnotationDataset(BaseDataset):
             return len(self.window_indices) if self.window_indices else 0
         else:
             return len(self.file_paths)
+    
+    def get_num_classes(self) -> int:
+        """
+        获取分类任务的类别总数
+        
+        返回：
+            num_classes: 类别总数
+        """
+        return self.annotation_config.num_classes
     
     # --------------------------
     # 可视化便捷方法
