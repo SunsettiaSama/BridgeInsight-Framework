@@ -169,6 +169,8 @@ class BaseDataset(Dataset, ABC, Generic[DatasetType]):
         
         # 深度拷贝配置（支持子类差异化修改配置，如数据增强）
         new_config = copy.deepcopy(self.config)
+        # 临时禁用自动划分，避免新实例在__init__中重新随机划分
+        new_config.auto_split = False
         # 创建新实例（保持子类类型）
         new_dataset = self.__class__(new_config)
         
@@ -191,9 +193,24 @@ class BaseDataset(Dataset, ABC, Generic[DatasetType]):
         # mode=="full" 时保持默认初始化状态
         
         new_dataset._dataset_mode = mode
+        new_dataset.auto_split = False
+        
+        # 调用子类的实例配置钩子方法
+        self._setup_subset_instance(new_dataset, mode)
+        
         # 日志提示实例创建
         logger.info(f"创建{mode}模式独立数据集实例，样本数：{len(new_dataset.full_file_paths)}")
         return new_dataset
+
+    def _setup_subset_instance(self, instance, mode: str):
+        """
+        子类可重写此方法来配置新创建的子集实例
+        
+        Args:
+            instance: 新创建的数据集实例
+            mode: 数据集模式 (train/val/test/full)
+        """
+        pass
 
     # --------------------------
     # 核心公共接口：获取独立数据集实例（推荐使用）

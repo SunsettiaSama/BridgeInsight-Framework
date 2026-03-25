@@ -367,7 +367,7 @@ class AnnotationDataset(BaseDataset):
         
         返回：(data_tensor, label_tensor)
         """
-        file_path = self.file_paths[idx]
+        file_path = self.full_file_paths[idx]
         sample = self._parse_sample(file_path)
         
         data = sample["data"]  # shape: (seq_len, feat_dim)
@@ -399,7 +399,7 @@ class AnnotationDataset(BaseDataset):
         config = self.annotation_config
         file_idx, start_idx, end_idx = self.window_indices[idx]
         
-        file_path = self.file_paths[file_idx]
+        file_path = self.full_file_paths[file_idx]
         sample = self._parse_sample(file_path)
         data = sample["data"]  # shape: (seq_len, feat_dim)
         
@@ -576,6 +576,16 @@ class AnnotationDataset(BaseDataset):
         """获取验证集实例（继承自BaseDataset）"""
         return self._create_dataset_instance("val")
     
+    def _setup_subset_instance(self, instance: "AnnotationDataset", mode: str):
+        """
+        为子集实例配置AnnotationDataset特定的属性
+        
+        Args:
+            instance: 新创建的数据集实例
+            mode: 数据集模式 (train/val/test/full)
+        """
+        instance.file_paths = instance.full_file_paths.copy()
+    
     def get_cache_stats(self) -> dict:
         """
         获取缓存统计信息
@@ -606,7 +616,7 @@ class AnnotationDataset(BaseDataset):
         if self.annotation_config.task_type == "regression":
             return len(self.window_indices) if self.window_indices else 0
         else:
-            return len(self.file_paths)
+            return len(self.full_file_paths)
     
     def get_num_classes(self) -> int:
         """

@@ -13,6 +13,8 @@ from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from sklearn.preprocessing import StandardScaler
 from config.machine_learning_module.svm.train_config import SVMTrainConfig
+from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -23,29 +25,49 @@ DEVICE = torch.device("cuda" if (torch.cuda.is_available() and CONFIG.USE_GPU) e
 _SENTINEL = object()
 
 # -------------------------- 核心函数 --------------------------
-def extract_data_from_dataloader(dataloader):
+def _process_batch(batch_data, batch_label):
+    """处理单个批次数据的辅助函数"""
+    batch_data = batch_data.to(DEVICE).cpu().numpy()
+    batch_label = batch_label.to(DEVICE).cpu().numpy()
+    batch_data = batch_data.reshape(batch_data.shape[0], -1)
+    return batch_data, batch_label
+
+
+def extract_data_from_dataloader(dataloader, num_workers: int = 4, use_progress_bar: bool = True):
     """
     从PyTorch DataLoader中提取特征和标签，转换为numpy数组（适配SVM）
+    
     :param dataloader: PyTorch DataLoader，返回格式为 (data, label)
+    :param num_workers: 多线程工作进程数（默认4）
+    :param use_progress_bar: 是否显示进度条（默认True）
     :return: features (np.array), labels (np.array)
     """
     features = []
     labels = []
     
-    for batch_data, batch_label in dataloader:
-        # 将tensor转到CPU（如果在GPU上），并转换为numpy
-        batch_data = batch_data.to(DEVICE).cpu().numpy()
-        batch_label = batch_label.to(DEVICE).cpu().numpy()
-        
-        # 展平特征（如果是图像数据：[batch, C, H, W] -> [batch, C*H*W]；如果是一维特征则无需展平）
-        batch_data = batch_data.reshape(batch_data.shape[0], -1)
-        
-        features.append(batch_data)
-        labels.append(batch_label)
+    total_batches = len(dataloader)
     
-    # 合并所有批次
+    if use_progress_bar:
+        pbar = tqdm(dataloader, total=total_batches, desc="提取数据", unit="batch")
+    else:
+        pbar = dataloader
+    
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures = []
+        
+        for batch_data, batch_label in pbar:
+            future = executor.submit(_process_batch, batch_data, batch_label)
+            futures.append(future)
+        
+        for future in tqdm(futures, desc="处理结果", unit="batch", disable=not use_progress_bar):
+            batch_data, batch_label = future.result()
+            features.append(batch_data)
+            labels.append(batch_label)
+    
     features = np.concatenate(features, axis=0)
     labels = np.concatenate(labels, axis=0)
+    
+    logger.info(f"数据提取完成: {len(features)} 个样本，特征维度 {features.shape[1]}")
     
     return features, labels
 
