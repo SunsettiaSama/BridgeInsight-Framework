@@ -949,10 +949,12 @@ class SFTTrainer(BaseTrainer):
                             train_metrics_accum[k] = 0.0
                         train_metrics_accum[k] += v
 
-                    # 打印批次日志（优化：添加进度百分比）
+                    # 打印批次日志（使用进度条格式）
                     if (batch_idx + 1) % self.sft_config.log_freq == 0:
                         progress = (batch_idx + 1) / train_batch_num * 100
-                        self.logger.info(f"[训练进度] {batch_idx+1}/{train_batch_num} ({progress:.1f}%)")
+                        filled = int(progress / 2)
+                        bar = "█" * filled + "░" * (50 - filled)
+                        self.logger.info(f"[Epoch {epoch+1}] Train |{bar}| {progress:5.1f}% [{batch_idx+1:3d}/{train_batch_num}]")
                         self.step_state.print_step_summary()
 
                     # 调试模式：提前终止
@@ -986,9 +988,10 @@ class SFTTrainer(BaseTrainer):
                         temp_avg_metrics = {
                             k: v / (batch_idx + 1) for k, v in val_metrics_accum.items()
                         }
-                        self.logger.info(f"[验证进度] Batch: {batch_idx+1}/{val_batch_num}")
-                        for k, v in temp_avg_metrics.items():
-                            self.logger.info(f"  临时平均{k}：{v:.4f}")
+                        progress = (batch_idx + 1) / val_batch_num * 100
+                        filled = int(progress / 2)
+                        bar = "█" * filled + "░" * (50 - filled)
+                        self.logger.info(f"[Epoch {epoch+1}] Val  |{bar}| {progress:5.1f}% [{batch_idx+1:3d}/{val_batch_num}]")
 
                 # 验证平均指标（容错：避免除零错误）
                 avg_val_metrics = {
@@ -996,16 +999,23 @@ class SFTTrainer(BaseTrainer):
                 }
 
                 # 轮次汇总日志（优化：格式化输出）
-                self.logger.info("="*50)
-                self.logger.info(f"[Epoch {epoch+1} 汇总]")
-                self.logger.info(f"训练平均损失：{avg_train_metrics.get('loss', 0.0):.4f} | 验证平均损失：{avg_val_metrics.get('loss', 0.0):.4f}")
+                self.logger.info("=" * 80)
+                self.logger.info(f"📊 [Epoch {epoch+1} Summary]")
+                self.logger.info("-" * 80)
+                self.logger.info(
+                    f"  Train Loss: {avg_train_metrics.get('loss', 0.0):.4f}  |  "
+                    f"Val Loss: {avg_val_metrics.get('loss', 0.0):.4f}"
+                )
                 for metric in self.sft_config.get_train_evaluation_metrics():
                     if metric == "loss":
                         continue
                     train_val = avg_train_metrics.get(metric, 0.0)
                     val_val = avg_val_metrics.get(metric, 0.0)
-                    self.logger.info(f"训练{metric}：{train_val:.4f} | 验证{metric}：{val_val:.4f}")
-                self.logger.info("="*50)
+                    self.logger.info(
+                        f"  Train {metric:8s}: {train_val:.4f}  |  "
+                        f"Val {metric:8s}: {val_val:.4f}"
+                    )
+                self.logger.info("=" * 80)
 
                 # TensorBoard记录（优化：添加学习率曲线）
                 if self.writer is not None:

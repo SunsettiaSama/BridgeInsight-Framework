@@ -176,16 +176,17 @@ class TrainStepState:
         return state_dict
 
     def print_step_summary(self) -> None:
-        """打印当前训练步的核心状态摘要（替换为logger.info输出）"""
-        summary = f"""
-        ==================== 训练步状态摘要 [Epoch: {self.epoch+1} | Batch: {self.batch_idx+1} | Global Step: {self.global_step}] ====================
-        1. 性能指标：批次损失={self.batch_loss:.4f} | 累计平均损失={self.running_loss:.4f} | 批次指标={self.batch_metrics}
-        2. 优化器状态：学习率={list(self.learning_rates.values())[0] if self.learning_rates else 0:.6f} | 梯度范数={self.gradient_norm:.4f} | 梯度裁剪={self.is_gradient_clipped}
-        3. 训练配置：梯度累积={self.accumulation_step}/{self.total_accumulation_steps} | 续训={self.is_resumed} | 实际批次大小={self.batch_size_actual}
-        4. 资源效率：单步耗时={self.step_total_time:.2f}s | GPU显存={self.gpu_memory_used:.0f}MB | GPU利用率={self.gpu_utilization:.1f}%
-        """
-        # 替换print为logger.info，保持原有格式
-        self.logger.info(summary.strip())
+        """打印当前训练步的核心状态摘要（使用简洁的单行格式）"""
+        lr_value = list(self.learning_rates.values())[0] if self.learning_rates else 0
+        
+        summary = (
+            f"Step {self.global_step:5d} | "
+            f"Loss: {self.batch_loss:.4f} (avg: {self.running_loss:.4f}) | "
+            f"LR: {lr_value:.6f} | "
+            f"Grad: {self.gradient_norm:.2f} | "
+            f"Time: {self.step_total_time:.2f}s"
+        )
+        self.logger.info(summary)
 
     def reset_running_loss(self) -> None:
         """重置累计平均损失（如每轮结束后或手动触发滑动窗口重置）"""
@@ -438,14 +439,16 @@ class BaseTrainer(ABC):
         """初始化日志组件（兼容终端输出与文件保存）"""
         logger = logging.getLogger(f"{self.__class__.__name__}")
         logger.setLevel(logging.INFO)
+        
+        if logger.hasHandlers():
+            logger.handlers.clear()
+        
         formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
-        # 终端处理器
         stream_handler = logging.StreamHandler()
         stream_handler.setFormatter(formatter)
         logger.addHandler(stream_handler)
 
-        # 文件处理器（若配置开启）
         if self.config.save_log_file:
             log_file_path = Path(self.config.output_dir) / "train_log.txt"
             file_handler = logging.FileHandler(log_file_path, encoding="utf-8")

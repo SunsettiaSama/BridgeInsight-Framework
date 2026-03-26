@@ -16,7 +16,7 @@ from src.config.base_config import BaseConfig
 # --------------------------
 
 from src.config.deep_learning_module.models.unet import UNetConfig
-from src.config.deep_learning_module.models.SimpleMLPConfig import SimpleMLPConfig
+from src.config.deep_learning_module.models.mlp import SimpleMLPConfig
 from src.config.deep_learning_module.models.cnn import CNNConfig
 # 目前LSTM配置还未调整，先注释掉
 from src.config.deep_learning_module.models.lstm import LSTMConfig
