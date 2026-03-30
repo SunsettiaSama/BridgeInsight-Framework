@@ -83,11 +83,13 @@ class VICWindowExtractor:
         """
         从VIC文件中提取单个窗口
         
+        📌 【关键约束】每个样本 = 单个独立窗口，长度固定为 window_size，NO拼接
+        
         参数:
             file_path: VIC文件路径
             window_index: 窗口号（从0开始）
             window_size: 窗口大小（采样点数），默认3000
-            metadata: 元数据字典，包含extreme_rms_indices和其他信息
+            metadata: 元数据字典，包含extreme_freq_indices和其他信息
         
         返回:
             窗口数据，shape: (window_size, 1) 的2D数组
@@ -116,7 +118,7 @@ class VICWindowExtractor:
         if start_idx < 0:
             raise ValueError(f"窗口起始索引不能为负: {start_idx}")
         
-        # 4. 提取窗口
+        # 4. 提取窗口（单个，绝不拼接）
         window_data = vic_data[start_idx:end_idx]
         
         # 5. 应用去噪（可选）
@@ -133,10 +135,12 @@ class VICWindowExtractor:
         """
         对窗口应用分层去噪策略
         
+        📌 【关键修复】使用 extreme_freq_indices（极端主频），而非 extreme_rms_indices
+        
         参数:
             window_data: 窗口数据
             window_index: 窗口索引
-            metadata: 元数据，包含extreme_rms_indices
+            metadata: 元数据，包含 extreme_freq_indices（极端主频窗口）
         
         返回:
             去噪后的窗口数据
@@ -144,11 +148,12 @@ class VICWindowExtractor:
         if not STRATIFIED_DENOISE_ENABLED:
             return window_data
         
-        extreme_indices = metadata.get("extreme_rms_indices", [])
+        # 📌 修复2：使用正确的键名 extreme_freq_indices（而非 extreme_rms_indices）
+        extreme_freq_indices = metadata.get("extreme_freq_indices", [])
         
-        # 如果是极端窗口，保留原始特征，不去噪
-        if window_index in extreme_indices:
-            logger.debug(f"跳过去噪（极端窗口）: window_index={window_index}")
+        # 如果是极端主频窗口，保留原始特征，不去噪
+        if window_index in extreme_freq_indices:
+            logger.debug(f"跳过去噪（极端主频窗口）: window_index={window_index}")
             return window_data
         
         # 低频窗口应用去噪
@@ -176,8 +181,9 @@ class LRUVICCache:
     - LRU淘汰策略：当达到容量时，自动删除最少使用的条目
     - 缓存命中统计
     - 可配置的最大条目数
+    - 📌 【关键修复】缓存键包含处理标志，避免缓存污染
     
-    缓存键格式: (file_path, window_index, window_size)
+    缓存键格式: (file_path, window_index, window_size, enable_denoise, is_extreme_window)
     """
     
     def __init__(self, max_items: int = 1000):
@@ -194,12 +200,41 @@ class LRUVICCache:
         
         logger.info(f"初始化LRU缓存: max_items={max_items}")
     
+    @staticmethod
+    def _build_cache_key(
+        file_path: str,
+        window_index: int,
+        window_size: int,
+        enable_denoise: bool = False,
+        is_extreme_window: bool = False
+    ) -> Tuple:
+        """
+        📌 构建包含处理标志的缓存键
+        
+        参数:
+            file_path: 文件路径
+            window_index: 窗口索引
+            window_size: 窗口大小
+            enable_denoise: 是否启用去噪
+            is_extreme_window: 是否是极端窗口
+        
+        返回:
+            缓存键元组
+        """
+        return (
+            str(file_path),
+            int(window_index),
+            int(window_size),
+            bool(enable_denoise),
+            bool(is_extreme_window)
+        )
+    
     def get(self, key: Tuple) -> Optional[np.ndarray]:
         """
         从缓存中获取数据
         
         参数:
-            key: 缓存键 (file_path, window_index, window_size)
+            key: 缓存键 (file_path, window_index, window_size, enable_denoise, is_extreme_window)
         
         返回:
             缓存的数据，或None（缓存未命中）
@@ -218,11 +253,20 @@ class LRUVICCache:
         将数据存入缓存
         
         参数:
-            key: 缓存键 (file_path, window_index, window_size)
+            key: 缓存键 (file_path, window_index, window_size, enable_denoise, is_extreme_window)
             data: 要缓存的数据
         """
         if key in self.cache:
             self.cache.move_to_end(key)
+            self.cache[key] = data
+            return
+        
+        # 如果缓存满了，删除最旧的条目
+        if len(self.cache) >= self.max_items:
+            oldest_key, _ = self.cache.popitem(last=False)
+            logger.debug(f"缓存已满，删除最旧条目: {oldest_key}")
+        
+        self.cache[key] = data
         
         self.cache[key] = data
         
@@ -271,18 +315,21 @@ class LRUVICCache:
 
 
 
-def parse_single_metadata_to_vibration_data(
+def load_full_or_extreme_segments_from_file(
     metadata: Dict,
     enable_extreme_window: bool = False,
     enable_denoise: bool = False,
 ) -> Dict[str, any]:
     """
-    从单个元数据对象解析获取原始振动数据。
+    📌 【重命名】从单个元数据对象加载完整或极端分段数据
+    
+    ⚠️ 【关键约束】此函数用于全文件级加载，用于异常检测等任务
+    如果每个样本需要为单个固定长度窗口（用于分类），请使用 VICWindowExtractor
     
     该函数负责：
     1. 从元数据中提取文件路径和相关信息
     2. 加载振动数据文件
-    3. 可选地进行极端窗口处理
+    3. 可选地提取极端主频窗口（仍为多段拼接）
     4. 可选地进行去噪处理
     
     参数:
@@ -294,11 +341,11 @@ def parse_single_metadata_to_vibration_data(
             - hour: 小时（可选）
             - actual_length: 实际数据长度（可选）
             - missing_rate: 缺失率（可选）
-            - extreme_rms_indices: 极端RMS窗口索引列表（可选）
+            - extreme_freq_indices: 极端主频窗口索引列表（可选）
             
-        enable_extreme_window: 是否提取极端窗口数据
+        enable_extreme_window: 是否提取极端主频窗口数据
             - False (默认): 返回完整的原始数据
-            - True: 返回仅包含极端窗口的数据
+            - True: 返回仅包含极端主频窗口的数据（多段拼接）
             
         enable_denoise: 是否进行去噪处理
             - False (默认): 不进行去噪
@@ -319,7 +366,7 @@ def parse_single_metadata_to_vibration_data(
                 "file_path": str,
                 "actual_length": int,
                 "missing_rate": float,
-                "extreme_rms_indices": list,
+                "extreme_freq_indices": list,  # 📌 修复：使用 extreme_freq_indices
             },
             "data": np.ndarray,  # 处理后的振动加速度数据
             "data_length": int,  # 数据点数
@@ -345,6 +392,9 @@ def parse_single_metadata_to_vibration_data(
         FileNotFoundError: 当文件不存在时
         ValueError: 当metadata缺少必需字段或数据格式不正确时
         Exception: 数据解析失败时
+    
+    注意:
+        如果需要单样本 = 单窗口的场景，请改用 VICWindowExtractor.extract_window()
     """
     if not isinstance(metadata, dict):
         raise ValueError("metadata 必须是字典类型")
@@ -368,8 +418,9 @@ def parse_single_metadata_to_vibration_data(
     
     processed_data = raw_data
     
-    if enable_extreme_window and "extreme_rms_indices" in metadata:
-        extreme_indices = metadata.get("extreme_rms_indices", [])
+    # 📌 【修复1】使用 extreme_freq_indices 而非 extreme_rms_indices
+    if enable_extreme_window and "extreme_freq_indices" in metadata:
+        extreme_indices = metadata.get("extreme_freq_indices", [])
         if isinstance(extreme_indices, list) and len(extreme_indices) > 0:
             extreme_windows = []
             for idx in extreme_indices:
@@ -379,6 +430,8 @@ def parse_single_metadata_to_vibration_data(
                     extreme_windows.append(raw_data[start:end])
             
             if extreme_windows:
+                # 📌 【关键说明】此处确实会拼接多个窗口
+                # ⚠️ 这是设计选择：此函数用于全文件加载，不用于单样本DataLoader
                 processed_data = np.concatenate(extreme_windows)
     
     if enable_denoise:
@@ -405,7 +458,7 @@ def parse_single_metadata_to_vibration_data(
             "file_path": file_path,
             "actual_length": metadata.get("actual_length", len(raw_data)),
             "missing_rate": metadata.get("missing_rate", 0.0),
-            "extreme_rms_indices": metadata.get("extreme_rms_indices", []),
+            "extreme_freq_indices": metadata.get("extreme_freq_indices", []),  # 📌 修复
         },
         "data": processed_data,
         "data_length": len(processed_data),
@@ -421,6 +474,28 @@ def parse_single_metadata_to_vibration_data(
     }
     
     return result
+
+
+# 保留向后兼容的别名（已废弃）
+def parse_single_metadata_to_vibration_data(
+    metadata: Dict,
+    enable_extreme_window: bool = False,
+    enable_denoise: bool = False,
+) -> Dict[str, any]:
+    """
+    ⚠️ 【已废弃】使用 load_full_or_extreme_segments_from_file 代替
+    
+    此函数仅为向后兼容保留
+    """
+    logger.warning(
+        "❌ parse_single_metadata_to_vibration_data 已废弃，"
+        "请改用 load_full_or_extreme_segments_from_file"
+    )
+    return load_full_or_extreme_segments_from_file(
+        metadata,
+        enable_extreme_window=enable_extreme_window,
+        enable_denoise=enable_denoise
+    )
 
 
 def _load_dominant_freq_statistics() -> Dict:

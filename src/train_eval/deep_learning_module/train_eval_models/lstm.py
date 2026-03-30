@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 import logging
 import json
@@ -13,7 +13,7 @@ import yaml
 
 from src.data_processer.datasets.AnnotationDataset.AnnotationDataset import AnnotationDataset
 from src.config.data_processer.datasets.AnnotationDataset.AnnotationDatasetConfig import AnnotationDatasetConfig
-from src.config.deep_learning_module.models.mlp import SimpleMLPConfig, DropoutConfig
+from src.config.deep_learning_module.models.lstm import LSTMConfig
 from src.config.train_eval.deep_learning_module.sft import SFTTrainerConfig
 from src.deep_learning_module.model_factory import get_model
 from src.train_eval.deep_learning_module.trainer.sft import SFTTrainer
@@ -25,8 +25,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DATASET_CONFIG_PATH = r"F:\Research\Vibration Characteristics In Cable Vibration\config\train\datasets\annotation_dataset.yaml"
-MODEL_CONFIG_PATH = r"F:\Research\Vibration Characteristics In Cable Vibration\config\train\models\mlp.yaml"
-MODEL_SAVE_DIR = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\mlp"
+MODEL_CONFIG_PATH = r"F:\Research\Vibration Characteristics In Cable Vibration\config\train\models\lstm.yaml"
+MODEL_SAVE_DIR = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\lstm"
 SEARCH_RESULT_PATH = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\search_best_hyperparams\mlp_search_result.json"
 
 
@@ -110,7 +110,7 @@ def create_dataloaders(
     return train_dataloader, val_dataloader, dataset.get_num_classes()
 
 
-def train_mlp(
+def train_lstm(
     dataset_config_path: str,
     model_config_path: str,
     best_params: dict = None,
@@ -118,7 +118,7 @@ def train_mlp(
     output_dir: str = None
 ):
     """
-    MLP模型训练主流程（使用搜索得到的最佳参数）
+    LSTM模型训练主流程（使用搜索得到的最佳参数）
     
     参数：
         dataset_config_path: 数据集配置文件路径
@@ -139,7 +139,7 @@ def train_mlp(
     os.makedirs(output_dir, exist_ok=True)
     
     logger.info("=" * 60)
-    logger.info("开始MLP模型训练（使用搜索最佳参数）")
+    logger.info("开始LSTM模型训练（使用搜索最佳参数）")
     logger.info("=" * 60)
     
     # 1. 加载配置和数据集
@@ -164,21 +164,31 @@ def train_mlp(
     logger.info("-" * 60)
     
     sample_data, _ = train_dataloader.dataset[0]
-    input_shape = sample_data.shape
+    input_size = sample_data.shape[0]
     
-    logger.info(f"输入形状：{input_shape}")
+    logger.info(f"输入大小：{input_size}")
     logger.info(f"类别数：{num_classes}")
     
-    hidden_dims = model_config.get('hidden_dims', [256, 128, 64])
-    dropout_prob = model_config.get('dropout', {}).get('prob', 0.5)
+    hidden_size = model_config.get('hidden_size', 128)
+    num_layers = model_config.get('num_layers', 1)
+    bidirectional = model_config.get('bidirectional', False)
+    dropout = model_config.get('dropout', 0.5)
+    batch_first = model_config.get('batch_first', True)
+    seq_dropout = model_config.get('seq_dropout', 0.5)
+    classifier_dropout = model_config.get('classifier_dropout', 0.5)
     
-    model_config_obj = SimpleMLPConfig(
-        input_shape=input_shape,
-        hidden_dims=hidden_dims,
+    model_config_obj = LSTMConfig(
+        input_size=input_size,
         num_classes=num_classes,
+        predict_seq_len=None,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        bidirectional=bidirectional,
+        dropout=dropout,
+        batch_first=batch_first,
         task_type="classification",
-        activation_type="ReLU",
-        dropout=DropoutConfig(enable=True, prob=dropout_prob)
+        seq_dropout=seq_dropout,
+        classifier_dropout=classifier_dropout
     )
     
     model = get_model(model_config_obj)
@@ -207,7 +217,7 @@ def train_mlp(
         output_dir=output_dir,
         loss_type="CrossEntropyLoss",
         sft_task_type="classification",
-        best_model_metric="f1",
+        best_model_metric="accuracy",
         save_best_model=True,
         save_freq=10,
         use_tensorboard=False,
@@ -244,23 +254,18 @@ def train_mlp(
     
     training_metadata = trainer.get_training_metadata()
     
-    # 提取最优指标对应的epoch数据
-    best_epoch_data = None
-    if training_metadata.get('epoch_states'):
-        epoch_states = training_metadata['epoch_states']
-        best_epoch_idx = training_metadata.get('best_epoch', 1) - 1
-        if 0 <= best_epoch_idx < len(epoch_states):
-            best_epoch_data = epoch_states[best_epoch_idx]
-    
     final_result = {
         'model_config': {
-            'model_type': 'SimpleMLP',
-            'input_shape': list(input_shape),
-            'hidden_dims': hidden_dims,
+            'model_type': 'LSTM',
+            'input_size': input_size,
+            'hidden_size': hidden_size,
+            'num_layers': num_layers,
+            'bidirectional': bidirectional,
             'num_classes': num_classes,
-            'activation_type': 'ReLU',
-            'dropout_enable': True,
-            'dropout_prob': dropout_prob,
+            'dropout': dropout,
+            'batch_first': batch_first,
+            'seq_dropout': seq_dropout,
+            'classifier_dropout': classifier_dropout,
             'total_params': total_params,
             'trainable_params': trainable_params
         },
@@ -287,7 +292,7 @@ def train_mlp(
     }
     
     # 6. 保存结果
-    result_save_path = os.path.join(output_dir, "mlp_train_result.json")
+    result_save_path = os.path.join(output_dir, "lstm_train_result.json")
     
     os.makedirs(os.path.dirname(result_save_path) or '.', exist_ok=True)
     with open(result_save_path, 'w', encoding='utf-8') as f:
@@ -296,36 +301,17 @@ def train_mlp(
     logger.info(f"训练结果已保存至：{result_save_path}")
     
     # 7. 打印训练总结
-    logger.info("\n" + "=" * 80)
-    logger.info("【MLP训练总结】")
-    logger.info("=" * 80)
+    logger.info("\n" + "=" * 60)
+    logger.info("【LSTM训练总结】")
+    logger.info("=" * 60)
     logger.info(f"模型类型：{final_result['model_config']['model_type']}")
     logger.info(f"总参数数：{final_result['model_config']['total_params']:,}")
     logger.info(f"可训练参数：{final_result['model_config']['trainable_params']:,}")
-    
-    logger.info(f"\n【最优模型指标】")
-    logger.info(f"  - 最优指标类型：{training_metadata.get('best_metric_name', 'unknown')}")
-    logger.info(f"  - 最优指标值：{training_metadata.get('best_metric', 0):.6f}")
-    logger.info(f"  - 最优epoch：{training_metadata.get('best_epoch', 0)}")
-    
-    if best_epoch_data:
-        val_metrics = best_epoch_data.get('val_metrics', {})
-        train_metrics = best_epoch_data.get('train_metrics', {})
-        logger.info(f"\n【最优epoch的详细指标】")
-        logger.info(f"  验证集指标：")
-        logger.info(f"    - Accuracy：{val_metrics.get('accuracy', 0):.6f}")
-        logger.info(f"    - F1：{val_metrics.get('f1', 0):.6f}")
-        logger.info(f"    - Precision：{val_metrics.get('precision', 0):.6f}")
-        logger.info(f"    - Recall：{val_metrics.get('recall', 0):.6f}")
-        logger.info(f"    - Loss：{val_metrics.get('loss', 0):.6f}")
-        logger.info(f"  训练集指标：")
-        logger.info(f"    - Accuracy：{train_metrics.get('accuracy', 0):.6f}")
-        logger.info(f"    - F1：{train_metrics.get('f1', 0):.6f}")
-        logger.info(f"    - Precision：{train_metrics.get('precision', 0):.6f}")
-        logger.info(f"    - Recall：{train_metrics.get('recall', 0):.6f}")
-        logger.info(f"    - Loss：{train_metrics.get('loss', 0):.6f}")
-    
-    logger.info(f"\n【训练配置】")
+    logger.info(f"\n模型配置：")
+    logger.info(f"  - 隐藏层大小：{final_result['model_config']['hidden_size']}")
+    logger.info(f"  - 隐藏层数：{final_result['model_config']['num_layers']}")
+    logger.info(f"  - 双向：{final_result['model_config']['bidirectional']}")
+    logger.info(f"\n训练配置：")
     logger.info(f"  - 总轮数：{final_result['train_config']['epochs']}")
     logger.info(f"  - 批次大小：{final_result['train_config']['batch_size']}")
     logger.info(f"  - 学习率：{final_result['train_config']['learning_rate']}")
@@ -333,12 +319,10 @@ def train_mlp(
     logger.info(f"  - 梯度裁剪范数：{final_result['train_config']['gradient_clip_norm']}")
     logger.info(f"  - 优化器：{final_result['train_config']['optimizer']}")
     logger.info(f"  - 调度器：{final_result['train_config']['scheduler']}")
-    
-    logger.info(f"\n【数据集信息】")
+    logger.info(f"\n数据集信息：")
     logger.info(f"  - 训练集大小：{final_result['dataset_info']['train_samples']}")
     logger.info(f"  - 验证集大小：{final_result['dataset_info']['val_samples']}")
-    
-    logger.info("=" * 80)
+    logger.info("=" * 60)
     
     return final_result
 
@@ -347,7 +331,7 @@ def main():
     """主函数"""
     best_params = load_best_params(SEARCH_RESULT_PATH)
     
-    result = train_mlp(
+    result = train_lstm(
         dataset_config_path=DATASET_CONFIG_PATH,
         model_config_path=MODEL_CONFIG_PATH,
         best_params=best_params,

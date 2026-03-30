@@ -28,16 +28,37 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DATASET_CONFIG_PATH = r"F:\Research\Vibration Characteristics In Cable Vibration\config\train\datasets\annotation_dataset.yaml"
-MODEL_SAVE_DIR = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\mlp"
+MODEL_CONFIG_PATH = r"F:\Research\Vibration Characteristics In Cable Vibration\config\train\models\mlp.yaml"
+MODEL_SAVE_DIR = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\search_best_hyperparams"
 
 # ==================== 超参数网格 ====================
 # 网络结构由YAML配置固定，Dropout概率默认0.5
+# PARAM_GRID = {
+#     'batch_size': [8],
+#     'learning_rate': [1e-4],
+#     'weight_decay': [1e-5],
+#     'gradient_clip_norm': [0.5], 
+# }
+# SEARCH_EPOCH = 2
+
 PARAM_GRID = {
     'batch_size': [8, 16, 32],
     'learning_rate': [1e-4, 1e-3, 5e-3],
     'weight_decay': [1e-5, 1e-4],
-    'gradient_clip_norm': [0.5, 1.0]
+    'gradient_clip_norm': [0.5, 1.0], 
 }
+SEARCH_EPOCH = 100
+
+
+def load_model_config(config_path: str) -> dict:
+    """从YAML配置文件加载模型网络结构配置"""
+    logger.info(f"加载模型配置：{config_path}")
+    
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config_dict = yaml.safe_load(f)
+    
+    logger.info(f"模型配置加载完成")
+    return config_dict
 
 
 def load_dataset_config(config_path: str) -> AnnotationDatasetConfig:
@@ -59,15 +80,28 @@ def create_dataloaders(
     dataset_config: AnnotationDatasetConfig,
     batch_size: int = 16,
     num_workers: int = 0,
-    shuffle_train: bool = True
+    shuffle_train: bool = True,
+    dataset: AnnotationDataset = None
 ):
-    """创建训练/验证数据加载器（8:2比例划分）"""
-    logger.info("创建数据集...")
+    """创建训练/验证数据加载器（8:2比例划分）
     
-    dataset = AnnotationDataset(dataset_config)
+    参数:
+        dataset_config: 数据集配置
+        batch_size: batch大小
+        num_workers: 加载数据的进程数
+        shuffle_train: 是否打乱训练集
+        dataset: 可选，已经初始化的数据集实例。如果为None则创建新的数据集
     
-    logger.info(f"总样本数：{len(dataset)}")
-    logger.info(f"类别数：{dataset.get_num_classes()}")
+    返回:
+        (train_dataloader, val_dataloader, num_classes)
+    """
+    if dataset is None:
+        logger.info("创建数据集...")
+        dataset = AnnotationDataset(dataset_config)
+        logger.info(f"总样本数：{len(dataset)}")
+        logger.info(f"类别数：{dataset.get_num_classes()}")
+    else:
+        logger.debug(f"复用已有数据集（batch_size={batch_size}）")
     
     train_dataset = dataset.get_train_dataset()
     val_dataset = dataset.get_val_dataset()
@@ -98,12 +132,13 @@ def train_single_mlp(
     input_shape: tuple,
     num_classes: int,
     params: dict,
+    model_config: dict,
     output_dir: str,
     combo_idx: int,
     total_combos: int,
     epochs: int = 30
 ):
-    """训练单个MLP模型配置（网络结构和Dropout由YAML配置）"""
+    """训练单个MLP模型配置（网络结构和Dropout从YAML加载）"""
     logger.info(f"\n[{combo_idx + 1}/{total_combos}] 测试参数组合")
     
     batch_size = params['batch_size']
@@ -111,9 +146,8 @@ def train_single_mlp(
     weight_decay = params['weight_decay']
     gradient_clip_norm = params['gradient_clip_norm']
     
-    # 固定的网络配置参数
-    hidden_dims = [256, 128, 64]
-    dropout_prob = 0.5
+    hidden_dims = model_config.get('hidden_dims', [256, 128, 64])
+    dropout_prob = model_config.get('dropout', {}).get('prob', 0.5)
     
     params_display = {
         'batch_size': batch_size,
@@ -123,7 +157,7 @@ def train_single_mlp(
     }
     logger.info(f"  {params_display}")
     
-    model_config = SimpleMLPConfig(
+    model_config_obj = SimpleMLPConfig(
         input_shape=input_shape,
         hidden_dims=hidden_dims,
         num_classes=num_classes,
@@ -132,7 +166,7 @@ def train_single_mlp(
         dropout=DropoutConfig(enable=True, prob=dropout_prob)
     )
     
-    model = get_model(model_config)
+    model = get_model(model_config_obj)
     
     train_config = SFTTrainerConfig(
         epochs=epochs,
@@ -163,33 +197,33 @@ def train_single_mlp(
         val_dataloader=val_dataloader
     )
     
-    train_results = trainer.train()
+    trainer.train()
     
-    if isinstance(train_results, dict) and 'val_metrics' in train_results:
-        val_metrics = train_results.get('val_metrics', {})
-        accuracy = val_metrics.get('accuracy', 0.0)
-        precision = val_metrics.get('precision', 0.0)
-        recall = val_metrics.get('recall', 0.0)
-        f1 = val_metrics.get('f1', 0.0)
-    else:
-        accuracy = precision = recall = f1 = 0.0
+    training_metadata = trainer.get_training_metadata()
+    
+    best_metrics = {
+        'accuracy': float(trainer.best_metric) if trainer.sft_config.best_model_metric == "accuracy" else 0.0,
+        'epoch': int(trainer.best_epoch + 1) if hasattr(trainer, 'best_epoch') else 0
+    }
+    
+    logger.info(f"  最佳准确率(Epoch {best_metrics['epoch']}): {best_metrics['accuracy']:.4f}")
+    logger.debug(f"  原始最佳指标值: {trainer.best_metric}")
+    logger.debug(f"  训练元数据: {training_metadata}")
     
     result = {
         'params': params,
-        'accuracy': float(accuracy),
-        'precision': float(precision),
-        'recall': float(recall),
-        'f1': float(f1),
-        'epochs': epochs
+        'best_metrics': best_metrics,
+        'accuracy': best_metrics['accuracy'],
+        'epochs': epochs,
+        'training_metadata': training_metadata
     }
-    
-    logger.info(f"  准确率: {accuracy:.4f} | F1: {f1:.4f} | 精确率: {precision:.4f} | 召回率: {recall:.4f}")
     
     return result
 
 
 def hyperparameter_search_mlp(
     dataset_config_path: str,
+    model_config_path: str,
     param_grid: dict = None,
     output_dir: str = None,
     epochs_search: int = 30
@@ -207,25 +241,31 @@ def hyperparameter_search_mlp(
     logger.info("开始MLP网络超参数搜索")
     logger.info("=" * 80)
     
-    logger.info("\n阶段1：数据集准备")
+    logger.info("\n阶段1：配置与数据集准备（仅初始化一次）")
     logger.info("-" * 80)
     
+    model_config = load_model_config(model_config_path)
     dataset_config = load_dataset_config(dataset_config_path)
     
     train_dataloader, val_dataloader, num_classes = create_dataloaders(
         dataset_config,
-        batch_size=16
+        batch_size=16,
+        num_workers=0
     )
     
-    sample_data, _ = train_dataloader.dataset[0]
+    dataset = train_dataloader.dataset
+    sample_data, _ = dataset[0]
     input_shape = sample_data.shape
     
     logger.info(f"输入形状：{input_shape}")
     logger.info(f"类别数：{num_classes}")
+    logger.info(f"数据集只初始化一次，后续复用")
+    logger.info(f"\n网络结构配置（从YAML读取）：")
+    logger.info(f"  hidden_dims: {model_config.get('hidden_dims')}")
+    logger.info(f"  dropout: {model_config.get('dropout')}")
     
     logger.info("\n阶段2：超参数搜索")
     logger.info("-" * 80)
-    logger.info("网络结构配置（来自YAML）：hidden_dims=[256, 128, 64], dropout=0.5")
     
     logger.info(f"超参数网格配置：")
     for key, values in param_grid.items():
@@ -239,20 +279,31 @@ def hyperparameter_search_mlp(
     logger.info(f"超参数组合总数：{total_combinations}")
     
     search_results = []
-    best_accuracy = 0
-    best_f1 = 0
-    best_params_acc = None
-    best_params_f1 = None
+    best_overall_accuracy = 0
+    best_overall_params = None
+    
+    original_dataset = train_dataloader.dataset
+    if hasattr(original_dataset, 'dataset'):
+        original_dataset = original_dataset.dataset
     
     for combo_idx, param_values_tuple in enumerate(param_combinations):
         params = dict(zip(param_names, param_values_tuple))
+        batch_size = params['batch_size']
+        
+        train_dataloader_combo, val_dataloader_combo, _ = create_dataloaders(
+            dataset_config,
+            batch_size=batch_size,
+            num_workers=0,
+            dataset=original_dataset
+        )
         
         result = train_single_mlp(
-            train_dataloader,
-            val_dataloader,
+            train_dataloader_combo,
+            val_dataloader_combo,
             input_shape,
             num_classes,
             params,
+            model_config,
             output_dir,
             combo_idx,
             total_combinations,
@@ -261,24 +312,18 @@ def hyperparameter_search_mlp(
         
         search_results.append(result)
         
-        if result['accuracy'] > best_accuracy:
-            best_accuracy = result['accuracy']
-            best_params_acc = params.copy()
-        
-        if result['f1'] > best_f1:
-            best_f1 = result['f1']
-            best_params_f1 = params.copy()
+        if result['accuracy'] > best_overall_accuracy:
+            best_overall_accuracy = result['accuracy']
+            best_overall_params = params.copy()
     
     logger.info("\n" + "=" * 80)
     logger.info("超参数搜索完成！")
     logger.info("=" * 80)
-    logger.info(f"基于准确率的最优参数（Acc={best_accuracy:.4f}）:")
-    logger.info(f"  {best_params_acc}")
-    logger.info(f"\n基于F1分数的最优参数（F1={best_f1:.4f}）:")
-    logger.info(f"  {best_params_f1}")
+    logger.info(f"全局最优参数（Acc={best_overall_accuracy:.4f}）:")
+    logger.info(f"  {best_overall_params}")
     logger.info("=" * 80)
     
-    return best_params_acc, search_results
+    return best_overall_params, search_results
 
 
 def analyze_search_results(search_results: list):
@@ -292,23 +337,17 @@ def analyze_search_results(search_results: list):
     logger.info("=" * 80)
     
     sorted_by_acc = sorted(search_results, key=lambda x: x['accuracy'], reverse=True)
-    sorted_by_f1 = sorted(search_results, key=lambda x: x['f1'], reverse=True)
     
     logger.info("\n【TOP 5 最高准确率的参数组合】")
     for rank, result in enumerate(sorted_by_acc[:5], 1):
-        logger.info(f"{rank}. Acc={result['accuracy']:.4f}, F1={result['f1']:.4f}")
-        logger.info(f"   {result['params']}")
-    
-    logger.info("\n【TOP 5 最高F1分数的参数组合】")
-    for rank, result in enumerate(sorted_by_f1[:5], 1):
-        logger.info(f"{rank}. F1={result['f1']:.4f}, Acc={result['accuracy']:.4f}")
+        logger.info(f"{rank}. Acc={result['accuracy']:.4f}")
         logger.info(f"   {result['params']}")
     
     logger.info("=" * 80)
 
 
 def save_search_results(search_results: list, best_params: dict, output_dir: str):
-    """保存超参数搜索结果"""
+    """保存超参数搜索结果（包含训练元数据）"""
     result_save_path = os.path.join(output_dir, "mlp_search_result.json")
     
     os.makedirs(os.path.dirname(result_save_path) or '.', exist_ok=True)
@@ -317,23 +356,25 @@ def save_search_results(search_results: list, best_params: dict, output_dir: str
     for result in search_results:
         params = result['params'].copy()
         
-        serializable_results.append({
+        serializable_result = {
             'params': params,
             'accuracy': result['accuracy'],
-            'precision': result['precision'],
-            'recall': result['recall'],
-            'f1': result['f1'],
-            'epochs': result['epochs']
-        })
+            'epochs': result['epochs'],
+            'best_metrics': result.get('best_metrics', {}),
+        }
+        
+        if 'training_metadata' in result:
+            serializable_result['training_metadata'] = result['training_metadata']
+        
+        serializable_results.append(serializable_result)
     
-    best_params_serializable = best_params.copy()
+    best_params_serializable = best_params.copy() if best_params is not None else {}
     
     final_result = {
         'best_params': best_params_serializable,
         'search_results': serializable_results,
         'total_combinations': len(search_results),
-        'best_accuracy': max(r['accuracy'] for r in search_results) if search_results else 0.0,
-        'best_f1': max(r['f1'] for r in search_results) if search_results else 0.0
+        'best_accuracy': max(r['accuracy'] for r in search_results) if search_results else 0.0
     }
     
     with open(result_save_path, 'w', encoding='utf-8') as f:
@@ -352,9 +393,10 @@ def main_search():
     
     best_params, search_results = hyperparameter_search_mlp(
         dataset_config_path=DATASET_CONFIG_PATH,
+        model_config_path=MODEL_CONFIG_PATH,
         param_grid=PARAM_GRID,
         output_dir=MODEL_SAVE_DIR,
-        epochs_search=30
+        epochs_search=SEARCH_EPOCH
     )
     
     analyze_search_results(search_results)

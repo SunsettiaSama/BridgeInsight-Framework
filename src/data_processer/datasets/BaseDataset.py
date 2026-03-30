@@ -3,7 +3,7 @@ from typing import List, Optional, Tuple, Union, TypeVar, Generic
 from abc import ABC, abstractmethod
 from pathlib import Path
 import numpy as np
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 import copy
 import logging
 import sys
@@ -156,86 +156,41 @@ class BaseDataset(Dataset, ABC, Generic[DatasetType]):
 
     def _create_dataset_instance(self, mode: str) -> DatasetType:
         """
-        创建指定模式的独立数据集实例（共享底层配置，独立维护路径和缓存）
-        Args:
-            mode: 数据集模式，可选值：train/val/test/full
-        Returns:
-            独立的数据集实例
-        Raises:
-            ValueError: 传入无效模式时触发
+        ⚠️ 已废弃：使用 get_train_dataset()/get_val_dataset()/get_test_dataset() 代替
+        这些新方法使用 Subset 复用原实例，避免重复初始化
         """
-        if mode not in ["train", "val", "test", "full"]:
-            raise ValueError(f"无效数据集模式：{mode}，支持模式：train/val/test/full")
-        
-        # 深度拷贝配置（支持子类差异化修改配置，如数据增强）
-        new_config = copy.deepcopy(self.config)
-        # 临时禁用自动划分，避免新实例在__init__中重新随机划分
-        new_config.auto_split = False
-        # 创建新实例（保持子类类型）
-        new_dataset = self.__class__(new_config)
-        
-        # 设置新实例的路径和模式
-        if mode == "train":
-            new_dataset.train_paths = self.train_paths.copy()
-            new_dataset.val_paths = []
-            new_dataset.test_paths = []
-            new_dataset.full_file_paths = self.train_paths.copy()
-        elif mode == "val":
-            new_dataset.train_paths = []
-            new_dataset.val_paths = self.val_paths.copy()
-            new_dataset.test_paths = []
-            new_dataset.full_file_paths = self.val_paths.copy()
-        elif mode == "test":
-            new_dataset.train_paths = []
-            new_dataset.val_paths = []
-            new_dataset.test_paths = self.test_paths.copy()
-            new_dataset.full_file_paths = self.test_paths.copy()
-        # mode=="full" 时保持默认初始化状态
-        
-        new_dataset._dataset_mode = mode
-        new_dataset.auto_split = False
-        
-        # 调用子类的实例配置钩子方法
-        self._setup_subset_instance(new_dataset, mode)
-        
-        # 日志提示实例创建
-        logger.info(f"创建{mode}模式独立数据集实例，样本数：{len(new_dataset.full_file_paths)}")
-        return new_dataset
+        raise NotImplementedError("请使用 get_train_dataset()/get_val_dataset()/get_test_dataset() 代替")
 
     def _setup_subset_instance(self, instance, mode: str):
-        """
-        子类可重写此方法来配置新创建的子集实例
-        
-        Args:
-            instance: 新创建的数据集实例
-            mode: 数据集模式 (train/val/test/full)
-        """
+        """⚠️ 已废弃：不再需要此方法"""
         pass
 
-    # --------------------------
-    # 核心公共接口：获取独立数据集实例（推荐使用）
-    # --------------------------
-    def get_train_dataset(self) -> DatasetType:
-        """获取训练集独立实例（无交叉干扰，支持差异化配置）"""
-        if not self.auto_split and len(self.train_paths) == len(self.full_file_paths):
-            logger.warning("未开启自动划分，返回的训练集实例为完整数据集")
-        return self._create_dataset_instance("train")
+    def get_train_dataset(self) -> Union[Subset, "BaseDataset"]:
+        """✅ 修复：基于索引划分，而非文件匹配"""
+        total = len(self.full_file_paths)
+        train_size = len(self.train_paths)
+        train_indices = list(range(train_size))  # 直接用前N个索引（和划分顺序一致）
+        return Subset(self, train_indices)
 
-    def get_val_dataset(self) -> DatasetType:
-        """获取验证集独立实例（无交叉干扰，支持差异化配置）"""
-        if not self.auto_split or len(self.val_paths) == 0:
-            logger.warning("未开启自动划分或无验证集数据，返回空验证集实例")
-        return self._create_dataset_instance("val")
+    def get_val_dataset(self) -> Union[Subset, "BaseDataset"]:
+        """✅ 修复：基于索引划分"""
+        total = len(self.full_file_paths)
+        train_size = len(self.train_paths)
+        val_size = len(self.val_paths)
+        val_indices = list(range(train_size, train_size + val_size))
+        return Subset(self, val_indices)
 
-    def get_test_dataset(self) -> DatasetType:
-        """获取测试集独立实例（无交叉干扰，支持差异化配置）"""
-        if not self.auto_split or len(self.test_paths) == 0:
-            logger.warning("未开启自动划分或无测试集数据，返回空测试集实例")
-        return self._create_dataset_instance("test")
+    def get_test_dataset(self) -> Union[Subset, "BaseDataset"]:
+        """✅ 修复：基于索引划分"""
+        total = len(self.full_file_paths)
+        train_size = len(self.train_paths)
+        val_size = len(self.val_paths)
+        test_indices = list(range(train_size + val_size, total))
+        return Subset(self, test_indices)
 
-    def get_full_dataset(self) -> DatasetType:
-        """获取完整数据集独立实例（无交叉干扰，支持差异化配置）"""
-        return self._create_dataset_instance("full")
+    def get_full_dataset(self) -> "BaseDataset":
+        """获取完整数据集实例"""
+        return self
 
     # --------------------------
     # 抽象方法：强制子类实现（核心个性化逻辑）

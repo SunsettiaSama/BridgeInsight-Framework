@@ -78,6 +78,8 @@ class SFTTrainer(BaseTrainer):
 
         # 初始化混合精度scaler
         self._init_scaler()
+        
+        self.epoch_states: Optional[List[Dict[str, Any]]] = None
 
 
     # --------------------------
@@ -921,6 +923,9 @@ class SFTTrainer(BaseTrainer):
             except Exception as e:
                 self.logger.warning(f"延迟记录模型结构图失败：{str(e)}")
 
+        # 初始化
+        self.epoch_states = []
+
         self.logger.info("="*60)
         self.logger.info("开始SFT模型训练流程")
         self.logger.info(f"训练轮数：{self.sft_config.epochs} | 全局初始步数：{self.step_state.global_step}")
@@ -949,12 +954,15 @@ class SFTTrainer(BaseTrainer):
                             train_metrics_accum[k] = 0.0
                         train_metrics_accum[k] += v
 
-                    # 打印批次日志（使用进度条格式）
+                    # 打印批次日志（使用进度条格式，原地更新）
                     if (batch_idx + 1) % self.sft_config.log_freq == 0:
                         progress = (batch_idx + 1) / train_batch_num * 100
                         filled = int(progress / 2)
                         bar = "█" * filled + "░" * (50 - filled)
-                        self.logger.info(f"[Epoch {epoch+1}] Train |{bar}| {progress:5.1f}% [{batch_idx+1:3d}/{train_batch_num}]")
+                        # 使用 \r 实现原地更新，end="" 防止重复打印
+                        print(f"\r[Epoch {epoch+1}] Train |{bar}| {progress:5.1f}% [{batch_idx+1:3d}/{train_batch_num}]", end="", flush=True)
+                        # 换行后输出步骤摘要（分成两行显示）
+                        print()
                         self.step_state.print_step_summary()
 
                     # 调试模式：提前终止
@@ -991,7 +999,8 @@ class SFTTrainer(BaseTrainer):
                         progress = (batch_idx + 1) / val_batch_num * 100
                         filled = int(progress / 2)
                         bar = "█" * filled + "░" * (50 - filled)
-                        self.logger.info(f"[Epoch {epoch+1}] Val  |{bar}| {progress:5.1f}% [{batch_idx+1:3d}/{val_batch_num}]")
+                        # 使用 \r 实现原地更新
+                        print(f"\r[Epoch {epoch+1}] Val  |{bar}| {progress:5.1f}% [{batch_idx+1:3d}/{val_batch_num}]", end="", flush=True)
 
                 # 验证平均指标（容错：避免除零错误）
                 avg_val_metrics = {
@@ -999,6 +1008,7 @@ class SFTTrainer(BaseTrainer):
                 }
 
                 # 轮次汇总日志（优化：格式化输出）
+                print()  # 进度条结束后换行，避免与后续日志混合
                 self.logger.info("=" * 80)
                 self.logger.info(f"📊 [Epoch {epoch+1} Summary]")
                 self.logger.info("-" * 80)
@@ -1030,6 +1040,17 @@ class SFTTrainer(BaseTrainer):
                 # 模型保存（优化：添加保存条件判断）
                 current_metric = avg_val_metrics.get(self.sft_config.best_model_metric, 0.0)
                 is_best = self.update_best_metric(current_metric)
+                
+                epoch_state = {
+                    'epoch': epoch + 1,
+                    'global_step': self.step_state.global_step,
+                    'train_metrics': avg_train_metrics.copy(),
+                    'val_metrics': avg_val_metrics.copy(),
+                    'current_metric': current_metric,
+                    'is_best': is_best,
+                    'learning_rate': self.optimizer.param_groups[0]['lr']
+                }
+                self.epoch_states.append(epoch_state)
                 save_conditions = [
                     (self.sft_config.save_best_model and is_best, "最优模型"),
                     (self.sft_config.save_freq > 0 and (epoch+1) % self.sft_config.save_freq == 0, "定期保存")
@@ -1063,9 +1084,6 @@ class SFTTrainer(BaseTrainer):
             # 确保资源清理（无论正常结束还是异常终止）
             self._after_train()
 
-    # --------------------------
-    # 覆盖：模型保存机制（创建模型名称+时间文件夹，附加配置文件）
-    # --------------------------
     def save_checkpoint(self, is_best: bool = False, epoch: Optional[int] = None) -> None:
         """
         覆盖基类保存方法，在保存模型时创建「模型名称+时间」文件夹，并保存三个配置文件
@@ -1233,11 +1251,15 @@ class SFTTrainer(BaseTrainer):
                     val_metrics_accum[k] = 0.0
                 val_metrics_accum[k] += v
 
-            # 打印评估进度
+            # 打印评估进度（原地更新）
             if (batch_idx + 1) % self.sft_config.log_freq == 0:
                 progress = (batch_idx + 1) / val_batch_num * 100
-                self.logger.info(f"[评估进度] {batch_idx+1}/{val_batch_num} ({progress:.1f}%)")
-
+                filled = int(progress / 2)
+                bar = "█" * filled + "░" * (50 - filled)
+                print(f"\r[评估进度] |{bar}| {progress:.1f}% [{batch_idx+1}/{val_batch_num}]", end="", flush=True)
+        
+        # 评估完成后换行
+        print()
         # 4. 计算平均指标
         avg_val_metrics = {
             k: v / max(val_batch_num, 1) for k, v in val_metrics_accum.items()
@@ -1287,3 +1309,36 @@ class SFTTrainer(BaseTrainer):
             trainable_params = sum(p.numel() for p in raw_model.parameters() if p.requires_grad)
             self.logger.info(f"  - 可训练参数量：{trainable_params:,}")
         self.logger.info("="*60)
+
+    def get_training_metadata(self) -> Dict[str, Any]:
+        """
+        获取训练过程中的详细元数据（最优指标、轮次、模型信息等）
+        Returns:
+            包含训练元数据的字典
+        """
+        raw_model = self.model.module if hasattr(self.model, "module") else self.model
+        trainable_params = sum(p.numel() for p in raw_model.parameters() if p.requires_grad)
+        
+        metadata = {
+            'best_metric': float(self.best_metric),
+            'best_metric_name': self.sft_config.best_model_metric,
+            'best_epoch': int(self.best_epoch + 1),
+            'total_epochs': self.sft_config.epochs,
+            'global_step': int(self.step_state.global_step),
+            'learning_rate': float(self.sft_config.learning_rate),
+            'batch_size': int(self.sft_config.batch_size),
+            'optimizer': self.sft_config.optimizer,
+            'scheduler': self.sft_config.scheduler,
+            'weight_decay': float(self.sft_config.weight_decay),
+            'gradient_clip_norm': float(self.sft_config.gradient_clip_norm),
+            'device': str(self.device),
+            'model_name': raw_model.__class__.__name__,
+            'trainable_params': int(trainable_params),
+            'output_dir': str(self.sft_config.output_dir),
+            'task_type': self.sft_config.sft_task_type,
+            'loss_type': self.sft_config.loss_type,
+            'epoch_states': self.epoch_states if self.epoch_states is not None else []
+        }
+        
+        self.logger.debug(f"训练元数据：{metadata}")
+        return metadata
