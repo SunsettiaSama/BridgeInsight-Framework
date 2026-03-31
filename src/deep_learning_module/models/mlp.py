@@ -1,203 +1,170 @@
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Optional, List, Tuple, TYPE_CHECKING
+from typing import Optional, List, TYPE_CHECKING
 
-# 类型提示兼容
 if TYPE_CHECKING:
-    from src.config.deep_learning_module.models.SimpleMLPConfig import SimpleMLPConfig
+    from src.config.deep_learning_module.models.mlp import SimpleMLPConfig
+
+# forecast 系任务：输出 (batch, predict_seq_len, output_feature_dim)
+_FORECAST_TASKS = {"forecast", "seq2fixed"}
+_SUPPORTED_TASKS = {"classification", "regression", "forecast", "seq2fixed"}
 
 
 class MLP(nn.Module):
     """
-    简洁版双任务全连接网络（MLP）
-    核心特性：
-    1. 任务可配置：通过task_type指定分类/回归模式，参考UNet架构；
-    2. 轻量化设计：隐藏层结构简洁，无冗余计算，支持dropout正则化；
-    3. 输入兼容：自动扁平化时序/网格输入，适配之前数据集的两种输出格式；
-    4. 配置驱动：通过配置类管理参数，与UNet使用风格保持一致。
-    """
-    def __init__(self, config: "SimpleMLPConfig"):
-        super(MLP, self).__init__()
+    通用全连接网络（MLP），支持四类任务：
 
-        # 1. 核心配置绑定与解析
+    task_type 说明：
+      classification  → (batch, num_classes)                             [分类]
+      regression      → (batch, regression_output_dim)                   [旧行为，向后兼容]
+      forecast        → (batch, predict_seq_len, output_feature_dim)     [多步预测，推荐]
+      seq2fixed       → 同 forecast，旧命名别名，向后兼容
+    """
+
+    def __init__(self, config: "SimpleMLPConfig"):
+        super().__init__()
         self.cfg = config
         self._parse_config()
-
-        # 2. 配置合法性校验
         self._validate_config()
-
-        # 3. 通用层定义（dropout，默认恒等映射）
         self.dropout = nn.Dropout(p=self.dropout_prob) if self.dropout_enable else nn.Identity()
-
-        # 4. 构建隐藏层（动态生成，简洁灵活）
         self.hidden_layers = self._build_hidden_layers()
-
-        # 5. 构建任务适配头（分类/回归分支，参考SimpleCNN的_task_head设计）
         self._build_task_head()
 
     def _parse_config(self):
-        """解析配置参数，与UNet的_parse_config逻辑对齐"""
-        # 基础网络配置
-        self.input_shape = self.cfg.input_shape  # 从数据集get_input_shape()获取
-        self.hidden_dims = self.cfg.hidden_dims  # 隐藏层维度列表
-        self.activation = self.cfg.get_activation_instance() or nn.ReLU()  # 激活函数
+        self.input_shape  = self.cfg.input_shape
+        self.hidden_dims  = self.cfg.hidden_dims
+        self.activation   = self.cfg.get_activation_instance() or nn.ReLU()
 
-        # Dropout配置
         self.dropout_enable = self.cfg.dropout.enable
-        self.dropout_prob = self.cfg.dropout.prob
+        self.dropout_prob   = self.cfg.dropout.prob
 
-        # 任务配置（核心：区分分类/回归）
-        self.task_type = self.cfg.task_type  # "classification" / "regression"
-        self.num_classes = self.cfg.num_classes  # 分类任务：类别数
-        self.regression_output_dim = self.cfg.regression_output_dim  # 回归任务：输出维度
+        self.task_type             = self.cfg.task_type
+        self.num_classes           = self.cfg.num_classes
+        self.regression_output_dim = self.cfg.regression_output_dim
 
-        # 计算输入扁平化维度
+        # forecast 专属
+        self.predict_seq_len    = self.cfg.predict_seq_len
+        # output_feature_dim 优先；未设置时退回 regression_output_dim（旧配置兼容）
+        self.output_feature_dim = self.cfg.output_feature_dim or self.cfg.regression_output_dim
+
         self.input_flat_dim = self._calc_input_flat_dim()
 
     def _calc_input_flat_dim(self) -> int:
-        """计算输入形状扁平化后的总特征数，兼容时序/网格输入"""
-        flat_dim = 1
-        for dim in self.input_shape:
-            flat_dim *= dim
-        return flat_dim
+        flat = 1
+        for d in self.input_shape:
+            flat *= d
+        return flat
 
     def _validate_config(self):
-        """配置合法性校验，参考UNet的_validate_config逻辑"""
-        # 基础网络校验
         if len(self.hidden_dims) == 0:
-            raise ValueError("hidden_dims不能为空，至少配置1个隐藏层维度")
+            raise ValueError("hidden_dims 不能为空，至少配置 1 个隐藏层维度")
         if self.input_flat_dim <= 0:
-            raise ValueError(f"输入扁平化维度无效：{self.input_flat_dim}，请检查input_shape配置")
-        if self.dropout_prob < 0 or self.dropout_prob >= 1:
-            raise ValueError(f"dropout概率必须在[0,1)区间，当前：{self.dropout_prob}")
-
-        # 任务类型校验
-        if self.task_type not in ["classification", "regression"]:
-            raise ValueError(f"task_type仅支持'classification'/'regression'，当前：{self.task_type}")
-
-        # 分类任务专属校验
+            raise ValueError(f"输入扁平化维度无效：{self.input_flat_dim}")
+        if not (0 <= self.dropout_prob < 1):
+            raise ValueError(f"dropout 概率必须在 [0,1) 区间，当前：{self.dropout_prob}")
+        if self.task_type not in _SUPPORTED_TASKS:
+            raise ValueError(f"task_type 仅支持 {sorted(_SUPPORTED_TASKS)}，当前：{self.task_type}")
         if self.task_type == "classification" and self.num_classes < 1:
-            raise ValueError("分类任务num_classes必须≥1")
-
-        # 回归任务专属校验
+            raise ValueError("分类任务 num_classes 必须≥1")
         if self.task_type == "regression" and self.regression_output_dim < 1:
-            raise ValueError("回归任务regression_output_dim必须≥1")
+            raise ValueError("regression 任务 regression_output_dim 必须≥1")
+        if self.task_type in _FORECAST_TASKS:
+            if self.predict_seq_len < 1:
+                raise ValueError(f"{self.task_type} 任务 predict_seq_len 必须≥1")
+            if self.output_feature_dim < 1:
+                raise ValueError(f"{self.task_type} 任务 output_feature_dim 必须≥1")
 
     def _build_hidden_layers(self) -> nn.Sequential:
-        """构建隐藏层，动态生成，保持简洁轻量化"""
-        layer_list = []
-        prev_dim = self.input_flat_dim
-
-        # 遍历隐藏层维度，构建全连接层+激活+dropout
-        for curr_dim in self.hidden_dims:
-            layer_list.extend([
-                nn.Linear(prev_dim, curr_dim),
-                self.activation,
-                self.dropout
-            ])
-            prev_dim = curr_dim
-
-        return nn.Sequential(*layer_list)
+        layers = []
+        prev = self.input_flat_dim
+        for curr in self.hidden_dims:
+            layers.extend([nn.Linear(prev, curr), self.activation, self.dropout])
+            prev = curr
+        return nn.Sequential(*layers)
 
     def _build_task_head(self):
-        """构建任务适配头，参考UNet的_build_task_head，区分分类/回归"""
-        last_hidden_dim = self.hidden_dims[-1]
-
+        last = self.hidden_dims[-1]
         if self.task_type == "classification":
-            # 分类任务：全连接层映射到类别数（无激活，输出logits）
-            self.task_head = nn.Linear(last_hidden_dim, self.num_classes)
+            self.task_head = nn.Linear(last, self.num_classes)
         elif self.task_type == "regression":
-            # 回归任务：全连接层映射到指定输出维度（无激活，直接输出连续值）
-            self.task_head = nn.Linear(last_hidden_dim, self.regression_output_dim)
+            self.task_head = nn.Linear(last, self.regression_output_dim)
+        else:  # forecast / seq2fixed
+            self.task_head = nn.Linear(last, self.predict_seq_len * self.output_feature_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        前向传播，逻辑简洁清晰，参考UNet的forward结构
-        Args:
-            x: 输入张量，形状为(batch_size, *input_shape)（兼容时序/网格模式）
-        Returns:
-            output: 任务输出，分类为logits，回归为连续预测值
+        前向传播
+
+        返回 shape：
+          classification → (batch, num_classes)
+          regression     → (batch, regression_output_dim)
+          forecast 系    → (batch, predict_seq_len, output_feature_dim)
         """
-        # 步骤1：扁平化输入（保留batch维度，适配任意输入形状）
-        x = x.view(x.size(0), -1)  # 等价于x.flatten(1)
-
-        # 步骤2：通过隐藏层
+        x = x.view(x.size(0), -1)
         x = self.hidden_layers(x)
-
-        # 步骤3：通过任务头，输出最终结果
-        output = self.task_head(x)
-
-        return output
-
+        out = self.task_head(x)
+        if self.task_type in _FORECAST_TASKS:
+            out = out.reshape(-1, self.predict_seq_len, self.output_feature_dim)
+        return out
 
 
-# ------------------------------ 测试示例（验证分类/回归双模式） ------------------------------
+# ── 向后兼容别名 ──────────────────────────────────────────────────────────────
+SimpleMLP = MLP
+
+
+# ── 测试示例 ──────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import torch
     from src.deep_learning_module.models.mlp import MLP
-    from src.config.deep_learning_module.models.SimpleMLPConfig import SimpleMLPConfig, DropoutConfig
+    from src.config.deep_learning_module.models.mlp import SimpleMLPConfig, DropoutConfig
 
-    # 1. 模拟数据集输入形状（两种模式）
-    ts_input_shape = (300, 5)  # 时序模式：(seq_len, feat_dim)
-    grid_input_shape = (1, 50, 60)  # 网格模式：(C, H, W)
+    ts_shape   = (300, 5)
+    grid_shape = (1, 50, 60)
 
-    # 2. 测试1：分类任务（二分类，适配时序输入）
-    print("===== 测试1：分类任务（时序输入） =====")
-    cls_config = SimpleMLPConfig(
-        input_shape=ts_input_shape,
-        hidden_dims=[256, 128, 64],  # 顶层字段，直接传递隐藏层维度列表
-        activation_type="ReLU",       # 顶层字段，字符串指定激活函数
-        task_type="classification",
-        num_classes=2,
-        dropout=DropoutConfig(enable=True, prob=0.2)  # Dropout嵌套配置保持不变
+    # 测试1：分类
+    print("=== 分类任务测试 ===")
+    cfg = SimpleMLPConfig(
+        input_shape=ts_shape, hidden_dims=[256, 128, 64],
+        activation_type="ReLU", task_type="classification",
+        num_classes=2, dropout=DropoutConfig(enable=True, prob=0.2)
     )
-    cls_mlp = MLP(cls_config)
-    cls_input = torch.randn(8, *ts_input_shape)  # batch_size=8
-    cls_output = cls_mlp(cls_input)
-    print(f"输入形状：{cls_input.shape}")
-    print(f"输出形状：{cls_output.shape}（分类logits，形状为[batch_size, num_classes]）")
-    assert cls_output.shape == (8, 2), f"分类任务输出形状错误，预期(8,2)，实际{cls_output.shape}"
+    out = MLP(cfg)(torch.randn(8, *ts_shape))
+    print(f"输入 {(8,)+ts_shape}  →  输出 {tuple(out.shape)}  （预期 (8,2)）")
+    assert out.shape == (8, 2)
 
-    # 3. 测试2：回归任务（1维输出，适配网格输入）
-    print("\n===== 测试2：回归任务（网格输入） =====")
-    reg_config = SimpleMLPConfig(
-        input_shape=grid_input_shape,
-        hidden_dims=[512, 256],       # 顶层字段，隐藏层维度列表
-        activation_type="GELU",        # 顶层字段，指定GELU激活函数
-        task_type="regression",
-        regression_output_dim=1,
-        dropout=DropoutConfig(enable=False)  # 禁用Dropout
+    # 测试2：regression（旧行为，向后兼容）
+    print("\n=== regression 任务测试（旧行为） ===")
+    cfg = SimpleMLPConfig(
+        input_shape=grid_shape, hidden_dims=[512, 256],
+        activation_type="GELU", task_type="regression",
+        regression_output_dim=1, dropout=DropoutConfig(enable=False)
     )
-    reg_mlp = MLP(reg_config)
-    reg_input = torch.randn(4, *grid_input_shape)  # batch_size=4
-    reg_output = reg_mlp(reg_input)
-    print(f"输入形状：{reg_input.shape}")
-    print(f"输出形状：{reg_output.shape}（回归预测值，形状为[batch_size, regression_output_dim]）")
-    assert reg_output.shape == (4, 1), f"回归任务输出形状错误，预期(4,1)，实际{reg_output.shape}"
+    out = MLP(cfg)(torch.randn(4, *grid_shape))
+    print(f"输入 {(4,)+grid_shape}  →  输出 {tuple(out.shape)}  （预期 (4,1)）")
+    assert out.shape == (4, 1)
 
-    # 4. 测试3：多分类任务（10分类，时序输入）
-    print("\n===== 测试3：分类任务（多分类） =====")
-    multi_cls_config = SimpleMLPConfig(
-        input_shape=ts_input_shape,
-        hidden_dims=[128, 64],         # 顶层字段，简洁隐藏层配置
-        activation_type="LeakyReLU",   # 顶层字段，指定LeakyReLU激活函数
-        task_type="classification",
-        num_classes=10,
-        dropout=DropoutConfig(enable=True, prob=0.1)  # 低丢弃概率的Dropout
+    # 测试3：forecast（新任务，多步预测）
+    print("\n=== forecast 任务测试（多步预测） ===")
+    cfg = SimpleMLPConfig(
+        input_shape=ts_shape, hidden_dims=[128, 64],
+        activation_type="ReLU", task_type="forecast",
+        output_feature_dim=5, predict_seq_len=4,
+        dropout=DropoutConfig(enable=True, prob=0.1)
     )
-    multi_cls_mlp = MLP(multi_cls_config)
-    multi_cls_input = torch.randn(2, *ts_input_shape)  # batch_size=2
-    multi_cls_output = multi_cls_mlp(multi_cls_input)
-    print(f"输入形状：{multi_cls_input.shape}")
-    print(f"输出形状：{multi_cls_output.shape}（多分类logits，形状为[batch_size, 10]）")
-    assert multi_cls_output.shape == (2, 10), f"多分类任务输出形状错误，预期(2,10)，实际{multi_cls_output.shape}"
+    out = MLP(cfg)(torch.randn(8, *ts_shape))
+    print(f"输入 {(8,)+ts_shape}  →  输出 {tuple(out.shape)}  （预期 (8,4,5)）")
+    assert out.shape == (8, 4, 5)
 
-    print("\n🎉 所有测试通过！MLP模型与Config类适配正常～")
+    # 测试4：seq2fixed 旧命名兼容
+    print("\n=== seq2fixed 旧命名兼容测试 ===")
+    cfg = SimpleMLPConfig(
+        input_shape=ts_shape, hidden_dims=[64],
+        activation_type="Tanh", task_type="seq2fixed",
+        output_feature_dim=3, predict_seq_len=2,
+        dropout=DropoutConfig(enable=False)
+    )
+    out = MLP(cfg)(torch.randn(4, *ts_shape))
+    print(f"输入 {(4,)+ts_shape}  →  输出 {tuple(out.shape)}  （预期 (4,2,3)）")
+    assert out.shape == (4, 2, 3)
 
-
-# ------------------------------ 向后兼容别名 ------------------------------
-# 保留SimpleMLP别名，用于向后兼容
-SimpleMLP = MLP
-
+    print("\n所有 MLP 任务测试通过")

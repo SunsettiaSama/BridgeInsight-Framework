@@ -96,6 +96,16 @@ def main():
     
     print("\n✓ 数据集加载完成")
     
+    # 🔥 【关键】验证划分一致性
+    print("\n" + "=" * 80)
+    print("=== 数据划分一致性验证 ===")
+    print("=" * 80)
+    is_valid = dataset.verify_split_consistency()
+    if not is_valid:
+        print("❌ 严重警告：数据划分存在问题，可能导致数据泄露！")
+        raise RuntimeError("数据划分验证失败，请检查配置")
+    print("✅ 数据划分验证通过，无数据泄露风险\n")
+    
     print("\n获取训练集和验证集...")
     train_dataset = dataset.get_train_dataset()
     val_dataset = dataset.get_val_dataset()

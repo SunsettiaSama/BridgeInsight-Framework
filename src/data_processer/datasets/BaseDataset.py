@@ -88,6 +88,9 @@ class BaseDataset(Dataset, ABC, Generic[DatasetType]):
     def _split_dataset(self) -> Tuple[List[Path], List[Path], List[Path]]:
         """
         通用数据划分逻辑（对齐Config的划分配置，仅当auto_split=True时生效）
+        
+        🔥 【关键修复】确保full_file_paths与划分路径一致，避免数据泄露
+        
         Returns:
             train_paths: 训练集文件路径
             val_paths: 验证集文件路径
@@ -105,13 +108,18 @@ class BaseDataset(Dataset, ABC, Generic[DatasetType]):
             
             if not train_paths:
                 raise ValueError("启用官方划分，但未找到train子目录或子目录下无文件")
+            
+            # 🔥 修复1：官方划分时，更新full_file_paths为合并后的完整列表
+            self.full_file_paths = train_paths + val_paths + test_paths
+            
             logger.info(f"使用官方目录划分：train/{len(train_paths)} | val/{len(val_paths)} | test/{len(test_paths)}")
             return train_paths, val_paths, test_paths
         
         # 情况2：自定义划分（基于split_ratio/test_ratio）
+        # 注：split_ratio==-1 时 auto_split 为 False，不会进入此分支
         total = len(self.full_file_paths)
-        if self.config.split_ratio <= 0 or self.config.split_ratio >= 1:
-            raise ValueError(f"split_ratio必须在(0,1)范围内，当前值：{self.config.split_ratio}")
+        if not (0.0 < self.config.split_ratio < 1.0):
+            raise ValueError(f"split_ratio 必须在 (0, 1) 范围内，当前值：{self.config.split_ratio}")
         
         np.random.seed(self.config.split_seed)  # 固定种子保证可复现
         shuffled_paths = np.random.permutation(self.full_file_paths).tolist()
@@ -133,7 +141,12 @@ class BaseDataset(Dataset, ABC, Generic[DatasetType]):
         else:
             val_paths = remaining
         
+        # 🔥 修复2：更新full_file_paths为打乱后的顺序，确保索引与路径对齐
+        # 这是修复数据泄露的关键一步！
+        self.full_file_paths = shuffled_paths
+        
         logger.info(f"自定义数据划分完成：训练集{len(train_paths)} | 验证集{len(val_paths)} | 测试集{len(test_paths)}")
+        logger.info(f"⚠️ 【重要】已更新full_file_paths为打乱后的顺序，确保Subset索引与样本一致")
         return train_paths, val_paths, test_paths
 
     def _get_cached_sample(self, idx: int) -> Optional[Union[np.ndarray, Tuple]]:
@@ -153,6 +166,10 @@ class BaseDataset(Dataset, ABC, Generic[DatasetType]):
         logger.info(f"自动划分开启：{self.auto_split} | 当前实例模式：{self._dataset_mode}")
         logger.info(f"完整样本数：{len(self.full_file_paths)} | 训练集：{len(self.train_paths)} | 验证集：{len(self.val_paths)} | 测试集：{len(self.test_paths)}")
         logger.info(f"内存缓存开启：{self.cache_in_memory} | 最大样本限制：{self.max_samples if self.max_samples else '无'}")
+        
+        # 🔥 关键：验证数据划分一致性，防止数据泄露
+        if self.auto_split:
+            self.verify_split_consistency()
 
     def _create_dataset_instance(self, mode: str) -> DatasetType:
         """
@@ -191,6 +208,65 @@ class BaseDataset(Dataset, ABC, Generic[DatasetType]):
     def get_full_dataset(self) -> "BaseDataset":
         """获取完整数据集实例"""
         return self
+    
+    def verify_split_consistency(self) -> bool:
+        """
+        🔥 验证数据划分一致性（防止数据泄露）
+        
+        检查：
+        1. train_paths + val_paths + test_paths 是否覆盖 full_file_paths
+        2. 没有重复样本
+        3. 索引映射正确
+        
+        Returns:
+            True 如果验证通过，否则 False
+        """
+        # 合并所有划分路径
+        all_split_paths = set(str(p) for p in (self.train_paths + self.val_paths + self.test_paths))
+        full_paths_set = set(str(p) for p in self.full_file_paths)
+        
+        # 检查1：是否有遗漏或多余的样本
+        if all_split_paths != full_paths_set:
+            missing = full_paths_set - all_split_paths
+            extra = all_split_paths - full_paths_set
+            if missing:
+                logger.error(f"❌ 数据泄露检测：遗漏样本数={len(missing)}")
+                logger.error(f"   遗漏样本: {list(missing)[:5]}")
+            if extra:
+                logger.error(f"❌ 数据泄露检测：多余样本数={len(extra)}")
+                logger.error(f"   多余样本: {list(extra)[:5]}")
+            return False
+        
+        # 检查2：是否有重复
+        split_total = len(self.train_paths) + len(self.val_paths) + len(self.test_paths)
+        if split_total != len(self.full_file_paths):
+            logger.error(f"❌ 数据泄露检测：样本重复。总数={len(self.full_file_paths)}，划分总数={split_total}")
+            return False
+        
+        # 检查3：Subset索引映射验证
+        train_size = len(self.train_paths)
+        val_size = len(self.val_paths)
+        
+        # 验证训练集索引
+        for i in range(train_size):
+            if str(self.full_file_paths[i]) != str(self.train_paths[i]):
+                logger.error(f"❌ 训练集索引错位：index={i}，期望={self.train_paths[i]}，实际={self.full_file_paths[i]}")
+                return False
+        
+        # 验证验证集索引
+        for i, path in enumerate(self.val_paths):
+            if str(self.full_file_paths[train_size + i]) != str(path):
+                logger.error(f"❌ 验证集索引错位：index={train_size + i}，期望={path}，实际={self.full_file_paths[train_size + i]}")
+                return False
+        
+        # 验证测试集索引
+        for i, path in enumerate(self.test_paths):
+            if str(self.full_file_paths[train_size + val_size + i]) != str(path):
+                logger.error(f"❌ 测试集索引错位：index={train_size + val_size + i}，期望={path}，实际={self.full_file_paths[train_size + val_size + i]}")
+                return False
+        
+        logger.info("✅ 数据划分一致性验证通过：无数据泄露风险")
+        return True
 
     # --------------------------
     # 抽象方法：强制子类实现（核心个性化逻辑）

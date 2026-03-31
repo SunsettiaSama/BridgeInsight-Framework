@@ -7,7 +7,6 @@ import logging
 import json
 import os
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 import yaml
 
@@ -25,9 +24,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DATASET_CONFIG_PATH = r"F:\Research\Vibration Characteristics In Cable Vibration\config\train\datasets\annotation_dataset.yaml"
-MODEL_CONFIG_PATH = r"F:\Research\Vibration Characteristics In Cable Vibration\config\train\models\mlp.yaml"
-MODEL_SAVE_DIR = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\mlp"
-SEARCH_RESULT_PATH = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\search_best_hyperparams\mlp_search_result.json"
+MODEL_CONFIG_PATH   = r"F:\Research\Vibration Characteristics In Cable Vibration\config\train\models\mlp.yaml"
+TRAINER_CONFIG_PATH = r"F:\Research\Vibration Characteristics In Cable Vibration\config\train\trainer\sft.yaml"
+MODEL_SAVE_DIR      = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\mlp"
+SEARCH_RESULT_PATH  = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\search_best_hyperparams\mlp_search_result.json"
 
 
 def load_dataset_config(config_path: str) -> AnnotationDatasetConfig:
@@ -36,9 +36,9 @@ def load_dataset_config(config_path: str) -> AnnotationDatasetConfig:
     
     with open(config_path, 'r', encoding='utf-8') as f:
         config_dict = yaml.safe_load(f)
-    
+
     config_dict['auto_split'] = True
-    
+
     config = AnnotationDatasetConfig(**config_dict)
     logger.info(f"数据集配置加载完成（auto_split=True）")
     
@@ -46,14 +46,20 @@ def load_dataset_config(config_path: str) -> AnnotationDatasetConfig:
 
 
 def load_model_config(config_path: str) -> dict:
-    """从YAML配置文件加载模型网络结构配置"""
     logger.info(f"加载模型配置：{config_path}")
-    
     with open(config_path, 'r', encoding='utf-8') as f:
         config_dict = yaml.safe_load(f)
-    
-    logger.info(f"模型配置加载完成")
+    logger.info("模型配置加载完成")
     return config_dict
+
+
+def load_trainer_config(config_path: str) -> dict:
+    logger.info(f"加载 Trainer 配置：{config_path}")
+    with open(config_path, 'r', encoding='utf-8') as f:
+        cfg = yaml.safe_load(f)
+    cfg['device'] = 'cuda' if torch.cuda.is_available() else 'cpu'
+    logger.info("Trainer 配置加载完成")
+    return cfg
 
 
 def load_best_params(search_result_path: str) -> dict:
@@ -113,65 +119,72 @@ def create_dataloaders(
 def train_mlp(
     dataset_config_path: str,
     model_config_path: str,
+    trainer_config_path: str = None,
     best_params: dict = None,
-    epochs: int = 100,
+    epochs: int = None,
     output_dir: str = None
 ):
     """
-    MLP模型训练主流程（使用搜索得到的最佳参数）
-    
-    参数：
-        dataset_config_path: 数据集配置文件路径
-        model_config_path: 模型配置文件路径
-        best_params: 最佳超参数字典，包含batch_size、learning_rate、weight_decay、gradient_clip_norm
-        epochs: 训练轮数
-        output_dir: 输出目录
-    
-    返回：
-        训练结果字典，包含所有关键参数和指标
+    MLP模型训练主流程（使用搜索得到的最佳超参数）
+
+    Trainer 通用配置（优化器/调度器/损失函数等）读取自 sft.yaml，
+    best_params 中的搜索参数（batch_size/learning_rate/weight_decay/
+    gradient_clip_norm）覆盖 YAML 对应字段；
+    epochs 与 output_dir 若不传则沿用 YAML 中的值。
     """
+    if trainer_config_path is None:
+        trainer_config_path = TRAINER_CONFIG_PATH
     if output_dir is None:
         output_dir = MODEL_SAVE_DIR
-    
     if best_params is None:
         raise ValueError("best_params 不能为空，请提供搜索得到的最佳参数")
-    
+
     os.makedirs(output_dir, exist_ok=True)
-    
+
     logger.info("=" * 60)
     logger.info("开始MLP模型训练（使用搜索最佳参数）")
     logger.info("=" * 60)
-    
+
     # 1. 加载配置和数据集
     logger.info("\n阶段1：配置加载与数据集准备")
     logger.info("-" * 60)
-    
+
     dataset_config = load_dataset_config(dataset_config_path)
-    model_config = load_model_config(model_config_path)
-    
-    batch_size = best_params.get('batch_size', 16)
-    learning_rate = best_params.get('learning_rate', 1e-4)
-    weight_decay = best_params.get('weight_decay', 1e-5)
-    gradient_clip_norm = best_params.get('gradient_clip_norm', 0.5)
-    
+    model_config   = load_model_config(model_config_path)
+    trainer_cfg    = load_trainer_config(trainer_config_path)
+
+    # 用 best_params 覆盖 YAML 中的搜索参数
+    trainer_cfg.update({
+        'batch_size':         best_params['batch_size'],
+        'learning_rate':      best_params['learning_rate'],
+        'weight_decay':       best_params['weight_decay'],
+        'gradient_clip_norm': best_params['gradient_clip_norm'],
+        'output_dir':         output_dir,
+    })
+    if epochs is not None:
+        trainer_cfg['epochs'] = epochs
+
+    batch_size    = trainer_cfg['batch_size']
+    learning_rate = trainer_cfg['learning_rate']
+    weight_decay  = trainer_cfg['weight_decay']
+    gradient_clip_norm = trainer_cfg['gradient_clip_norm']
+
     train_dataloader, val_dataloader, num_classes = create_dataloaders(
-        dataset_config,
-        batch_size=batch_size
+        dataset_config, batch_size=batch_size
     )
-    
+
     # 2. 创建模型
     logger.info("\n阶段2：模型创建")
     logger.info("-" * 60)
-    
+
     sample_data, _ = train_dataloader.dataset[0]
     input_shape = sample_data.shape
-    
-    logger.info(f"输入形状：{input_shape}")
-    logger.info(f"类别数：{num_classes}")
-    
-    hidden_dims = model_config.get('hidden_dims', [256, 128, 64])
+
+    logger.info(f"输入形状：{input_shape}  类别数：{num_classes}")
+
+    hidden_dims  = model_config.get('hidden_dims', [256, 128, 64])
     dropout_prob = model_config.get('dropout', {}).get('prob', 0.5)
-    
+
     model_config_obj = SimpleMLPConfig(
         input_shape=input_shape,
         hidden_dims=hidden_dims,
@@ -180,49 +193,21 @@ def train_mlp(
         activation_type="ReLU",
         dropout=DropoutConfig(enable=True, prob=dropout_prob)
     )
-    
     model = get_model(model_config_obj)
-    
-    total_params = sum(p.numel() for p in model.parameters())
+
+    total_params     = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    
-    logger.info(f"模型创建成功：{model.__class__.__name__}")
-    logger.info(f"总参数数：{total_params:,}")
-    logger.info(f"可训练参数：{trainable_params:,}")
-    
-    # 3. 创建训练配置
+    logger.info(f"模型：{model.__class__.__name__}  总参数：{total_params:,}  可训练：{trainable_params:,}")
+
+    # 3. 创建训练配置（以 YAML 为基础，已叠加 best_params）
     logger.info("\n阶段3：训练配置")
     logger.info("-" * 60)
+
+    train_config = SFTTrainerConfig(**trainer_cfg)
     
-    train_config = SFTTrainerConfig(
-        epochs=epochs,
-        batch_size=batch_size,
-        learning_rate=learning_rate,
-        optimizer="AdamW",
-        scheduler="CosineAnnealingLR",
-        scheduler_params={"T_max": epochs, "eta_min": 1e-6},
-        weight_decay=weight_decay,
-        gradient_clip_norm=gradient_clip_norm,
-        device="cuda" if torch.cuda.is_available() else "cpu",
-        output_dir=output_dir,
-        loss_type="CrossEntropyLoss",
-        sft_task_type="classification",
-        best_model_metric="f1",
-        save_best_model=True,
-        save_freq=10,
-        use_tensorboard=False,
-        save_log_file=False,
-        log_freq=10,
-        use_mixed_precision=False
-    )
-    
-    logger.info(f"设备：{train_config.device}")
-    logger.info(f"优化器：{train_config.optimizer}")
-    logger.info(f"学习率：{train_config.learning_rate}")
-    logger.info(f"权重衰减：{train_config.weight_decay}")
-    logger.info(f"梯度裁剪范数：{train_config.gradient_clip_norm}")
-    logger.info(f"损失函数：{train_config.loss_type}")
-    logger.info(f"最优模型评估指标：{train_config.best_model_metric}")
+    logger.info(f"设备：{train_config.device}  优化器：{train_config.optimizer}  调度器：{train_config.scheduler}")
+    logger.info(f"学习率：{train_config.learning_rate}  权重衰减：{train_config.weight_decay}  梯度裁剪：{train_config.gradient_clip_norm}")
+    logger.info(f"损失函数：{train_config.loss_type}  最优指标：{train_config.best_model_metric}  训练轮数：{train_config.epochs}")
     
     # 4. 创建训练器并执行训练
     logger.info("\n阶段4：模型训练")
@@ -344,14 +329,13 @@ def train_mlp(
 
 
 def main():
-    """主函数"""
     best_params = load_best_params(SEARCH_RESULT_PATH)
-    
+
     result = train_mlp(
         dataset_config_path=DATASET_CONFIG_PATH,
         model_config_path=MODEL_CONFIG_PATH,
+        trainer_config_path=TRAINER_CONFIG_PATH,
         best_params=best_params,
-        epochs=100,
         output_dir=MODEL_SAVE_DIR
     )
     

@@ -212,7 +212,8 @@ class BaseTrainer(ABC):
         # 初始化基础属性
         self.epoch: int = 0
         self.global_step: int = 0
-        self.best_metric: float = -float("inf") if "acc" in self.config.best_model_metric.lower() else float("inf")
+        _m = self.config.best_model_metric.lower()
+        self.best_metric: float = -float("inf") if any(k in _m for k in ("acc", "f1", "auc", "precision", "recall")) else float("inf")
         self.best_epoch: int = 0
 
         # 日志组件初始化（先初始化logger，再传给step_state）

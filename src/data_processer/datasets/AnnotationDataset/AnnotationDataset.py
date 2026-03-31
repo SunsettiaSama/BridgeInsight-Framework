@@ -17,6 +17,9 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+plt.rcParams['font.sans-serif'] = ['Times New Roman', 'SimSun']
+plt.rcParams['axes.unicode_minus'] = False
+
 from src.data_processer.datasets.BaseDataset import BaseDataset
 from src.config.data_processer.datasets.AnnotationDataset.AnnotationDatasetConfig import (
     AnnotationDatasetConfig
@@ -142,11 +145,17 @@ class AnnotationDataset(BaseDataset):
         self.train_paths = []
         self.val_paths = []
         self.test_paths = []
-        
+
         # 6. ✅ 手动触发正确的数据集划分（用子类有效样本）
         if self.auto_split:
             self.train_paths, self.val_paths, self.test_paths = self._split_dataset()
-        
+        else:
+            # auto_split=False：全部样本归入训练集，与基类行为一致
+            self.train_paths = list(self.full_file_paths)
+
+        # 6.5 构建 idx → annotation 有序映射（在 full_file_paths 打乱后立即建立，保证顺序一致）
+        self._idx_to_annotation: List[Optional[Dict]] = self._build_idx_to_annotation()
+
         # 7. 后续原有代码不变
         enable_denoise = getattr(config, 'enable_denoise', False)
         enable_extreme_window = getattr(config, 'enable_extreme_window', False)
@@ -1013,7 +1022,60 @@ class AnnotationDataset(BaseDataset):
             num_classes: 类别总数
         """
         return self.annotation_config.num_classes
-    
+
+    # --------------------------
+    # 分割元数据访问
+    # --------------------------
+
+    def _build_idx_to_annotation(self) -> List[Optional[Dict]]:
+        """
+        构建与 full_file_paths 顺序严格对齐的 annotation 列表。
+
+        必须在 _split_dataset() 之后调用，因为该方法会打乱 full_file_paths 的顺序。
+        返回列表第 i 个元素对应 full_file_paths[i] 的完整标注信息，无法匹配时为 None。
+
+        路径匹配采用两级策略：
+          1. resolved 全路径精确匹配
+          2. 文件名兜底（处理 _build_file_paths 的 alt_path 场景）
+        """
+        anno_resolved_to_info: Dict[str, Dict] = {}
+        anno_name_to_info: Dict[str, Dict] = {}
+        for info in self.sample_annotations.values():
+            resolved = str(Path(info["file_path"]).resolve())
+            anno_resolved_to_info[resolved] = info
+            anno_name_to_info[Path(info["file_path"]).name] = info
+
+        result: List[Optional[Dict]] = []
+        for fp in self.full_file_paths:
+            fp_resolved = str(Path(fp).resolve())
+            if fp_resolved in anno_resolved_to_info:
+                result.append(anno_resolved_to_info[fp_resolved])
+            else:
+                name = Path(fp_resolved).name
+                result.append(anno_name_to_info.get(name))
+
+        return result
+
+    @property
+    def train_annotations(self) -> List[Dict]:
+        """训练集的标注元数据列表，顺序与 train_paths 一致"""
+        train_size = len(self.train_paths)
+        return [a for a in self._idx_to_annotation[:train_size] if a is not None]
+
+    @property
+    def val_annotations(self) -> List[Dict]:
+        """验证集的标注元数据列表，顺序与 val_paths 一致"""
+        train_size = len(self.train_paths)
+        val_size   = len(self.val_paths)
+        return [a for a in self._idx_to_annotation[train_size:train_size + val_size] if a is not None]
+
+    @property
+    def test_annotations(self) -> List[Dict]:
+        """测试集的标注元数据列表，顺序与 test_paths 一致"""
+        train_size = len(self.train_paths)
+        val_size   = len(self.val_paths)
+        return [a for a in self._idx_to_annotation[train_size + val_size:] if a is not None]
+
     # --------------------------
     # 可视化便捷方法
     # --------------------------
@@ -1112,12 +1174,15 @@ class AnnotationDatasetVisualizer(PlotLib):
         self.font_size = 11
         self.label_font_size = 12
         
-        # 中文字体配置
-        self.cn_font = plt.matplotlib.font_manager.FontProperties(
-            family='SimHei', size=self.label_font_size
+        # 中文字体配置（参考 fig2_27_dataset_display.py）
+        from matplotlib.font_manager import FontProperties
+        self.cn_font = FontProperties(
+            family='SimSun', 
+            size=self.label_font_size
         )
-        self.eng_font = plt.matplotlib.font_manager.FontProperties(
-            family='DejaVu Sans', size=self.label_font_size
+        self.eng_font = FontProperties(
+            family='Times New Roman', 
+            size=self.label_font_size
         )
         
         logger.info(f"初始化可视化器：任务类型={self.config.task_type}")
@@ -1377,3 +1442,52 @@ class AnnotationDatasetVisualizer(PlotLib):
         
         logger.info(f"开始显示{len(self.figs)}个图表")
         super().show()  # 调用PlotLib的show()方法
+
+
+# --------------------------
+# 独立工具函数：数据集分割分布日志
+# --------------------------
+
+def log_split_distribution(dataset: "AnnotationDataset") -> None:
+    """
+    以日志形式打印数据集分割后各子集的类别分布（文字版饼状图）。
+
+    在超参数搜索、训练脚本等外部调用方处主动调用，避免在 Dataset 初始化时
+    污染控制台输出。
+
+    参数：
+        dataset: 已完成初始化和分割的 AnnotationDataset 实例
+    """
+    from collections import Counter
+
+    splits: Dict[str, List[Dict]] = {
+        "Train": dataset.train_annotations,
+        "Val":   dataset.val_annotations,
+        "Test":  dataset.test_annotations,
+    }
+
+    _log = logging.getLogger(__name__)
+    sep  = "=" * 58
+
+    _log.info(sep)
+    _log.info("  Dataset Split Distribution")
+    _log.info(sep)
+
+    for split_name, annos in splits.items():
+        total = len(annos)
+        if total == 0:
+            _log.info(f"  {split_name:<6}: (empty)")
+            continue
+
+        counts  = Counter(int(a["class_id"]) for a in annos)
+        classes = sorted(counts.keys())
+
+        bar_width = 24
+        _log.info(f"  {split_name:<6}  total={total}")
+        for cid in classes:
+            n   = counts[cid]
+            pct = n / total * 100
+            bar = "█" * int(bar_width * n / total)
+            _log.info(f"    Class {cid} │ {bar:<{bar_width}} │ {n:>5}  ({pct:5.1f}%)")
+
+    _log.info(sep)
