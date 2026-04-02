@@ -33,7 +33,7 @@ from src.data_processer.io_unpacker import UNPACK
 
 from src.visualize_tools.utils import PlotLib
 
-from .config import (
+from ..config import (
     FONT_SIZE, ENG_FONT, CN_FONT,
     BELOW_THRESHOLD_COLOR, ABOVE_THRESHOLD_COLOR,
     THRESHOLD_COLOR, N_BINS

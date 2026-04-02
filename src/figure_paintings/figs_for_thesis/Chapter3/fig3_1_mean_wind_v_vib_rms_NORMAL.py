@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 
-from src.figs.figs_for_thesis.fig2_15_wind_turbulence import USE_MULTIPROCESS
+from ..Chapter2.fig2_15_wind_turbulence import USE_MULTIPROCESS
 
 # 添加项目根目录到 sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))

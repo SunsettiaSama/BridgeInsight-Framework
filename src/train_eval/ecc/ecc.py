@@ -37,7 +37,7 @@ SAVE_DIR = r"F:\Research\Vibration Characteristics In Cable Vibration\results\ec
 RESULT_JSON_PATH = os.path.join(SAVE_DIR, 'ecc_search_results.json')
 RESULT_TXT_PATH = os.path.join(SAVE_DIR, 'result.txt')
 
-# 二分类标签（label=1/3为过渡态，排除；仅保留0/2）
+# 二分类标签（label=1/3为过渡态，排除；仅保留0/1）
 LABEL_IDS = [0, 1]
 LABELS = ['Normal Vibration', 'VIV']
 
@@ -50,7 +50,13 @@ ECC_PARAM_GRID = {
     'threshold': [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
 }
 
-CMAP = get_viridis_color_map()
+# 全量数据拿来进行验证
+TRAIN_RATIO = 0.99
+
+# 强制重新搜索（True：忽略缓存；False：有缓存则直接绘图）
+FORCE_RECOMPUTE = False
+
+CMAP = get_blue_color_map()
 CMAP_CURVE = get_blue_color_map(style='gradient')
 
 # ===================== 数据集加载函数 =====================
@@ -59,6 +65,7 @@ def load_dataset_config(config_path: str) -> AnnotationDatasetConfig:
     with open(config_path, 'r', encoding='utf-8') as f:
         config_dict = yaml.safe_load(f)
     config_dict['auto_split'] = True
+    config_dict['split_ratio'] = TRAIN_RATIO
     config = AnnotationDatasetConfig(**config_dict)
     logger.info("数据集配置加载完成（auto_split=True）")
     return config
@@ -288,6 +295,27 @@ def plot_ecc_confusion_matrix(best_params: dict, f1_value: float, cm: np.ndarray
     logger.info(f"混淆矩阵图已保存：{save_path}")
 
 
+# ===================== 缓存读取 =====================
+def load_ecc_cache():
+    if not os.path.exists(RESULT_JSON_PATH):
+        return None, None, None
+    logger.info(f"发现缓存文件，直接加载：{RESULT_JSON_PATH}")
+    with open(RESULT_JSON_PATH, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    best_params    = data['best_params']
+    search_results = data['search_results']
+    param_metrics  = {
+        float(k): {
+            'weighted':         v['weighted'],
+            'per_class':        v['per_class'],
+            'confusion_matrix': np.array(v['confusion_matrix'])
+        }
+        for k, v in data['param_metrics'].items()
+    }
+    logger.info(f"缓存加载完成，最优参数：{best_params}")
+    return best_params, search_results, param_metrics
+
+
 # ===================== 结果存储 =====================
 def save_ecc_search_results(search_results: list, best_params: dict, param_metrics: dict):
     os.makedirs(SAVE_DIR, exist_ok=True)
@@ -389,37 +417,44 @@ def evaluate_best_params(config_path: str = CONFIG_PATH):
 
 # ===================== 主流程 =====================
 def run_ecc_param_search(config_path: str = CONFIG_PATH, param_grid: dict = None):
-    """主流程：加载数据 → 过滤二分类 → 一维参数搜索 → 绘图 → 保存"""
+    """主流程：优先从缓存加载 → 否则搜索 → 绘图"""
     if param_grid is None:
         param_grid = ECC_PARAM_GRID
 
-    logger.info("=" * 60)
-    logger.info("开始ECC参数搜索")
-    logger.info("=" * 60)
-
     os.makedirs(SAVE_DIR, exist_ok=True)
 
-    dataset_config = load_dataset_config(config_path)
-    _, val_dataloader, num_classes = create_dataloaders(dataset_config, batch_size=16)
-    logger.info(f"数据集加载完成，类别数：{num_classes}")
+    best_params, search_results, param_metrics = (None, None, None) if FORCE_RECOMPUTE else load_ecc_cache()
 
-    val_features, val_labels = extract_data_from_dataloader(val_dataloader)
-    val_features, val_labels = filter_binary_samples(val_features, val_labels)
-    dataset_size = len(val_labels)
+    if best_params is None:
+        logger.info("=" * 60)
+        logger.info("开始ECC参数搜索")
+        logger.info("=" * 60)
 
-    mount = Cal_Mount()
+        dataset_config = load_dataset_config(config_path)
+        _, val_dataloader, num_classes = create_dataloaders(dataset_config, batch_size=16)
+        logger.info(f"数据集加载完成，类别数：{num_classes}")
 
-    best_params, search_results, param_metrics = ecc_hyperparameter_search(
-        val_features, val_labels, mount, param_grid
-    )
+        val_features, val_labels = extract_data_from_dataloader(val_dataloader)
+        val_features, val_labels = filter_binary_samples(val_features, val_labels)
+        dataset_size = len(val_labels)
 
-    save_ecc_search_results(search_results, best_params, param_metrics)
+        mount = Cal_Mount()
 
-    best_key = best_params['threshold']
+        best_params, search_results, param_metrics = ecc_hyperparameter_search(
+            val_features, val_labels, mount, param_grid
+        )
+
+        save_ecc_search_results(search_results, best_params, param_metrics)
+
+        best_key     = best_params['threshold']
+        best_metrics = param_metrics[best_key]
+        write_result_file(best_params, best_metrics, search_results, dataset_size)
+    else:
+        logger.info("使用缓存结果，跳过参数搜索直接绘图")
+
+    best_key     = best_params['threshold']
     best_metrics = param_metrics[best_key]
-    best_f1 = best_metrics['weighted']['F1']
-
-    write_result_file(best_params, best_metrics, search_results, dataset_size)
+    best_f1      = best_metrics['weighted']['F1']
 
     ploter = PlotLib()
     plot_ecc_f1_curve(search_results, param_grid, ploter)

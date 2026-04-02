@@ -16,7 +16,7 @@ if project_root not in sys.path:
 from src.data_processer.io_unpacker import UNPACK
 from src.data_processer.signals.wavelets import denoise
 from src.visualize_tools.utils import PlotLib
-from .config import (
+from ..config import (
     ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE, get_gray_to_red_color_map
 )
 from src.data_processer.preprocess.vibration_io_process.workflow import run as run_vib_workflow

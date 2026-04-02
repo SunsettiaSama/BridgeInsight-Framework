@@ -495,12 +495,12 @@ class AnnotationDataset(BaseDataset):
                 - False (默认): 完全静默，无任何副作用
                 - True: 显示 tqdm 进度条（仅在终端环境中有效）
         """
-        logger.info(f"开始预加载数据集（{len(self.file_paths)} 个样本），使用 {num_workers} 个进程...")
+        logger.info(f"开始预加载数据集（{len(self.full_file_paths)} 个样本），使用 {num_workers} 个进程...")
         start_time = time.time()
         
         config = self.annotation_config
         
-        # 📌 修复1：将 config 转换为字典（可序列化，解决 pickle 问题）
+        # 将 config 转换为字典（可序列化，解决 pickle 问题）
         config_dict = {
             'enable_denoise': getattr(config, 'enable_denoise', False),
             'enable_extreme_window': getattr(config, 'enable_extreme_window', False),
@@ -508,28 +508,14 @@ class AnnotationDataset(BaseDataset):
             'window_size': config.window_size,
         }
         
-        # 📌 修复2+3：预先建立路径映射，在主进程中完成路径查询
-        # 避免跨进程拷贝整个 sample_annotations 字典
-        file_to_anno = {}
-        for idx, file_path in enumerate(self.file_paths):
-            file_path_resolved = str(Path(file_path).resolve())
-            anno_info = None
-            
-            # 使用唯一键（已resolve的路径字符串）查找标注
-            for sid, info in self.sample_annotations.items():
-                anno_resolved = str(Path(info["file_path"]).resolve())
-                if file_path_resolved == anno_resolved:
-                    anno_info = info
-                    break
-            
-            if anno_info is not None:
-                file_to_anno[file_path_resolved] = anno_info
-        
-        # 📌 修复2+3：构建 task_args，每条只传递单个 anno_info，不传整个字典
+        # 直接使用 _idx_to_annotation（已在 _split_dataset 之后按打乱顺序建立），
+        # 确保 cache key = 打乱后的 idx，与 __getitem__ 的查找逻辑严格对应。
+        # 原先用 self.file_paths（未打乱）建 file_to_anno 再枚举索引，
+        # 导致 cache key 与 __getitem__ 所用的 full_file_paths 索引错位。
         task_args = [
-            (file_path, config_dict, idx, file_to_anno.get(str(Path(file_path).resolve())))
-            for idx, file_path in enumerate(self.file_paths)
-            if str(Path(file_path).resolve()) in file_to_anno
+            (self.full_file_paths[idx], config_dict, idx, self._idx_to_annotation[idx])
+            for idx in range(len(self.full_file_paths))
+            if self._idx_to_annotation[idx] is not None
         ]
         
         total_tasks = len(task_args)
@@ -576,20 +562,23 @@ class AnnotationDataset(BaseDataset):
         
         except Exception as e:
             logger.error(f"多进程预加载失败，回退到单进程加载：{e}")
-            # 回退到单进程
+            indices = range(len(self.full_file_paths))
             if show_progress:
-                file_paths_iter = tqdm(self.file_paths, desc="⚠️ 单进程回退加载")
-            else:
-                file_paths_iter = self.file_paths
+                indices = tqdm(indices, desc="⚠️ 单进程回退加载")
                 
-            for file_idx, file_path in enumerate(file_paths_iter):
-                try:
-                    result = self._parse_sample(file_path)
-                    cache_key = f"preload_{file_idx}"
+            for file_idx in indices:
+                anno_info = self._idx_to_annotation[file_idx]
+                if anno_info is None:
+                    failed_count += 1
+                    continue
+                file_path = self.full_file_paths[file_idx]
+                result_idx, result = _parse_sample_standalone(file_path, config_dict, file_idx, anno_info)
+                if result is not None:
+                    cache_key = f"preload_{result_idx}"
                     self.preload_cache[cache_key] = result
                     loaded_count += 1
-                except Exception as e:
-                    logger.warning(f"预加载样本 {file_idx} 失败：{e}")
+                else:
+                    logger.warning(f"预加载样本 {file_idx} 失败")
                     failed_count += 1
         
         elapsed_time = time.time() - start_time

@@ -18,7 +18,7 @@ if project_root not in sys.path:
 from src.data_processer.io_unpacker import UNPACK
 from src.visualize_tools.utils import PlotLib
 from src.data_processer.preprocess.vibration_io_process.workflow import run as run_vib_workflow
-from .config import FONT_SIZE, ENG_FONT, CN_FONT
+from ..config import FONT_SIZE, ENG_FONT, CN_FONT
 
 # --------------- 全局绘图配置 ---------------
 plt.style.use('default')

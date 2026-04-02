@@ -18,9 +18,9 @@ from src.config.base_config import BaseConfig
 from src.config.deep_learning_module.models.unet import UNetConfig
 from src.config.deep_learning_module.models.mlp import SimpleMLPConfig
 from src.config.deep_learning_module.models.cnn import CNNConfig
-# 目前LSTM配置还未调整，先注释掉
 from src.config.deep_learning_module.models.lstm import LSTMConfig
 from src.config.deep_learning_module.models.rnn import RNNConfig
+from src.config.deep_learning_module.models.res_cnn import ResCNNConfig
 
 MODEL_CONFIG_REGISTRY: Dict[str, Type[BaseConfig]] = {
     # 格式："model_type" → 对应的模型Config类
@@ -29,6 +29,7 @@ MODEL_CONFIG_REGISTRY: Dict[str, Type[BaseConfig]] = {
     "lstm": LSTMConfig,
     "cnn": CNNConfig,
     "rnn": RNNConfig,
+    "res_cnn": ResCNNConfig,
 }
 
 # --------------------------
@@ -43,6 +44,7 @@ try:
     from src.deep_learning_module.models.lstm import LSTM
     from src.deep_learning_module.models.cnn import CNN
     from src.deep_learning_module.models.rnn import RNN
+    from src.deep_learning_module.models.res_cnn import ResCNN
 except ImportError as e:
     import warnings
     warnings.warn(f"模型导入失败，部分模型可能不可用：{e}")
@@ -51,6 +53,7 @@ except ImportError as e:
     LSTM = None
     CNN = None
     RNN = None
+    ResCNN = None
 
 MODEL_CLASS_REGISTRY: Dict[str, Type] = {
     # 格式："model_type" → 对应的模型类（与MODEL_CONFIG_REGISTRY的key一一对应）
@@ -59,4 +62,5 @@ MODEL_CLASS_REGISTRY: Dict[str, Type] = {
     "lstm": LSTM,
     "cnn": CNN,
     "rnn": RNN,
+    "res_cnn": ResCNN,
 }

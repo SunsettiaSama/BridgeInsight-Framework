@@ -1,3 +1,14 @@
+
+
+
+"""
+代码同图2.6,一模一样,放在这里是作为占位符的
+
+"""
+
+
+
+
 import os
 import sys
 import json
@@ -16,7 +27,7 @@ if project_root not in sys.path:
 from src.data_processer.io_unpacker import UNPACK
 from src.data_processer.signals.wavelets import denoise
 from src.visualize_tools.utils import PlotLib
-from .config import (
+from ..config import (
     ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE, get_gray_to_red_color_map
 )
 from src.data_processer.preprocess.vibration_io_process.workflow import run as run_vib_workflow
@@ -79,10 +90,10 @@ class Config:
     
     # 小波去噪配置
     ENABLE_WAVELET_DENOISE = True   # 是否启用小波去噪
-    WAVELET_TYPE = 'db3'           # 小波基类型
+    WAVELET_TYPE = 'coif2'           # 小波基类型
     WAVELET_LEVEL = 5                # 分解层数
     THRESHOLD_TYPE = 'soft'          # 阈值类型（软阈值）
-    THRESHOLD_METHOD = 'heursure'    # 阈值计算方法
+    THRESHOLD_METHOD = 'sqtwolog'    # 阈值计算方法
 
 
 # ==================== 数据获取函数 ====================

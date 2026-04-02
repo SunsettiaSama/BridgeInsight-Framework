@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 import logging
 import json
@@ -164,7 +164,7 @@ def train_lstm(
     logger.info("-" * 60)
     
     sample_data, _ = train_dataloader.dataset[0]
-    input_size = sample_data.shape[0]
+    input_size = sample_data.shape[-1] if sample_data.ndim > 1 else 1
     
     logger.info(f"输入大小：{input_size}")
     logger.info(f"类别数：{num_classes}")

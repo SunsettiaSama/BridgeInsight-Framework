@@ -49,12 +49,17 @@ class BaseDataset(Dataset, ABC, Generic[DatasetType]):
         self.val_paths: List[Path] = []
         self.test_paths: List[Path] = []
 
-        # 3. 数据划分（通用能力：训练/验证/测试集拆分，受auto_split控制）
-        if self.auto_split:
-            self.train_paths, self.val_paths, self.test_paths = self._split_dataset()
-
         # 4. 内存缓存初始化（按需开启，每个实例独立维护缓存）
         self._cache = {} if self.cache_in_memory else None
+
+        # 3. 数据划分（通用能力：训练/验证/测试集拆分，受auto_split控制）
+        # 仅在 full_file_paths 非空时执行：子类（如 AnnotationDataset）在 super().__init__()
+        # 阶段文件列表尚未构建，会返回空列表，此时跳过划分和日志，避免打印误导性的全零信息。
+        if not self.full_file_paths:
+            return
+
+        if self.auto_split:
+            self.train_paths, self.val_paths, self.test_paths = self._split_dataset()
 
         # 日志提示初始化状态
         self._log_init_info()

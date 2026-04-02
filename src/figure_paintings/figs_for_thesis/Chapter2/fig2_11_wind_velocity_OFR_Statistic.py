@@ -28,7 +28,7 @@ from src.data_processer.preprocess.wind_data_io_process.workflow import run as r
 from src.data_processer.preprocess.vibration_io_process.workflow import run as run_vib_workflow
 from src.visualize_tools.utils import PlotLib
 
-from .config import ENG_FONT, CN_FONT, REC_FONT_SIZE, REC_FIG_SIZE, get_blue_color_map
+from ..config import ENG_FONT, CN_FONT, REC_FONT_SIZE, REC_FIG_SIZE, get_blue_color_map
 
 from src.config.sensor_config import WIND_SENSOR_NAMES
 

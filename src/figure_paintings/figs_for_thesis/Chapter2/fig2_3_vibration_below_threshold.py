@@ -11,7 +11,7 @@ from src.data_processer.io_unpacker import DataManager
 from src.visualize_tools.utils import PlotLib
 from src.utils import UNPACK
 # 导入统一配置
-from .config import FONT_SIZE, ENG_FONT, CN_FONT
+from ..config import FONT_SIZE, ENG_FONT, CN_FONT
 
 # --------------- 全局绘图配置 ---------------
 plt.style.use('default')

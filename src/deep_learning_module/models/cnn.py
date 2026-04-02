@@ -249,6 +249,9 @@ class CNN(nn.Module):
         elif self.input_type == "timeseries":
             if x.ndim != 3:
                 raise ValueError(f"时序输入必须是3维 (B,C,L)，当前维度：{x.ndim}")
+            # 数据集返回 (B, L, C)，自动转置为 Conv1d 期望的 (B, C, L)
+            if x.shape[1] != self.in_channels and x.shape[2] == self.in_channels:
+                x = x.transpose(1, 2)
             if x.shape[2] != self.input_size[0]:
                 raise ValueError(f"时序长度不匹配！配置={self.input_size[0]}，实际={x.shape[2]}")
 

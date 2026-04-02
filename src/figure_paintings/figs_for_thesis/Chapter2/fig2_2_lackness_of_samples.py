@@ -1,16 +1,16 @@
-from ...visualize_tools.utils import ChartApp, PlotLib
+from ....visualize_tools.utils import ChartApp, PlotLib
 import matplotlib.pyplot as plt
 import numpy as np
 import os
 
-from ...data_processer.io_unpacker import UNPACK
+from ....data_processer.io_unpacker import UNPACK
 from matplotlib.font_manager import FontProperties
 import matplotlib.ticker as mticker
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 
 # 从配置文件导入绘图基础配置
-from .config import (
+from ..config import (
     FONT_SIZE, ENG_FONT, CN_FONT,
     BELOW_THRESHOLD_COLOR, ABOVE_THRESHOLD_COLOR,
     THRESHOLD_COLOR, N_BINS, TARGET_VIBRATION_SENSORS,

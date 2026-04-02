@@ -31,20 +31,21 @@ MODEL_SAVE_DIR       = r"F:\Research\Vibration Characteristics In Cable Vibratio
 
 # ==================== 超参数网格 ====================
 # 网络结构由YAML配置固定，Dropout概率默认0.5
-PARAM_GRID = {
-    'batch_size': [8],
-    'learning_rate': [1e-4],
-    'weight_decay': [1e-5],
-    'gradient_clip_norm': [0.5], 
-}
-# SEARCH_EPOCH = 2
-
 # PARAM_GRID = {
-#     'batch_size': [8, 16, 32],
-#     'learning_rate': [1e-4, 1e-3, 5e-3],
-#     'weight_decay': [1e-5, 1e-4],
-#     'gradient_clip_norm': [0.5, 1.0], 
+#     'batch_size': [8],
+#     'learning_rate': [1e-4],
+#     'weight_decay': [1e-5],
+#     'gradient_clip_norm': [0.5],
+#     'label_smoothing': [0.1],
 # }
+
+PARAM_GRID = {
+    'batch_size': [8, 16, 32],
+    'learning_rate': [1e-4, 1e-3, 5e-3],
+    'weight_decay': [1e-5, 1e-4],
+    'gradient_clip_norm': [0.5, 1.0],
+    'label_smoothing': [0.0, 0.05, 0.1, 0.15],
+}
 SEARCH_EPOCH = 100
 
 
@@ -163,6 +164,7 @@ def train_single_mlp(
         'learning_rate':      params['learning_rate'],
         'weight_decay':       params['weight_decay'],
         'gradient_clip_norm': params['gradient_clip_norm'],
+        'label_smoothing':    params['label_smoothing'],
         'output_dir':         output_dir,
         'save_best_model':    False,
         'save_freq':          0,
@@ -250,8 +252,12 @@ def hyperparameter_search_mlp(
     logger.info(f"超参数组合总数：{total_combinations}")
 
     search_results = []
-    best_overall_metric = 0.0
     best_overall_params = None
+
+    # 根据指标类型选择初始哨兵值和比较方向，与 update_best_metric 保持一致
+    _metric_name = trainer_base_config.get('best_model_metric', '').lower()
+    _higher_is_better = any(k in _metric_name for k in ('acc', 'f1', 'auc', 'precision', 'recall'))
+    best_overall_metric = -float('inf') if _higher_is_better else float('inf')
 
     original_dataset = train_dataloader.dataset
     if hasattr(original_dataset, 'dataset'):
@@ -283,8 +289,10 @@ def hyperparameter_search_mlp(
 
         search_results.append(result)
 
-        if result['best_metric_value'] > best_overall_metric:
-            best_overall_metric = result['best_metric_value']
+        val = result['best_metric_value']
+        is_better = (val > best_overall_metric) if _higher_is_better else (val < best_overall_metric)
+        if is_better:
+            best_overall_metric = val
             best_overall_params = params.copy()
 
     logger.info("\n" + "=" * 80)

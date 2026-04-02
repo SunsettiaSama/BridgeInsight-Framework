@@ -335,7 +335,8 @@ class BaseTrainer(ABC):
         try:
             # 标准损失函数实例化
             if loss_type == "CrossEntropyLoss":
-                return nn.CrossEntropyLoss()
+                label_smoothing = getattr(self.config, "label_smoothing", 0.0)
+                return nn.CrossEntropyLoss(label_smoothing=label_smoothing)
             elif loss_type == "MSELoss":
                 return nn.MSELoss()
             elif loss_type == "L1Loss":
