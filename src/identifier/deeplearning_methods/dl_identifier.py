@@ -14,7 +14,7 @@ import yaml
 logger = logging.getLogger(__name__)
 
 # 模型类型 → 输入形状变换方式
-_CNN_TYPES  = {"cnn"}
+_CNN_TYPES  = {"cnn", "res_cnn"}
 _SEQ_TYPES  = {"rnn", "lstm"}
 _FLAT_TYPES = {"mlp"}
 

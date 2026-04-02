@@ -107,10 +107,11 @@ class FullDatasetRunner:
         )
 
         loader_kwargs: dict = dict(
-            batch_size  = self.batch_size,
-            shuffle     = False,
-            num_workers = self.num_workers,
-            pin_memory  = (self.identifier.device.type == "cuda"),
+            batch_size         = self.batch_size,
+            shuffle            = False,
+            num_workers        = self.num_workers,
+            pin_memory         = (self.identifier.device.type == "cuda"),
+            persistent_workers = (self.num_workers > 0),
         )
         if self.num_workers > 0:
             loader_kwargs["prefetch_factor"] = 2

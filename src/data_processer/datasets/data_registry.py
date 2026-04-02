@@ -29,6 +29,9 @@ from src.config.data_processer.datasets.AnnotationDataset.AnnotationDatasetConfi
 from src.config.data_processer.datasets.VIV2NumClassification.VIVTimeSeriesClassificationDatasetConfig import VIVTimeSeriesClassificationDatasetConfig
 from src.config.data_processer.datasets.VIV2NumClassification.VIVTimeSeriesClassificationDatasetConfig_2_num_classes import VIVTimeSeriesClassificationDatasetConfig2NumClasses
 
+# 5. StayCable_Vib2023 数据集Config
+from src.config.data_processer.datasets.StayCableVib2023Dataset.StayCableVib2023Config import StayCableVib2023Config
+
 DATASET_CONFIG_REGISTRY: Dict[str, Type[BaseConfig]] = {
     # 格式："config_type" → 对应的Config类
     "binary_classification": BinaryClassificationDatasetConfig,
@@ -36,6 +39,7 @@ DATASET_CONFIG_REGISTRY: Dict[str, Type[BaseConfig]] = {
     "annotation": AnnotationDatasetConfig,
     "viv_timeseries_classification": VIVTimeSeriesClassificationDatasetConfig,
     "viv_timeseries_classification_2_num_classes": VIVTimeSeriesClassificationDatasetConfig2NumClasses,
+    "staycable_vib2023": StayCableVib2023Config,
 }
 
 # --------------------------
@@ -55,6 +59,9 @@ from src.data_processer.datasets.AnnotationDataset.AnnotationDataset import Anno
 from src.data_processer.datasets.VIV2NumClassification.VIVTimeseriesClassificationDataset import VIVTimeSeriesClassificationDataset
 from src.data_processer.datasets.VIV2NumClassification.VIVTimeseriesClassificationDataset_2_num_classes import VIVTimeSeriesClassificationDataset as VIVTimeSeriesClassificationDataset_2Classes
 
+# 5. StayCable_Vib2023 数据集
+from src.data_processer.datasets.StayCable_Vib2023.StayCableVib2023Dataset import StayCableVib2023Dataset
+
 DATASET_CLASS_REGISTRY: Dict[str, Type] = {
     # 格式："config_type" → 对应的Dataset类（与DATASET_CONFIG_REGISTRY的key一一对应）
     "binary_classification": BinaryClassificationDataset,
@@ -62,6 +69,7 @@ DATASET_CLASS_REGISTRY: Dict[str, Type] = {
     "annotation": AnnotationDataset,
     "viv_timeseries_classification": VIVTimeSeriesClassificationDataset,
     "viv_timeseries_classification_2_num_classes": VIVTimeSeriesClassificationDataset_2Classes,
+    "staycable_vib2023": StayCableVib2023Dataset,
 }
 
 

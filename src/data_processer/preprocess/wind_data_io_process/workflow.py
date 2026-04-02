@@ -9,14 +9,14 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # 导入各步骤模块
-from src.data_processer.statistics.wind_data_io_process.step0_get_wind_data import get_all_wind_files
-from src.data_processer.statistics.wind_data_io_process.step1_timestamp_align import run_timestamp_align
-from src.data_processer.statistics.wind_data_io_process.step2_extreme_filter import run_extreme_filter
-from src.data_processer.statistics.wind_data_io_process.step3_out_of_range import run_out_of_range_query
+from src.data_processer.preprocess.wind_data_io_process.step0_get_wind_data import get_all_wind_files
+from src.data_processer.preprocess.wind_data_io_process.step1_timestamp_align import run_timestamp_align
+from src.data_processer.preprocess.wind_data_io_process.step2_extreme_filter import run_extreme_filter
+from src.data_processer.preprocess.wind_data_io_process.step3_out_of_range import run_out_of_range_query
 from src.data_processer.io_unpacker import parse_path_metadata
 
 # 从配置文件导入常量
-from src.config.data_processer.statistics.wind_data_io_process.config import (
+from src.config.data_processer.preprocess.wind_data_io_process.config import (
     FILTER_RESULT_PATH,
     WORKFLOW_CACHE_PATH
 )
@@ -299,7 +299,7 @@ def run(vib_metadata,
 
 if __name__ == "__main__":
     # 需要先运行振动数据 workflow 获取 vib_metadata
-    from src.data_processer.statistics.vibration_io_process.workflow import run as run_vib_workflow
+    from src.data_processer.preprocess.vibration_io_process.workflow import run as run_vib_workflow
     
     print("="*80)
     print(" " * 20 + "风数据处理工作流 - 完整示例")

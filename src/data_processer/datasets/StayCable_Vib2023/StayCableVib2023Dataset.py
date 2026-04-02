@@ -550,6 +550,9 @@ class StayCableVib2023Dataset(Dataset):
         """
         构建训练/验证集索引。
 
+        split_ratio == -1
+            不划分，全量数据集（训练集为全部索引，验证集为空）
+
         split_by_time=True
             按样本在列表中的位置顺序划分：前 split_ratio 为训练集。
             若同时设置 time_ordered=True，则训练集覆盖时间轴前段，
@@ -559,6 +562,15 @@ class StayCableVib2023Dataset(Dataset):
             随机打乱后按比例划分（传统 ML 划分）。
         """
         n = len(self._samples)
+
+        # ---- 全量数据集模式（不划分）----
+        if self.config.split_ratio == -1:
+            train_idx = list(range(n))
+            val_idx = []
+            logger.info(f"数据集模式：全量数据（不划分），共 {n} 个样本")
+            return train_idx, val_idx
+
+        # ---- 正常划分模式 ----
         train_size = int(n * self.config.split_ratio)
 
         if self.config.split_by_time:
