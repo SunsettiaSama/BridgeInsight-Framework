@@ -118,8 +118,9 @@ class VICWindowExtractor:
         if start_idx < 0:
             raise ValueError(f"窗口起始索引不能为负: {start_idx}")
         
-        # 4. 提取窗口（单个，绝不拼接）
-        window_data = vic_data[start_idx:end_idx]
+        # 4. 提取窗口（显式拷贝，随即释放整文件数组）
+        window_data = np.array(vic_data[start_idx:end_idx])
+        del vic_data
         
         # 5. 应用去噪（可选）
         if self.enable_denoise and metadata:
@@ -267,14 +268,6 @@ class LRUVICCache:
             logger.debug(f"缓存已满，删除最旧条目: {oldest_key}")
         
         self.cache[key] = data
-        
-        self.cache[key] = data
-        
-        # 若超过容量，删除最旧的条目
-        if len(self.cache) > self.max_items:
-            oldest_key = next(iter(self.cache))
-            del self.cache[oldest_key]
-            logger.debug(f"LRU缓存满，删除最旧条目: {oldest_key}")
     
     def clear(self):
         """清空缓存"""

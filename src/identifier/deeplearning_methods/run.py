@@ -71,7 +71,7 @@ def main():
         save_path=vib_metadata_path,
         cache_path=vib_metadata_cache_path,
         use_cache=True,
-        force_recompute=False,
+        force_recompute=_vib_cfg.force_recompute,
     )
     logger.info(f"振动元数据预处理完成，共 {len(vib_metadata)} 条记录 → {vib_metadata_path}")
 
@@ -87,7 +87,7 @@ def main():
         save_path=wind_metadata_path,
         cache_path=wind_metadata_cache_path,
         use_cache=True,
-        force_recompute=False,
+        force_recompute=_wind_cfg.force_recompute,
         extreme_only=False,
     )
     logger.info(f"风元数据预处理完成，共 {len(wind_metadata)} 条记录 → {wind_metadata_path}")

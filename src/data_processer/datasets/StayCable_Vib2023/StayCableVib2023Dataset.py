@@ -113,6 +113,9 @@ class _SampleRecord:
 # ---------------------------------------------------------------------------
 
 class StayCableVib2023Dataset(Dataset):
+    # 样本索引缓存版本号：窗口计算逻辑变更时递增，强制废弃旧缓存
+    _INDEX_CACHE_VERSION = 2
+
     """
     苏通大桥拉索振动 2023 数据集
 
@@ -155,6 +158,7 @@ class StayCableVib2023Dataset(Dataset):
         self._vib_extractor = VICWindowExtractor(
             enable_denoise=config.enable_denoise,
         )
+        self._file_length_cache: Dict[str, int] = {}
 
         # ---- 加载原始元数据 ----
         logger.info(f"加载振动元数据：{config.vib_metadata_path}")
@@ -394,7 +398,9 @@ class StayCableVib2023Dataset(Dataset):
             common_ts = sorted(set(in_lookup) & set(out_lookup))
             logger.info(f"拉索 ({in_id}, {out_id})：共有时间戳 {len(common_ts)} 个")
 
+            mr_threshold = self.config.missing_rate_threshold
             skipped_no_wind = 0
+            skipped_missing  = 0
             for ts_key in common_ts:
                 in_meta   = in_lookup[ts_key]
                 out_meta  = out_lookup[ts_key]
@@ -403,6 +409,13 @@ class StayCableVib2023Dataset(Dataset):
                 if self.config.require_wind_alignment and wind_meta is None:
                     skipped_no_wind += 1
                     continue
+
+                if mr_threshold is not None:
+                    in_rate  = in_meta.get("missing_rate", 0.0) or 0.0
+                    out_rate = out_meta.get("missing_rate", 0.0) or 0.0
+                    if in_rate > mr_threshold or out_rate > mr_threshold:
+                        skipped_missing += 1
+                        continue
 
                 num_win = self._estimate_num_windows(in_meta)
                 for win_idx in range(num_win):
@@ -422,6 +435,10 @@ class StayCableVib2023Dataset(Dataset):
                 logger.info(
                     f"  ({in_id}, {out_id})：{skipped_no_wind} 个时间戳因缺少风数据跳过"
                 )
+            if skipped_missing:
+                logger.info(
+                    f"  ({in_id}, {out_id})：{skipped_missing} 个时间戳因缺失率超标跳过"
+                )
 
         logger.info(f"索引构建完成，共 {len(samples)} 个样本（排序前）")
 
@@ -436,11 +453,29 @@ class StayCableVib2023Dataset(Dataset):
 
         return samples
 
-    def _estimate_num_windows(self, meta: Dict) -> int:
-        actual = meta.get("actual_length", 0)
-        if actual and int(actual) > 0:
-            return max(1, int(actual) // self.config.window_size)
+    def _estimate_num_windows(self, in_meta: Dict) -> int:
+        """
+        计算面内文件的完整窗口数。
+
+        优先通过读取真实文件获取精确长度，确保不产生越界窗口。
+        结果经 _file_length_cache 缓存，同一文件只读一次。
+        """
+        file_path = in_meta.get("file_path")
+        if file_path:
+            actual = self._get_inplane_file_length(file_path)
+        else:
+            actual = int(in_meta.get("actual_length") or 0)
+        if actual > 0:
+            return max(1, actual // self.config.window_size)
         return 1
+
+    def _get_inplane_file_length(self, file_path: str) -> int:
+        """读取面内 VIC 文件的实际数据长度（带实例级缓存）。"""
+        if file_path not in self._file_length_cache:
+            vic_data = self._vib_extractor.unpacker.VIC_DATA_Unpack(str(file_path))
+            self._file_length_cache[file_path] = len(vic_data)
+            del vic_data
+        return self._file_length_cache[file_path]
 
     # =====================================================================
     # 缓存：路径 / 指纹 / 读写
@@ -449,7 +484,10 @@ class StayCableVib2023Dataset(Dataset):
     def _resolve_cache_path(self) -> Path:
         """解析缓存文件路径：优先使用配置值，否则放在 vib_metadata 同目录。"""
         if self.config.cache_path is not None:
-            return Path(self.config.cache_path)
+            p = Path(self.config.cache_path)
+            if p.is_dir() or not p.suffix:
+                return p / "staycable_vib2023_index_cache.json"
+            return p
         return Path(self.config.vib_metadata_path).parent / "staycable_vib2023_index_cache.json"
 
     def _compute_fingerprint(self) -> Dict[str, Any]:
@@ -470,12 +508,14 @@ class StayCableVib2023Dataset(Dataset):
         - split_ratio / split_by_time / split_seed：划分逻辑在索引加载后再计算
         """
         return {
+            "index_cache_version":     self._INDEX_CACHE_VERSION,
             "cable_pairs":             sorted([list(p) for p in self.config.cable_pairs]),
             "vib_metadata_path":       str(self.config.vib_metadata_path),
             "wind_metadata_path":      str(self.config.wind_metadata_path),
             "wind_sensor_ids":         sorted(self.config.wind_sensor_ids) if self.config.wind_sensor_ids is not None else None,
             "window_size":             self.config.window_size,
             "require_wind_alignment":  self.config.require_wind_alignment,
+            "missing_rate_threshold":  self.config.missing_rate_threshold,
             "time_ordered":            self.config.time_ordered,
             "vib_record_count":        len(self._vib_meta_all),
             "wind_record_count":       len(self._wind_meta_all),

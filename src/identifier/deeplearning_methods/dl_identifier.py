@@ -90,6 +90,10 @@ class DLVibrationIdentifier:
         with open(model_config_path, "r", encoding="utf-8") as f:
             config_dict = yaml.safe_load(f)
 
+        # YAML 结构可能为嵌套格式 {model_type: {fields...}}，提取内层字典
+        if key in config_dict and isinstance(config_dict[key], dict):
+            config_dict = config_dict[key]
+
         model_config = config_cls(**config_dict)
         model        = get_model(model_config)
 

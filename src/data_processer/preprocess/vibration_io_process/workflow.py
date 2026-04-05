@@ -104,22 +104,18 @@ def load_workflow_cache(cache_path=WORKFLOW_CACHE_PATH):
     if not os.path.exists(cache_path):
         return None, None
     
-    try:
-        with open(cache_path, 'r', encoding='utf-8') as f:
-            cache_data = json.load(f)
-        
-        metadata = cache_data.get('metadata', [])
-        process_params = cache_data.get('process_params', {})
-        
-        print(f"✓ 从缓存读取工作流结果")
-        print(f"  - 缓存时间: {cache_data.get('timestamp', 'N/A')}")
-        print(f"  - 缺失率阈值: {process_params.get('missing_rate_threshold', 'N/A')*100:.1f}%")
-        print(f"  - 筛选后文件数: {len(metadata)}")
-        
-        return metadata, process_params
-    except Exception as e:
-        print(f"警告：读取缓存文件时出错: {e}")
-        return None, None
+    with open(cache_path, 'r', encoding='utf-8') as f:
+        cache_data = json.load(f)
+    
+    metadata = cache_data.get('metadata', [])
+    process_params = cache_data.get('process_params', {})
+    
+    print(f"✓ 从缓存读取工作流结果")
+    print(f"  - 缓存时间: {cache_data.get('timestamp', 'N/A')}")
+    print(f"  - 缺失率阈值: {process_params.get('missing_rate_threshold', 'N/A')}")
+    print(f"  - 筛选后文件数: {len(metadata)}")
+    
+    return metadata, process_params
 
 
 def run(threshold=MISSING_RATE_THRESHOLD, 
@@ -158,25 +154,40 @@ def run(threshold=MISSING_RATE_THRESHOLD,
     # 重置报告收集器
     global report_collector
     report_collector = ReportCollector()
-    
+
+    # 从配置中读取用于 fingerprint 的附加字段
+    from src.config.data_processer.preprocess.vibration_io_process.config import (
+        ALL_VIBRATION_ROOT, TARGET_VIBRATION_SENSORS, NFFT
+    )
+    current_fingerprint = {
+        'missing_rate_threshold': threshold,
+        'expected_length':        expected_length,
+        'all_vibration_root':     ALL_VIBRATION_ROOT,
+        'target_sensors':         sorted(TARGET_VIBRATION_SENSORS),
+        'nfft':                   NFFT,
+    }
+
     # 记录处理参数
-    report_collector.set_param('missing_rate_threshold', threshold)
-    report_collector.set_param('expected_length', expected_length)
+    for k, v in current_fingerprint.items():
+        report_collector.set_param(k, v)
     
     # 尝试从缓存读取
     if use_cache and not force_recompute:
         cached_metadata, cached_params = load_workflow_cache(cache_path)
         if cached_metadata is not None:
-            # 检查缓存的参数是否匹配
-            if (cached_params.get('missing_rate_threshold') == threshold and 
-                cached_params.get('expected_length') == expected_length):
+            # 检查缓存的参数是否与当前 fingerprint 完全一致
+            mismatch = {
+                k: {'cached': cached_params.get(k), 'current': v}
+                for k, v in current_fingerprint.items()
+                if cached_params.get(k) != v
+            }
+            if not mismatch:
                 report_collector.log("✓ 使用缓存结果（参数匹配）\n")
-                # 恢复处理参数
                 for key, value in cached_params.items():
                     report_collector.set_param(key, value)
                 return cached_metadata
             else:
-                report_collector.log("⚠ 缓存参数不匹配，将重新计算...")
+                report_collector.log(f"⚠ 缓存参数不匹配，将重新计算... 差异字段：{mismatch}")
     
     if force_recompute:
         report_collector.log("⚠ 强制重新计算模式\n")
@@ -264,9 +275,15 @@ def run(threshold=MISSING_RATE_THRESHOLD,
         metadata[i]['actual_length'] = int(statistics['all_lengths'][idx])
         metadata[i]['missing_rate'] = float(statistics['all_missing_rates'][idx])
         
-        # 添加极端振动索引（如果有RMS统计结果）
+        # 添加 RMS 逐窗口值及极端振动索引
         if rms_statistics:
+            rms_arr = rms_statistics['all_file_rms'][i]
+            metadata[i]['rms_per_window'] = [float(v) for v in rms_arr]
             metadata[i]['extreme_rms_indices'] = rms_statistics['extreme_indices'][i]
+        
+        # 添加主频逐窗口值
+        if freq_statistics and 'per_file_frequencies' in freq_statistics:
+            metadata[i]['dominant_freq_per_window'] = freq_statistics['per_file_frequencies'][i]
     
     # 记录包含极端振动的文件数
     if rms_statistics:

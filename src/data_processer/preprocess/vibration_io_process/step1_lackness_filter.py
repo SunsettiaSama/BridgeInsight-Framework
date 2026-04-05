@@ -1,6 +1,7 @@
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
+from typing import Dict
 import sys
 import os
 
@@ -53,22 +54,22 @@ def run_lackness_filter(all_file_paths, threshold=MISSING_RATE_THRESHOLD, expect
     
     log_message(f"开始对 {len(all_file_paths)} 个文件进行缺失率筛选 (阈值: {threshold*100:.1f}%)...")
     
-    # 收集所有文件的实际长度
-    all_lengths = []
-    
+    # 收集所有文件的实际长度（按 all_file_paths 顺序对齐）
+    length_map: Dict[str, int] = {}
+
     with ProcessPoolExecutor() as executor:
         futures = {executor.submit(get_file_length, fp): fp for fp in all_file_paths}
         for future in tqdm(as_completed(futures), total=len(all_file_paths), desc="缺失率计算中"):
             fp = futures[future]
             try:
-                actual_len = future.result()
-                all_lengths.append(actual_len)
+                length_map[fp] = future.result()
             except Exception as e:
                 print(f"处理文件 {fp} 时出错: {e}")
-                all_lengths.append(0)
-    
-    # 计算缺失率
-    all_lengths = np.array(all_lengths)
+                length_map[fp] = 0
+
+    # 按原始顺序重建 all_lengths，确保索引与 all_file_paths 严格对应
+    all_lengths = np.array([length_map[fp] for fp in all_file_paths])
+
     all_missing_rates = 1.0 - (all_lengths / expected_length)
     
     # 打印详细统计信息

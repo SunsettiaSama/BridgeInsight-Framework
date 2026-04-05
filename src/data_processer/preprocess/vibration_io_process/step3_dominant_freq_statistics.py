@@ -43,10 +43,11 @@ def process_single_file_dominant_frequencies(file_path):
         return []
     
     segment_size = int(SEGMENT_DURATION * FS)
-    
-    for i in range(0, len(vibration_data), segment_size):
+
+    # 只迭代完整 segment，与 RMS 计算保持一致（不含末尾不足一窗口的碎片）
+    for i in range(0, len(vibration_data) - segment_size + 1, segment_size):
         segment = vibration_data[i:i + segment_size]
-        
+
         if len(segment) < 100:
             continue
         
@@ -88,7 +89,8 @@ def run_dominant_freq_statistics(file_paths, logger=None):
     
     返回:
         statistics: 统计信息字典
-            - 'all_dominant_frequencies': 所有主频的列表
+            - 'per_file_frequencies': 每个文件的主频列表（与 file_paths 顺序对应）
+            - 'all_dominant_frequencies': 所有主频的平铺列表
             - 'freq_p95': 主频的95%分位数
             - 'freq_stats': 包含 min, max, mean, std, median 的统计信息
     """
@@ -101,33 +103,36 @@ def run_dominant_freq_statistics(file_paths, logger=None):
     
     log_message(f"开始对 {len(file_paths)} 个文件进行主频分布统计...")
     
-    all_dominant_frequencies = []
+    file_order_map = {}   # {file_idx: List[float]}
     failed_files = []
     
     log_message(f"开始并行处理文件并计算主频...")
     with ProcessPoolExecutor() as executor:
-        futures = {executor.submit(process_single_file_dominant_frequencies, fp): fp 
-                  for fp in file_paths}
+        futures = {executor.submit(process_single_file_dominant_frequencies, fp): i
+                  for i, fp in enumerate(file_paths)}
         
         for future in tqdm(as_completed(futures), total=len(file_paths), 
                           desc="主频计算进度"):
-            file_path = futures[future]
+            file_idx = futures[future]
+            file_path = file_paths[file_idx]
             try:
                 dominant_freqs = future.result()
-                if dominant_freqs:
-                    all_dominant_frequencies.extend(dominant_freqs)
+                file_order_map[file_idx] = dominant_freqs if dominant_freqs else []
             except Exception as e:
                 log_message(f"\n✗ 文件处理失败: {file_path}")
                 log_message(f"  错误类型: {type(e).__name__}")
                 log_message(f"  错误信息: {str(e)}")
                 failed_files.append((file_path, str(e)))
+                file_order_map[file_idx] = []
     
     if failed_files:
         log_message(f"\n⚠ 共有 {len(failed_files)} 个文件处理失败：")
         for fp, error in failed_files:
             log_message(f"  - {fp}: {error}")
-    
-    all_dominant_frequencies = np.array(all_dominant_frequencies)
+
+    # 按原始顺序重建每文件主频列表
+    per_file_frequencies = [file_order_map.get(i, []) for i in range(len(file_paths))]
+    all_dominant_frequencies = np.array([f for freqs in per_file_frequencies for f in freqs])
     
     if len(all_dominant_frequencies) == 0:
         log_message("警告：无有效主频数据")
@@ -162,6 +167,7 @@ def run_dominant_freq_statistics(file_paths, logger=None):
     log_message(f"✓ 已计算 {len(all_dominant_frequencies)} 个主频样本\n")
     
     statistics = {
+        'per_file_frequencies': per_file_frequencies,
         'all_dominant_frequencies': all_dominant_frequencies.tolist(),
         'freq_p95': float(freq_p95),
         'freq_stats': freq_stats

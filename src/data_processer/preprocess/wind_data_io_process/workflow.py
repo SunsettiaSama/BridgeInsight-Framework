@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import hashlib
 from datetime import datetime
 
 # 添加项目根目录到 sys.path
@@ -83,6 +84,13 @@ def save_workflow_cache(metadata, process_params, cache_path=WORKFLOW_CACHE_PATH
     print(f"✓ 工作流缓存已保存至: {cache_path}")
 
 
+def _vib_metadata_hash(vib_metadata) -> str:
+    """计算振动元数据内容的 hash，用于风数据缓存 fingerprint"""
+    paths = sorted(item.get('file_path', '') for item in vib_metadata)
+    content = '\n'.join(paths).encode('utf-8')
+    return hashlib.md5(content).hexdigest()
+
+
 def load_workflow_cache(cache_path=WORKFLOW_CACHE_PATH):
     """
     从缓存文件读取工作流结果
@@ -97,21 +105,17 @@ def load_workflow_cache(cache_path=WORKFLOW_CACHE_PATH):
     if not os.path.exists(cache_path):
         return None, None
     
-    try:
-        with open(cache_path, 'r', encoding='utf-8') as f:
-            cache_data = json.load(f)
-        
-        metadata = cache_data.get('metadata', [])
-        process_params = cache_data.get('process_params', {})
-        
-        print(f"✓ 从缓存读取工作流结果")
-        print(f"  - 缓存时间: {cache_data.get('timestamp', 'N/A')}")
-        print(f"  - 对齐后文件数: {len(metadata)}")
-        
-        return metadata, process_params
-    except Exception as e:
-        print(f"警告：读取缓存文件时出错: {e}")
-        return None, None
+    with open(cache_path, 'r', encoding='utf-8') as f:
+        cache_data = json.load(f)
+    
+    metadata = cache_data.get('metadata', [])
+    process_params = cache_data.get('process_params', {})
+    
+    print(f"✓ 从缓存读取工作流结果")
+    print(f"  - 缓存时间: {cache_data.get('timestamp', 'N/A')}")
+    print(f"  - 对齐后文件数: {len(metadata)}")
+    
+    return metadata, process_params
 
 
 def run(vib_metadata,
@@ -150,25 +154,33 @@ def run(vib_metadata,
     # 重置报告收集器
     global report_collector
     report_collector = ReportCollector()
-    
+
+    current_fingerprint = {
+        'vib_metadata_hash': _vib_metadata_hash(vib_metadata),
+        'extreme_only':      extreme_only,
+    }
+
     # 记录处理参数
     report_collector.set_param('vib_metadata_count', len(vib_metadata))
-    report_collector.set_param('extreme_only', extreme_only)
+    for k, v in current_fingerprint.items():
+        report_collector.set_param(k, v)
     
     # 尝试从缓存读取
     if use_cache and not force_recompute:
         cached_metadata, cached_params = load_workflow_cache(cache_path)
         if cached_metadata is not None:
-            # 检查缓存的参数是否匹配（基于振动元数据数量和extreme_only标志）
-            if (cached_params.get('vib_metadata_count') == len(vib_metadata) and
-                cached_params.get('extreme_only') == extreme_only):
+            mismatch = {
+                k: {'cached': cached_params.get(k), 'current': v}
+                for k, v in current_fingerprint.items()
+                if cached_params.get(k) != v
+            }
+            if not mismatch:
                 report_collector.log("✓ 使用缓存结果（参数匹配）\n")
-                # 恢复处理参数
                 for key, value in cached_params.items():
                     report_collector.set_param(key, value)
                 return cached_metadata
             else:
-                report_collector.log("⚠ 缓存参数不匹配，将重新计算...")
+                report_collector.log(f"⚠ 缓存参数不匹配，将重新计算... 差异字段：{mismatch}")
     
     if force_recompute:
         report_collector.log("⚠ 强制重新计算模式\n")

@@ -9,6 +9,8 @@ import os
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+from collections import defaultdict
+
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -33,13 +35,19 @@ class _InplaneWindowDataset(Dataset):
 
     def __init__(
         self,
-        records,              # List[_SampleRecord]
+        records,                        # List[_SampleRecord]
         window_size: int,
         enable_denoise: bool = False,
+        original_indices: Optional[List[int]] = None,
     ):
-        self._records      = records
-        self._window_size  = window_size
-        self._extractor    = VICWindowExtractor(enable_denoise=enable_denoise)
+        self._records          = records
+        self._window_size      = window_size
+        self._extractor        = VICWindowExtractor(enable_denoise=enable_denoise)
+        # 原始样本索引：用于在过滤后仍能映射回 dataset._samples 的位置
+        self._original_indices = (
+            original_indices if original_indices is not None
+            else list(range(len(records)))
+        )
 
     def __len__(self) -> int:
         return len(self._records)
@@ -52,7 +60,7 @@ class _InplaneWindowDataset(Dataset):
             self._window_size,
             metadata=rec.inplane_meta,
         )
-        return torch.from_numpy(signal).float(), idx
+        return torch.from_numpy(signal).float(), self._original_indices[idx]
 
 
 # ---------------------------------------------------------------------------
@@ -100,10 +108,16 @@ class FullDatasetRunner:
         Dict[int, int]
             ``{sample_idx: predicted_label}``，覆盖数据集全量样本。
         """
+        # 预验证：读取每个面内文件的真实长度，丢弃超出范围的不完整窗口
+        valid_records, valid_orig_indices = self._validate_records(
+            dataset._samples, dataset.config.window_size
+        )
+
         pred_ds = _InplaneWindowDataset(
-            records       = dataset._samples,
-            window_size   = dataset.config.window_size,
-            enable_denoise= dataset.config.enable_denoise,
+            records          = valid_records,
+            window_size      = dataset.config.window_size,
+            enable_denoise   = dataset.config.enable_denoise,
+            original_indices = valid_orig_indices,
         )
 
         loader_kwargs: dict = dict(
@@ -121,7 +135,8 @@ class FullDatasetRunner:
         total       = len(pred_ds)
 
         logger.info(
-            f"开始全量 DL 识别：{total} 个样本 | "
+            f"开始全量 DL 识别：{total} 个样本（原始 {len(dataset._samples)} 个，"
+            f"预验证丢弃 {len(dataset._samples) - total} 个不完整窗口）| "
             f"batch={self.batch_size} | workers={self.num_workers} | "
             f"device={self.identifier.device}"
         )
@@ -135,6 +150,51 @@ class FullDatasetRunner:
 
         logger.info(f"识别完成，共 {len(predictions)} 条结果")
         return predictions
+
+    # ------------------------------------------------------------------ #
+    # 预验证                                                                #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _validate_records(
+        records, window_size: int
+    ) -> Tuple[list, List[int]]:
+        """
+        读取每个面内 VIC 文件的真实数据长度，丢弃末尾不完整窗口。
+
+        对同一文件只读一次，通过字典缓存长度。
+        返回 (有效记录列表, 对应的原始索引列表)。
+        """
+        extractor = VICWindowExtractor(enable_denoise=False)
+        file_length_cache: Dict[str, int] = {}
+
+        for rec in records:
+            fp = rec.inplane_meta.get("file_path")
+            if fp and fp not in file_length_cache:
+                vic_data = extractor.unpacker.VIC_DATA_Unpack(str(fp))
+                file_length_cache[fp] = len(vic_data)
+                del vic_data
+
+        valid_records: list = []
+        valid_orig_indices: List[int] = []
+        skipped = 0
+
+        for orig_idx, rec in enumerate(records):
+            fp         = rec.inplane_meta.get("file_path")
+            actual_len = file_length_cache.get(fp, 0)
+            end_idx    = (rec.window_idx + 1) * window_size
+            if actual_len > 0 and end_idx <= actual_len:
+                valid_records.append(rec)
+                valid_orig_indices.append(orig_idx)
+            else:
+                skipped += 1
+
+        if skipped:
+            logger.warning(
+                f"预验证：{skipped} 个窗口索引超出文件实际长度（window_size={window_size}），已跳过"
+            )
+
+        return valid_records, valid_orig_indices
 
     # ------------------------------------------------------------------ #
     # 结果格式转换                                                           #
@@ -199,17 +259,54 @@ class FullDatasetRunner:
                 "model_info":  "..."
               },
               "predictions": {"0": 1, "1": 0, ...},
+              "sample_metadata": {
+                "0": {
+                  "cable_pair": ["sensor_in", "sensor_out"],
+                  "timestamp": [month, day, hour],
+                  "window_idx": 0,
+                  "inplane_sensor_id": "...",
+                  "outplane_sensor_id": "...",
+                  "missing_rate_in": 0.01,
+                  "missing_rate_out": 0.02,
+                  "has_wind": true
+                },
+                ...
+              },
               "by_file": {
                 "ST-VIC-C34-101-01_9_1_0": [0, 0, 1, 0, ...],
                 ...
               }
             }
 
-        - ``predictions`` : 平铺格式，键为样本索引字符串，值为预测类别。
-        - ``by_file``     : 按（传感器, 月, 日, 时）分组的窗口预测列表，
-                            列表下标即 window_idx。
+        - ``predictions``       : 平铺格式，键为样本索引字符串，值为预测类别。
+        - ``sample_metadata``   : 每个样本的完整元数据（用于追溯和统计）。
+        - ``by_file``           : 按（传感器, 月, 日, 时）分组的窗口预测列表，
+                                  列表下标即 window_idx。
         """
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+
+        # 只为有预测结果的样本构建元数据（而非全量 dataset._samples）
+        sample_metadata = {}
+        for idx in predictions.keys():
+            if idx < len(dataset._samples):
+                rec = dataset._samples[idx]
+                sample_metadata[str(idx)] = {
+                    "cable_pair":          list(rec.cable_pair),
+                    "timestamp":           list(rec.timestamp_key),  # (month, day, hour)
+                    "window_idx":          rec.window_idx,
+                    "inplane_sensor_id":   rec.inplane_meta.get("sensor_id"),
+                    "outplane_sensor_id":  rec.outplane_meta.get("sensor_id"),
+                    "inplane_file_path":   rec.inplane_meta.get("file_path"),
+                    "outplane_file_path":  rec.outplane_meta.get("file_path"),
+                    "missing_rate_in":     rec.inplane_meta.get("missing_rate"),
+                    "missing_rate_out":    rec.outplane_meta.get("missing_rate"),
+                    "has_wind":            rec.wind_meta is not None,
+                }
+            else:
+                logger.warning(f"样本索引 {idx} 超出数据集范围（数据集共 {len(dataset._samples)} 个样本）")
+
+        # 计算数据集指纹（用于后续验证一致性）
+        dataset_fingerprint = dataset._compute_fingerprint()
 
         payload = {
             "metadata": {
@@ -217,8 +314,10 @@ class FullDatasetRunner:
                 "num_samples": len(predictions),
                 "num_classes": getattr(dataset, "_num_classes", 4),
                 "model_info":  model_info,
+                "dataset_fingerprint_hash": dataset._fingerprint_hash(dataset_fingerprint),
             },
             "predictions": {str(k): int(v) for k, v in predictions.items()},
+            "sample_metadata": sample_metadata,
             "by_file":      FullDatasetRunner.to_file_indexed(predictions, dataset),
         }
 
@@ -226,6 +325,7 @@ class FullDatasetRunner:
             json.dump(payload, f, ensure_ascii=False)
 
         logger.info(f"识别结果已保存：{path}（{len(predictions)} 条）")
+
 
     @staticmethod
     def load_predictions(path: str) -> Dict[int, int]:
