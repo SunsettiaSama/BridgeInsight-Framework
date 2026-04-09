@@ -5,6 +5,7 @@ import logging
 from typing import Union, Optional
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)
 
 
 def validate_input_signal(signal: Union[np.ndarray, list]) -> np.ndarray:

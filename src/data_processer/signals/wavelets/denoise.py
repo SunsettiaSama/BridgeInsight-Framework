@@ -21,6 +21,7 @@ from .core import (
 )
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)
 
 
 def denoise(

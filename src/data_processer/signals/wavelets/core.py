@@ -8,6 +8,7 @@ from .utils import calculate_sigma
 from .threshold import manual_estimate_threshold
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)
 
 
 def perform_wavelet_decomposition(signal: np.ndarray, wavelet: str, level: int) -> Tuple[list, int]:

@@ -12,13 +12,13 @@ from src.config.data_processer.preprocess.vibration_io_process.config import *
 
 
 # ==================== 字号配置 ====================
-FONT_SIZE = 26
-LABEL_FONT_SIZE = 24
+FONT_SIZE = 22
+LABEL_FONT_SIZE = 22
 REC_FIG_SIZE = (12, 8) # 矩形配置，Word图像大小为12 cm
 SQUARE_FIG_SIZE = (10, 8) # 正方形配置，Word图像大小为7.5cm
 
-REC_FONT_SIZE = 26
-SQUARE_FONT_SIZE = 26
+REC_FONT_SIZE = 24
+SQUARE_FONT_SIZE = 28
 
 
 

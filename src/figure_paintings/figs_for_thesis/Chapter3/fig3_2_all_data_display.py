@@ -226,7 +226,7 @@ def plot_class_distribution_pie(
     )
 
     legend_labels = [
-        f"{CLASS_LABELS[cls_id]}  {counts[i]:,}（{counts[i] / total_samples * 100:.1f}%）"
+        f"{CLASS_LABELS[cls_id]}  {counts[i]:,}（{counts[i] / total_samples * 100:.2f}%）"
         for i, cls_id in enumerate(cls_ids)
     ]
     legend = ax.legend(
