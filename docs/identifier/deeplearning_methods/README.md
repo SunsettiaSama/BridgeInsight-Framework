@@ -110,6 +110,7 @@ FullDatasetRunner
 - 与数据集解耦：通过 `dataset._samples` / `dataset.config` 访问必要信息，不在 FullDatasetRunner 内部存储数据集引用
 - 多进程加速：DataLoader 的 `num_workers` 并行加载 VIC 文件，`batch_size` 控制单次 GPU 推理量
 - 结果格式：`run()` 返回 `{sample_idx: predicted_label}`；`to_file_indexed()` 将其转换为按文件组织的窗口预测列表
+- 去噪透传：`run()` 从 `dataset.config.enable_denoise` / `dataset.config.denoise_freq_threshold` 读取去噪配置，透传给 `_InplaneWindowDataset`
 
 #### 主要公开接口
 
@@ -130,6 +131,52 @@ FullDatasetRunner
 #### 设计说明
 
 仅加载面内振动窗口，用于 DL 推理阶段。与 StayCableVib2023Dataset 解耦：只持有 `_SampleRecord` 列表和基本参数，不依赖完整数据集实例，从而支持 DataLoader `num_workers > 0`。
+
+构造参数：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `records` | `List[_SampleRecord]` | 经过预验证的样本记录列表 |
+| `window_size` | `int` | 单窗口采样点数 |
+| `enable_denoise` | `bool` | 是否启用分层去噪 |
+| `original_indices` | `Optional[List[int]]` | 原始样本索引，用于过滤后映射回 dataset._samples |
+| `freq_threshold` | `Optional[float]` | 分层去噪频率阈值（Hz），透传给 `VICWindowExtractor` |
+
+---
+
+### 4. VICWindowExtractor（去噪核心）
+
+**文件**: `src/data_processer/preprocess/get_data_vib.py`
+
+#### 分层去噪策略
+
+`_apply_denoise()` 按以下优先级决定是否对窗口去噪：
+
+```
+1. STRATIFIED_DENOISE_ENABLED == False
+   → 不分层，全部去噪
+
+2. 元数据中存在 extreme_freq_indices（预计算极端主频索引）
+   → 命中 → 跳过去噪（保留极端窗口原始特征）
+   → 未命中 → 应用去噪
+
+3. extreme_freq_indices 缺失 且 freq_threshold 已设置（硬编码阈值）
+   → 实时 FFT 计算窗口主频
+   → 主频 > freq_threshold → 跳过去噪
+   → 主频 ≤ freq_threshold → 应用去噪
+
+4. 其余情况（无预计算索引、无硬编码阈值）
+   → 全部应用去噪
+```
+
+#### 频率阈值来源
+
+| 来源 | 配置方式 | 优先级 |
+|------|----------|--------|
+| YAML 硬编码 | `denoise_freq_threshold: 2.5`（正数，单位 Hz） | **高** |
+| 统计文件自动读取 | `denoise_freq_threshold: null`（默认） | 低 |
+
+统计文件路径由 `vib_metadata2data_config.py` 中的 `DOMINANT_FREQ_RESULT_PATH` 指定，阈值取所有样本主频的 **95% 分位数**（`DOMINANT_FREQ_PERCENTILE = 0.95`）。
 
 ---
 
@@ -185,6 +232,29 @@ runner = FullDatasetRunner(
 predictions = runner.run(dataset)
 # predictions: {sample_idx: predicted_label}
 print(f"识别完成，共 {len(predictions)} 条结果")
+```
+
+### 使用硬编码频率阈值的分层去噪
+
+在 YAML 配置中直接指定阈值（单位 Hz），跳过统计文件读取：
+
+```yaml
+# config/train/datasets/total_staycable_vib.yaml
+enable_denoise: true
+denoise_freq_threshold: 2.5   # 主频 > 2.5 Hz 的窗口不去噪
+```
+
+等效 Python 写法：
+
+```python
+from src.config.data_processer.datasets.StayCableVib2023Dataset.StayCableVib2023Config import StayCableVib2023Config
+
+config = StayCableVib2023Config(
+    ...,
+    enable_denoise=True,
+    denoise_freq_threshold=2.5,  # Hz；None 则自动从统计文件读取 95% 分位数
+)
+dataset = StayCableVib2023Dataset(config)
 ```
 
 ### 结果保存与加载

@@ -16,9 +16,13 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from src.data_processer.preprocess.get_data_vib import VICWindowExtractor
-
 logger = logging.getLogger(__name__)
+
+
+def _make_extractor(enable_denoise: bool = False, freq_threshold=None):
+    """延迟导入 VICWindowExtractor，避免模块级与预处理子包的硬耦合。"""
+    from src.data_processer.preprocess.get_data_vib import VICWindowExtractor  # noqa: PLC0415
+    return VICWindowExtractor(enable_denoise=enable_denoise, freq_threshold=freq_threshold)
 
 
 # ---------------------------------------------------------------------------
@@ -39,10 +43,16 @@ class _InplaneWindowDataset(Dataset):
         window_size: int,
         enable_denoise: bool = False,
         original_indices: Optional[List[int]] = None,
+        freq_threshold: Optional[float] = None,
+        extractor=None,                 # 可注入的 VICWindowExtractor，默认延迟构造
     ):
-        self._records          = records
-        self._window_size      = window_size
-        self._extractor        = VICWindowExtractor(enable_denoise=enable_denoise)
+        self._records     = records
+        self._window_size = window_size
+        self._extractor   = (
+            extractor
+            if extractor is not None
+            else _make_extractor(enable_denoise=enable_denoise, freq_threshold=freq_threshold)
+        )
         # 原始样本索引：用于在过滤后仍能映射回 dataset._samples 的位置
         self._original_indices = (
             original_indices if original_indices is not None
@@ -108,9 +118,15 @@ class FullDatasetRunner:
         Dict[int, int]
             ``{sample_idx: predicted_label}``，覆盖数据集全量样本。
         """
+        # 延迟构造 extractor，统一传入预验证与推理 Dataset，避免重复实例化
+        extractor = _make_extractor(
+            enable_denoise=dataset.config.enable_denoise,
+            freq_threshold=getattr(dataset.config, "denoise_freq_threshold", None),
+        )
+
         # 预验证：读取每个面内文件的真实长度，丢弃超出范围的不完整窗口
         valid_records, valid_orig_indices = self._validate_records(
-            dataset._samples, dataset.config.window_size
+            dataset._samples, dataset.config.window_size, extractor=extractor
         )
 
         pred_ds = _InplaneWindowDataset(
@@ -118,6 +134,8 @@ class FullDatasetRunner:
             window_size      = dataset.config.window_size,
             enable_denoise   = dataset.config.enable_denoise,
             original_indices = valid_orig_indices,
+            freq_threshold   = getattr(dataset.config, "denoise_freq_threshold", None),
+            extractor        = extractor,
         )
 
         loader_kwargs: dict = dict(
@@ -157,15 +175,20 @@ class FullDatasetRunner:
 
     @staticmethod
     def _validate_records(
-        records, window_size: int
+        records, window_size: int, extractor=None
     ) -> Tuple[list, List[int]]:
         """
         读取每个面内 VIC 文件的真实数据长度，丢弃末尾不完整窗口。
 
         对同一文件只读一次，通过字典缓存长度。
         返回 (有效记录列表, 对应的原始索引列表)。
+
+        Parameters
+        ----------
+        extractor : 可注入的 VICWindowExtractor 实例；为 None 时延迟构造（enable_denoise=False）。
         """
-        extractor = VICWindowExtractor(enable_denoise=False)
+        if extractor is None:
+            extractor = _make_extractor(enable_denoise=False)
         file_length_cache: Dict[str, int] = {}
 
         for rec in records:

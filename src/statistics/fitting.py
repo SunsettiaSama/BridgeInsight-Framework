@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 from scipy import optimize, stats
+from sklearn.mixture import GaussianMixture
 
 
 # ---------------------------------------------------------------------------
@@ -14,7 +15,7 @@ from scipy import optimize, stats
 @dataclass
 class FitResult:
     form: str
-    params: Dict[str, float]
+    params: Dict[str, Any]
 
     # 分布拟合优度
     ks_statistic: Optional[float] = None
@@ -249,3 +250,56 @@ def fit(
             **kwargs,
         )
     return fit_distribution(data=data, distribution=form, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# 高斯混合模型拟合
+# ---------------------------------------------------------------------------
+
+def fit_gmm(
+    data: Sequence[float],
+    n_components: int = 2,
+    n_init: int = 8,
+    random_state: int = 42,
+) -> FitResult:
+    data = np.asarray(data, dtype=float)
+    if data.ndim != 1:
+        raise ValueError("fit_gmm 仅接受一维数据")
+    if len(data) < n_components * 5:
+        raise ValueError(
+            f"样本数（{len(data)}）不足以拟合 {n_components} 分量 GMM"
+        )
+
+    X = data.reshape(-1, 1)
+    gm = GaussianMixture(
+        n_components=n_components,
+        covariance_type="full",
+        n_init=n_init,
+        random_state=random_state,
+    )
+    gm.fit(X)
+
+    weights   = gm.weights_.tolist()
+    means     = gm.means_.flatten().tolist()
+    variances = [float(c[0, 0]) for c in gm.covariances_]
+
+    log_l = float(gm.score(X) * len(data))
+    # 自由度：(n_components-1) 权重 + n_components 均值 + n_components 方差
+    k_params = (n_components - 1) + n_components + n_components
+    n = len(data)
+    aic = 2 * k_params - 2 * log_l
+    bic = k_params * np.log(n) - 2 * log_l
+
+    params: Dict[str, Any] = {
+        "n_components": n_components,
+        "weights":      weights,
+        "means":        means,
+        "variances":    variances,
+    }
+
+    return FitResult(
+        form=f"gmm_{n_components}",
+        params=params,
+        aic=aic,
+        bic=bic,
+    )

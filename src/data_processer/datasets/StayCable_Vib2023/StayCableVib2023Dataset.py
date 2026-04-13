@@ -157,6 +157,7 @@ class StayCableVib2023Dataset(Dataset):
 
         self._vib_extractor = VICWindowExtractor(
             enable_denoise=config.enable_denoise,
+            freq_threshold=getattr(config, "denoise_freq_threshold", None),
         )
         self._file_length_cache: Dict[str, int] = {}
 

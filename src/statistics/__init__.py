@@ -14,6 +14,7 @@ from .multivariate import (
     sample_from_multivariate,
     compare_copulas,
 )
+from .run import run
 
 __all__ = [
     # fitting
@@ -24,4 +25,6 @@ __all__ = [
     "CorrelationResult", "MultivariateFitResult",
     "correlation_analysis", "pit_transform",
     "fit_multivariate", "sample_from_multivariate", "compare_copulas",
+    # pipeline
+    "run",
 ]

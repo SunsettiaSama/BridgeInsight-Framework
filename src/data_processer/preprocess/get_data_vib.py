@@ -60,18 +60,28 @@ class VICWindowExtractor:
     WINDOW_SIZE = 3000  # 默认窗口大小：60秒 @ 50Hz
     FS = 50.0           # 采样频率
     
-    def __init__(self, enable_denoise: bool = False, enable_extreme_window: bool = False):
+    def __init__(
+        self,
+        enable_denoise: bool = False,
+        enable_extreme_window: bool = False,
+        freq_threshold: Optional[float] = None,
+    ):
         """
         初始化VIC窗口提取器
         
         参数:
             enable_denoise: 是否启用去噪处理
             enable_extreme_window: 是否只提取极端窗口
+            freq_threshold: 分层去噪频率阈值（Hz）。
+                仅在 enable_denoise=True 且元数据中无 extreme_freq_indices 时启用 fallback 逻辑：
+                计算窗口主频，主频 > freq_threshold 的窗口视为极端窗口，跳过去噪。
+                None 时此 fallback 不生效（全部走去噪或依赖 extreme_freq_indices）。
         """
         from src.data_processer.io_unpacker import UNPACK
         self.unpacker = UNPACK(init_path=False)
         self.enable_denoise = enable_denoise
         self.enable_extreme_window = enable_extreme_window
+        self.freq_threshold = freq_threshold
     
     def extract_window(
         self,
@@ -132,32 +142,85 @@ class VICWindowExtractor:
         
         return window_data.astype(np.float32)
     
+    def _get_freq_threshold(self) -> Optional[float]:
+        """
+        获取分层去噪频率阈值（Hz）。
+
+        优先级：
+        1. self.freq_threshold 硬编码值（来自 YAML denoise_freq_threshold）
+        2. 从主频统计文件读取全量数据 95% 分位数
+        3. 两者均不可用 → 返回 None
+        """
+        if self.freq_threshold is not None:
+            return self.freq_threshold
+        try:
+            freq_stats = _load_dominant_freq_statistics()
+            return _calculate_freq_threshold(freq_stats)
+        except Exception:
+            return None
+
+    def _compute_dominant_freq(self, window_data: np.ndarray) -> float:
+        """
+        实时计算窗口信号的主频（Hz）。
+
+        使用 FFT 幅值谱最大值（跳过 DC 分量）。
+        仅在 dominant_freq_per_window 缺失时作为 fallback 调用。
+        """
+        data_1d = window_data.ravel().astype(np.float64)
+        n = len(data_1d)
+        fft_amp = np.abs(np.fft.rfft(data_1d))
+        freqs = np.fft.rfftfreq(n, d=1.0 / self.FS)
+        dominant_idx = int(np.argmax(fft_amp[1:])) + 1
+        return float(freqs[dominant_idx])
+
     def _apply_denoise(self, window_data: np.ndarray, window_index: int, metadata: Dict) -> np.ndarray:
         """
-        对窗口应用分层去噪策略
-        
-        📌 【关键修复】使用 extreme_freq_indices（极端主频），而非 extreme_rms_indices
-        
-        参数:
-            window_data: 窗口数据
-            window_index: 窗口索引
-            metadata: 元数据，包含 extreme_freq_indices（极端主频窗口）
-        
-        返回:
-            去噪后的窗口数据
+        对窗口应用分层去噪策略。
+
+        分层判断依据：窗口主频 vs 全量数据主频的 95% 分位数阈值。
+        主频 > 阈值 → 跳过去噪（保留原始特征）；否则 → 应用小波去噪。
+
+        注意：extreme_rms_indices / extreme_freq_indices 仅供标注使用，
+              不参与去噪决策。
+
+        判断优先级（由高到低）：
+
+        ① dominant_freq_per_window 存在（预处理写入）+ 阈值可获取
+            → 直接使用预处理主频值与阈值比对（与全量统计完全一致）
+
+        ② dominant_freq_per_window 缺失 + 阈值可获取
+            → 实时 FFT 计算窗口主频与阈值比对（fallback）
+
+        ③ 阈值不可获取
+            → 对所有窗口应用去噪（兜底）
         """
         if not STRATIFIED_DENOISE_ENABLED:
-            return window_data
-        
-        # 📌 修复2：使用正确的键名 extreme_freq_indices（而非 extreme_rms_indices）
-        extreme_freq_indices = metadata.get("extreme_freq_indices", [])
-        
-        # 如果是极端主频窗口，保留原始特征，不去噪
-        if window_index in extreme_freq_indices:
-            logger.debug(f"跳过去噪（极端主频窗口）: window_index={window_index}")
-            return window_data
-        
-        # 低频窗口应用去噪
+            pass  # 全局分层开关关闭 → 无差别去噪，直接落入末尾去噪逻辑
+        else:
+            threshold = self._get_freq_threshold()
+
+            if threshold is not None:
+                per_window_freqs = metadata.get("dominant_freq_per_window")
+
+                if per_window_freqs is not None and window_index < len(per_window_freqs):
+                    # ① 预处理主频值（与全量 95% 分位数统计口径一致）
+                    dominant_freq = float(per_window_freqs[window_index])
+                else:
+                    # ② 实时 FFT fallback（仅在无预处理主频时使用）
+                    dominant_freq = self._compute_dominant_freq(window_data)
+                    logger.debug(
+                        f"dominant_freq_per_window 缺失，使用实时 FFT: "
+                        f"window_index={window_index}, freq={dominant_freq:.3f} Hz"
+                    )
+
+                if dominant_freq > threshold:
+                    logger.debug(
+                        f"跳过去噪（主频 {dominant_freq:.3f} Hz > 阈值 {threshold:.3f} Hz）: "
+                        f"window_index={window_index}"
+                    )
+                    return window_data
+            # ③ 阈值不可获取 → 兜底，继续执行去噪
+
         try:
             denoised_data = denoise(
                 window_data,
@@ -165,7 +228,7 @@ class VICWindowExtractor:
                 level=WAVELET_DECOMPOSITION_LEVEL,
                 threshold_type=THRESHOLD_TYPE,
                 threshold_method=THRESHOLD_METHOD,
-                layer_wise_threshold=LAYER_WISE_THRESHOLD
+                layer_wise_threshold=LAYER_WISE_THRESHOLD,
             )
             logger.debug(f"应用去噪: window_index={window_index}")
             return denoised_data
@@ -432,6 +495,7 @@ def load_full_or_extreme_segments_from_file(
             processed_data,
             metadata=metadata,
             enable_denoise=enable_denoise,
+            freq_threshold_override=metadata.get("denoise_freq_threshold"),
         )
     else:
         denoise_info = {
@@ -556,34 +620,27 @@ def _apply_denoise_placeholder(
     data: np.ndarray,
     metadata: Optional[Dict] = None,
     enable_denoise: bool = False,
+    freq_threshold_override: Optional[float] = None,
 ) -> Tuple[np.ndarray, Dict]:
     """
     分层去噪处理函数。
     
     实现分层去噪策略：
-    - 低频信号 (频率 <= 95%分位数): 应用小波去噪
-    - 高频/极端信号 (频率 > 95%分位数): 保留原始特征，不去噪
+    - 低频信号 (频率 <= 阈值): 应用小波去噪
+    - 高频/极端信号 (频率 > 阈值): 保留原始特征，不去噪
+
+    阈值来源优先级：
+    1. freq_threshold_override 不为 None → 直接使用，跳过统计文件
+    2. 否则 → 从 dominant_freq_statistics_result.json 读取 95% 分位数
     
     参数:
         data: 输入的振动加速度数据
         metadata: 元数据字典，包含极端RMS窗口索引等信息
         enable_denoise: 是否启用去噪
+        freq_threshold_override: 硬编码频率阈值（Hz）；不为 None 时跳过统计文件读取
     
     返回:
         (去噪后的数据, 去噪处理信息)
-        处理信息包含：
-        {
-            "stratified_denoise_enabled": bool,
-            "freq_threshold": float,
-            "denoise_applied": bool,
-            "num_windows_denoised": int,
-            "num_windows_preserved": int,
-            "freq_threshold_unit": "Hz",
-        }
-    
-    异常:
-        FileNotFoundError: 当主频统计文件不存在时
-        ValueError: 当数据或配置错误时
     """
     denoise_info = {
         "stratified_denoise_enabled": False,
@@ -596,57 +653,70 @@ def _apply_denoise_placeholder(
     
     if not enable_denoise or not STRATIFIED_DENOISE_ENABLED:
         return data, denoise_info
-    
-    try:
-        freq_stats = _load_dominant_freq_statistics()
-        freq_threshold = _calculate_freq_threshold(freq_stats)
-    except Exception as e:
-        raise ValueError(
-            f"分层去噪初始化失败: {str(e)}\n"
-            f"请确保已生成主频统计结果。"
-        )
+
+    if freq_threshold_override is not None:
+        freq_threshold = float(freq_threshold_override)
+        logger.debug(f"使用硬编码频率阈值: {freq_threshold} Hz")
+    else:
+        try:
+            freq_stats = _load_dominant_freq_statistics()
+            freq_threshold = _calculate_freq_threshold(freq_stats)
+        except Exception as e:
+            raise ValueError(
+                f"分层去噪初始化失败: {str(e)}\n"
+                f"请确保已生成主频统计结果，或在配置中设置 denoise_freq_threshold。"
+            )
     
     window_size = int(TIME_WINDOW * FS)
     num_windows = len(data) // window_size
-    
-    extreme_indices = metadata.get("extreme_rms_indices", []) if metadata else []
-    
+
+    # 预处理写入的逐窗口主频列表（与全量统计口径一致）
+    per_window_freqs = metadata.get("dominant_freq_per_window") if metadata else None
+
     denoised_data_list = []
     num_windows_denoised = 0
     num_windows_preserved = 0
-    
+
     for window_idx in range(num_windows):
         start = int(window_idx * window_size)
         end = int((window_idx + 1) * window_size)
         window_data = data[start:end]
-        
-        is_extreme_window = window_idx in extreme_indices
-        
-        if is_extreme_window:
+
+        # 获取当前窗口主频：优先使用预处理值，否则实时 FFT
+        if per_window_freqs is not None and window_idx < len(per_window_freqs):
+            dominant_freq = float(per_window_freqs[window_idx])
+        else:
+            fft_amp = np.abs(np.fft.rfft(window_data.ravel().astype(np.float64)))
+            freqs = np.fft.rfftfreq(len(window_data), d=1.0 / FS)
+            dominant_freq = float(freqs[int(np.argmax(fft_amp[1:])) + 1])
+
+        # 主频超过阈值 → 跳过去噪，保留原始特征
+        if dominant_freq > freq_threshold:
             denoised_data_list.append(window_data)
             num_windows_preserved += 1
-        else:
-            try:
-                denoised_window, _ = denoise(
-                    window_data,
-                    wavelet=WAVELET_NAME,
-                    level=WAVELET_DECOMPOSITION_LEVEL,
-                    threshold_type=THRESHOLD_TYPE,
-                    threshold_method=THRESHOLD_METHOD,
-                    layer_wise_threshold=LAYER_WISE_THRESHOLD,
-                )
-                denoised_data_list.append(denoised_window)
-                num_windows_denoised += 1
-            except Exception:
-                denoised_data_list.append(window_data)
-                num_windows_preserved += 1
-    
+            continue
+
+        try:
+            denoised_window, _ = denoise(
+                window_data,
+                wavelet=WAVELET_NAME,
+                level=WAVELET_DECOMPOSITION_LEVEL,
+                threshold_type=THRESHOLD_TYPE,
+                threshold_method=THRESHOLD_METHOD,
+                layer_wise_threshold=LAYER_WISE_THRESHOLD,
+            )
+            denoised_data_list.append(denoised_window)
+            num_windows_denoised += 1
+        except Exception:
+            denoised_data_list.append(window_data)
+            num_windows_preserved += 1
+
     remaining = len(data) % window_size
     if remaining > 0:
         denoised_data_list.append(data[-remaining:])
-    
+
     processed_data = np.concatenate(denoised_data_list)
-    
+
     denoise_info = {
         "stratified_denoise_enabled": True,
         "freq_threshold": freq_threshold,
@@ -656,5 +726,5 @@ def _apply_denoise_placeholder(
         "freq_threshold_unit": "Hz",
         "percentile": int(DOMINANT_FREQ_PERCENTILE * 100),
     }
-    
+
     return processed_data, denoise_info

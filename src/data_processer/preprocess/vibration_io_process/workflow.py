@@ -281,9 +281,15 @@ def run(threshold=MISSING_RATE_THRESHOLD,
             metadata[i]['rms_per_window'] = [float(v) for v in rms_arr]
             metadata[i]['extreme_rms_indices'] = rms_statistics['extreme_indices'][i]
         
-        # 添加主频逐窗口值
+        # 添加主频逐窗口值，并按 95% 分位数阈值标记极端主频窗口
         if freq_statistics and 'per_file_frequencies' in freq_statistics:
-            metadata[i]['dominant_freq_per_window'] = freq_statistics['per_file_frequencies'][i]
+            per_window_freqs = freq_statistics['per_file_frequencies'][i]
+            freq_p95 = freq_statistics['freq_p95']
+            metadata[i]['dominant_freq_per_window'] = per_window_freqs
+            metadata[i]['extreme_freq_indices'] = [
+                j for j, f in enumerate(per_window_freqs)
+                if f > freq_p95
+            ]
     
     # 记录包含极端振动的文件数
     if rms_statistics:
