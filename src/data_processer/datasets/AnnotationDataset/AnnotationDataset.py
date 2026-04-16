@@ -159,9 +159,11 @@ class AnnotationDataset(BaseDataset):
         # 7. 后续原有代码不变
         enable_denoise = getattr(config, 'enable_denoise', False)
         enable_extreme_window = getattr(config, 'enable_extreme_window', False)
+        freq_threshold = getattr(config, 'denoise_freq_threshold', None)
         self.vic_extractor = VICWindowExtractor(
             enable_denoise=enable_denoise,
-            enable_extreme_window=enable_extreme_window
+            enable_extreme_window=enable_extreme_window,
+            freq_threshold=freq_threshold,
         )
         
         cache_max_items = getattr(config, 'cache_max_items', 1000)

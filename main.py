@@ -1,8 +1,8 @@
 # Autor@ 猫毛
 
 from pathlib import Path
-from src.identifier.process_full_data.run import run as process_full_data_run
-from src.config.identifier.process_full_data.config import ProcessFullDataConfig, load_config
+from src.identifier.feature_analysis.run import run as feature_analysis_run
+from src.config.identifier.feature_analysis.config import ProcessFullDataConfig, load_config
 from src.config.data_processer.preprocess.preprocess_config import load_preprocess_config
 
 _PROJECT_ROOT = Path(__file__).parent
@@ -35,7 +35,7 @@ class ProcessFullData:
         print(f"[ProcessFullData] 风元数据：{wind_metadata_path}")
         print(f"[ProcessFullData] 输出目录：{output_dir}")
 
-        process_full_data_run(
+        feature_analysis_run(
             result_path=str(result_path),
             wind_metadata_path=str(wind_metadata_path),
             output_dir=str(output_dir),

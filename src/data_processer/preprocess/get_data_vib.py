@@ -70,12 +70,12 @@ class VICWindowExtractor:
         初始化VIC窗口提取器
         
         参数:
-            enable_denoise: 是否启用去噪处理
+            enable_denoise: 是否启用去噪处理。False 时跳过所有去噪。
             enable_extreme_window: 是否只提取极端窗口
             freq_threshold: 分层去噪频率阈值（Hz）。
-                仅在 enable_denoise=True 且元数据中无 extreme_freq_indices 时启用 fallback 逻辑：
-                计算窗口主频，主频 > freq_threshold 的窗口视为极端窗口，跳过去噪。
-                None 时此 fallback 不生效（全部走去噪或依赖 extreme_freq_indices）。
+                仅在 enable_denoise=True 且 STRATIFIED_DENOISE_ENABLED=True 时生效。
+                None 时由 _get_freq_threshold() 从统计文件读取 95% 分位数；
+                仍不可用时降级为全窗口去噪。
         """
         from src.data_processer.io_unpacker import UNPACK
         self.unpacker = UNPACK(init_path=False)
@@ -133,7 +133,8 @@ class VICWindowExtractor:
         del vic_data
         
         # 5. 应用去噪（可选）
-        if self.enable_denoise and metadata:
+        # metadata 为 None 时 _apply_denoise 内部自动走实时 FFT fallback
+        if self.enable_denoise:
             window_data = self._apply_denoise(window_data, window_index, metadata)
         
         # 6. 转为2D格式 (seq_len, 1)
@@ -156,7 +157,10 @@ class VICWindowExtractor:
         try:
             freq_stats = _load_dominant_freq_statistics()
             return _calculate_freq_threshold(freq_stats)
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                f"无法从统计文件获取主频阈值，分层去噪将退化为全窗口去噪: {e}"
+            )
             return None
 
     def _compute_dominant_freq(self, window_data: np.ndarray) -> float:
@@ -200,7 +204,7 @@ class VICWindowExtractor:
             threshold = self._get_freq_threshold()
 
             if threshold is not None:
-                per_window_freqs = metadata.get("dominant_freq_per_window")
+                per_window_freqs = metadata.get("dominant_freq_per_window") if metadata else None
 
                 if per_window_freqs is not None and window_index < len(per_window_freqs):
                     # ① 预处理主频值（与全量 95% 分位数统计口径一致）
@@ -222,7 +226,7 @@ class VICWindowExtractor:
             # ③ 阈值不可获取 → 兜底，继续执行去噪
 
         try:
-            denoised_data = denoise(
+            denoised_data, _ = denoise(
                 window_data,
                 wavelet=WAVELET_NAME,
                 level=WAVELET_DECOMPOSITION_LEVEL,

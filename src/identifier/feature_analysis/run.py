@@ -15,11 +15,11 @@
 
 使用方式
 --------
-    python -m src.identifier.process_full_data.run \
+    python -m src.identifier.feature_analysis.run \
         --result   results/identification_result/res_cnn_full_dataset_*_enriched.json \
         --wind     results/metadata/wind_metadata_filtered.json \
         --output   results/enriched_stats \
-        --config   config/identifier/process_full_data/default.yaml
+        --config   config/identifier/feature_analysis/default.yaml
 """
 
 import sys
@@ -37,25 +37,25 @@ project_root = Path(__file__).parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.data_processer.io_unpacker import UNPACK
-from src.config.identifier.process_full_data.config import (
+from src.data_processer.preprocess.get_data_vib import VICWindowExtractor
+from src.config.identifier.feature_analysis.config import (
     ProcessFullDataConfig,
     load_config,
 )
-from src.identifier.process_full_data._modal import (
+from src.identifier.feature_analysis._modal import (
     compute_psd_top_modes,
     compute_spectral_features,
 )
-from src.identifier.process_full_data._signal import compute_time_stats
-from src.identifier.process_full_data._coupling import compute_cross_coupling
-from src.identifier.process_full_data._wind import (
+from src.identifier.feature_analysis._signal import compute_time_stats
+from src.identifier.feature_analysis._coupling import compute_cross_coupling
+from src.identifier.feature_analysis._wind import (
     build_wind_lookup,
     compute_wind_stats_by_timestamp,
     get_wind_stats_for_sample,
     load_wind_metadata,
     compute_reduced_velocity,
 )
-from src.identifier.process_full_data._splitter import save_class_results
+from src.identifier.feature_analysis._splitter import save_class_results
 
 logging.basicConfig(
     level=logging.INFO,
@@ -83,17 +83,22 @@ def _worker_compute_features(args: Tuple) -> Optional[Dict]:
     """
     对单个样本加载信号并计算所有已开启特征。
     返回特征字典，越界时返回 None。
+
+    去噪：由 VICWindowExtractor 统一处理（分层策略），
+    metadata 为 None 时自动降级为实时 FFT 计算主频。
     """
     cfg = _worker_cfg
     sample_idx, in_path, out_path, window_idx = args
 
-    unpacker = UNPACK(init_path=False)
+    extractor = VICWindowExtractor(
+        enable_denoise=cfg.enable_denoise,
+        freq_threshold=cfg.denoise_freq_threshold,
+    )
 
     def _load(path: str) -> Optional[np.ndarray]:
-        raw = np.array(unpacker.VIC_DATA_Unpack(path))
-        s = window_idx * cfg.window_size
-        e = s + cfg.window_size
-        return raw[s:e] if e <= len(raw) else None
+        # metadata=None：dominant_freq_per_window 不可用时走实时 FFT fallback
+        signal = extractor.extract_window(path, window_idx, cfg.window_size, metadata=None)
+        return signal.ravel() if signal is not None else None
 
     in_raw  = _load(in_path)
     out_raw = _load(out_path)
@@ -349,7 +354,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output",  required=True,  help="输出目录")
     parser.add_argument(
         "--config", default=None,
-        help="配置 YAML 路径（默认读取 config/identifier/identify_full_data/default.yaml）",
+        help="配置 YAML 路径（默认读取 config/identifier/feature_analysis/default.yaml）",
     )
     return parser.parse_args()
 

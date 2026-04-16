@@ -83,23 +83,25 @@ class _SampleRecord:
         self.cable_pair_idx = cable_pair_idx
 
     # ---- 序列化（用于缓存 JSON）----
+    # 只存文件路径引用，不存整个 metadata dict。
+    # 加载时通过 _vib_meta_all 查找表重建共享引用，避免 145万 × 2 份独立副本。
 
     def to_dict(self) -> Dict:
         return {
-            "inplane_meta":   self.inplane_meta,
-            "outplane_meta":  self.outplane_meta,
-            "wind_meta":      self.wind_meta,
-            "window_idx":     self.window_idx,
-            "cable_pair":     list(self.cable_pair),
-            "timestamp_key":  list(self.timestamp_key),
-            "cable_pair_idx": self.cable_pair_idx,
+            "inplane_file_path":  self.inplane_meta.get("file_path"),
+            "outplane_file_path": self.outplane_meta.get("file_path"),
+            "wind_meta":          self.wind_meta,
+            "window_idx":         self.window_idx,
+            "cable_pair":         list(self.cable_pair),
+            "timestamp_key":      list(self.timestamp_key),
+            "cable_pair_idx":     self.cable_pair_idx,
         }
 
     @classmethod
-    def from_dict(cls, d: Dict) -> "_SampleRecord":
+    def from_dict(cls, d: Dict, inplane_meta: Dict, outplane_meta: Dict) -> "_SampleRecord":
         return cls(
-            inplane_meta   = d["inplane_meta"],
-            outplane_meta  = d["outplane_meta"],
+            inplane_meta   = inplane_meta,
+            outplane_meta  = outplane_meta,
             wind_meta      = d.get("wind_meta"),
             window_idx     = d["window_idx"],
             cable_pair     = tuple(d["cable_pair"]),
@@ -114,7 +116,8 @@ class _SampleRecord:
 
 class StayCableVib2023Dataset(Dataset):
     # 样本索引缓存版本号：窗口计算逻辑变更时递增，强制废弃旧缓存
-    _INDEX_CACHE_VERSION = 2
+    # v3: to_dict 改为只存 file_path 引用，加载时通过 _vib_meta_all 重建共享引用
+    _INDEX_CACHE_VERSION = 3
 
     """
     苏通大桥拉索振动 2023 数据集
@@ -189,6 +192,11 @@ class StayCableVib2023Dataset(Dataset):
             f"{len(config.cable_pairs)} 根拉索，"
             f"time_ordered={config.time_ordered}"
         )
+
+        # _vib_meta_all / _wind_meta_all 仅用于构建 _samples，构建完成后释放列表容器。
+        # 各 _SampleRecord.inplane_meta / outplane_meta 持有 dict 的共享引用，
+        # 引用计数 > 0，实际 dict 对象不会被 GC 回收。
+        del self._vib_meta_all, self._wind_meta_all
 
         # ---- 划分训练/验证集 ----
         self._train_indices, self._val_indices = self._build_split_indices()
@@ -539,7 +547,14 @@ class StayCableVib2023Dataset(Dataset):
         1. 缓存文件不存在 → 返回 None
         2. 读取 JSON，比对 fingerprint 字典是否完全一致
         3. 不一致（含 time_ordered 不同）→ 警告并返回 None，调用方将重建并覆盖
-        4. 一致 → 反序列化并返回
+        4. 一致 → 通过 _vib_meta_all 查找表重建共享引用后返回
+
+        内存优化说明
+        --------
+        缓存中只存储 inplane_file_path / outplane_file_path（轻量引用），
+        加载时通过 _vib_meta_all 构建 file_path → metadata dict 的查找表，
+        确保 _SampleRecord 共享同一批 dict 对象（而非每个样本独立副本），
+        避免 145万 × 2 份 metadata dict 的冗余内存占用（约 11 GB）。
         """
         if not cache_path.exists():
             logger.info(f"缓存文件不存在，将重新构建：{cache_path}")
@@ -558,12 +573,34 @@ class StayCableVib2023Dataset(Dataset):
             )
             return None
 
-        samples = [_SampleRecord.from_dict(d) for d in raw["samples"]]
+        # 构建 file_path → metadata dict 查找表（共享引用，不复制）
+        vib_lookup: Dict[str, Dict] = {
+            r.get("file_path"): r
+            for r in self._vib_meta_all
+            if r.get("file_path")
+        }
+
+        samples: List[_SampleRecord] = []
+        missing = 0
+        for d in raw["samples"]:
+            in_meta  = vib_lookup.get(d.get("inplane_file_path"))
+            out_meta = vib_lookup.get(d.get("outplane_file_path"))
+            if in_meta is None or out_meta is None:
+                missing += 1
+                continue
+            samples.append(_SampleRecord.from_dict(d, inplane_meta=in_meta, outplane_meta=out_meta))
+
+        if missing:
+            logger.warning(
+                f"缓存中 {missing} 条记录的文件路径在当前 _vib_meta_all 中未找到，已跳过。"
+                f"若跳过比例较高，建议删除缓存文件重建。"
+            )
+
         logger.info(
             f"缓存指纹校验通过（hash={self._fingerprint_hash(fingerprint)}），"
-            f"加载 {len(samples)} 个样本"
+            f"加载 {len(samples)} 个样本（跳过 {missing} 条）"
         )
-        return samples
+        return samples if samples else None
 
     def _save_cache(
         self, cache_path: Path, fingerprint: Dict, samples: List[_SampleRecord]

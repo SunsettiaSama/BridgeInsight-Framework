@@ -165,6 +165,16 @@ class FullDatasetRunner:
                 for pred, idx in zip(preds, indices.numpy()):
                     predictions[int(idx)] = int(pred)
                 pbar.update(len(indices))
+                del signals, preds   # 及时释放每批 tensor，防止显存/内存累积
+
+        # 关闭 DataLoader worker 进程（persistent_workers 时不会自动退出）
+        del loader
+        del pred_ds, valid_records, valid_orig_indices, extractor
+
+        import gc, torch  # noqa: PLC0415
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         logger.info(f"识别完成，共 {len(predictions)} 条结果")
         return predictions
@@ -191,9 +201,21 @@ class FullDatasetRunner:
             extractor = _make_extractor(enable_denoise=False)
         file_length_cache: Dict[str, int] = {}
 
-        for rec in records:
-            fp = rec.inplane_meta.get("file_path")
-            if fp and fp not in file_length_cache:
+        unique_fps = [
+            rec.inplane_meta.get("file_path")
+            for rec in records
+            if rec.inplane_meta.get("file_path") and rec.inplane_meta.get("file_path") not in file_length_cache
+        ]
+        # 去重（保持首次出现顺序）
+        seen: set = set()
+        unique_fps_dedup = []
+        for fp in unique_fps:
+            if fp not in seen:
+                seen.add(fp)
+                unique_fps_dedup.append(fp)
+
+        with tqdm(unique_fps_dedup, desc="预验证文件长度", unit="file") as pbar:
+            for fp in pbar:
                 vic_data = extractor.unpacker.VIC_DATA_Unpack(str(fp))
                 file_length_cache[fp] = len(vic_data)
                 del vic_data
