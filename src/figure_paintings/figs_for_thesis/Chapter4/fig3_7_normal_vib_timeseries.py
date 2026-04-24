@@ -10,7 +10,7 @@ if str(project_root) not in sys.path:
 from src.data_processer.io_unpacker import UNPACK
 from src.data_processer.signals.wavelets import denoise
 from src.visualize_tools.utils import PlotLib
-from src.figure_paintings.figs_for_thesis.Chapter3.fig3_2_all_data_display import load_identification_result
+from src.identifier.deeplearning_methods import FullDatasetRunner
 from src.figure_paintings.figs_for_thesis.config import ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE
 
 
@@ -175,7 +175,7 @@ def main():
 
     result_path = result_files[-1]
     print(f"\n[步骤1] 加载识别结果：{result_path.name}")
-    result = load_identification_result(str(result_path))
+    result = FullDatasetRunner.load_result(str(result_path))
 
     print("\n[步骤2] 筛选随机振动（class 0）样本...")
     samples = get_normal_vib_samples(result)

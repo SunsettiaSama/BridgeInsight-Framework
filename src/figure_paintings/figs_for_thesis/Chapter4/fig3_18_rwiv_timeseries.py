@@ -10,9 +10,9 @@ if str(project_root) not in sys.path:
 from src.data_processer.io_unpacker import UNPACK
 from src.data_processer.signals.wavelets import denoise
 from src.visualize_tools.utils import PlotLib
-from src.figure_paintings.figs_for_thesis.Chapter3.fig3_2_all_data_display import load_identification_result
+from src.identifier.deeplearning_methods import FullDatasetRunner
 from src.figure_paintings.figs_for_thesis.config import (
-    ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE, VIV_VIB_COLOR,
+    ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE,
 )
 
 
@@ -22,35 +22,37 @@ class Config:
     WINDOW_SIZE = 3000          # 60s @ 50Hz
 
     TRIM_START_SECOND = 0
-    TRIM_END_SECOND = 20        # 展示前20s，涡激共振周期性更明显
+    TRIM_END_SECOND = 20        # 展示前20s
 
-    NUM_SAMPLES_TO_PLOT = 2
-    RANDOM_SEED = 7
+    NUM_SAMPLES_TO_PLOT = 10
+    RANDOM_SEED = 42
 
     FIG_SIZE = SQUARE_FIG_SIZE
-    WAVEFORM_COLOR = VIV_VIB_COLOR
+    WAVEFORM_COLOR = '#7895C1'  # 风雨振对应蓝色系
     LINEWIDTH = 1.0
     GRID_COLOR = 'gray'
     GRID_ALPHA = 0.4
     GRID_LINEWIDTH = 0.5
     GRID_LINESTYLE = '--'
 
+    APPLY_DENOISE = False            # True: 先去噪再绘图；False: 直接用原始信号
+
     WAVELET_TYPE = 'db4'
     WAVELET_LEVEL = 3
     THRESHOLD_TYPE = 'soft'
     THRESHOLD_METHOD = 'sqtwolog'
 
-    VIV_CLASS_ID = 1            # 涡激共振对应的类别编号
+    RWIV_CLASS_ID = 2           # 风雨振对应的类别编号
 
 
 # ==================== 数据获取 ====================
-def get_viv_samples(result: dict) -> list:
+def get_rwiv_samples(result: dict) -> list:
     predictions = {int(k): int(v) for k, v in result["predictions"].items()}
     sample_metadata = result.get("sample_metadata", {})
 
-    viv_samples = []
+    rwiv_samples = []
     for idx, pred_label in predictions.items():
-        if pred_label != Config.VIV_CLASS_ID:
+        if pred_label != Config.RWIV_CLASS_ID:
             continue
         meta = sample_metadata.get(str(idx))
         if meta is None:
@@ -59,7 +61,7 @@ def get_viv_samples(result: dict) -> list:
         outplane_path = meta.get("outplane_file_path")
         if not inplane_path or not outplane_path:
             continue
-        viv_samples.append({
+        rwiv_samples.append({
             "idx": idx,
             "window_idx": meta["window_idx"],
             "inplane_sensor_id": meta.get("inplane_sensor_id", ""),
@@ -69,7 +71,7 @@ def get_viv_samples(result: dict) -> list:
             "timestamp": meta.get("timestamp", []),
         })
 
-    return viv_samples
+    return rwiv_samples
 
 
 def random_sample(samples: list) -> list:
@@ -106,11 +108,11 @@ def _load_window(file_path: str, window_idx: int, unpacker: UNPACK) -> np.ndarra
 
 # ==================== 绘图函数 ====================
 def _plot_single(data: np.ndarray, sensor_id: str, timestamp: list) -> plt.Figure:
-    denoised = _wavelet_denoise(data)
+    data_plot_src = _wavelet_denoise(data) if Config.APPLY_DENOISE else data
 
     trim_start = int(Config.TRIM_START_SECOND * Config.FS)
     trim_end = int(Config.TRIM_END_SECOND * Config.FS)
-    data_plot = denoised[trim_start:trim_end]
+    data_plot = data_plot_src[trim_start:trim_end]
 
     time_axis = np.arange(len(data_plot)) / Config.FS + Config.TRIM_START_SECOND
 
@@ -136,7 +138,7 @@ def _plot_single(data: np.ndarray, sensor_id: str, timestamp: list) -> plt.Figur
     return fig
 
 
-def plot_viv_timeseries(samples: list, unpacker: UNPACK):
+def plot_rwiv_timeseries(samples: list, unpacker: UNPACK):
     inplane_figs = []
     outplane_figs = []
 
@@ -164,7 +166,7 @@ def plot_viv_timeseries(samples: list, unpacker: UNPACK):
 # ==================== 主函数 ====================
 def main():
     print("=" * 80)
-    print("第三章 涡激共振时域波形绘制（面内 & 面外）")
+    print("第三章 风雨振时域波形绘制（面内 & 面外）")
     print("=" * 80)
 
     result_dir = project_root / "results" / "identification_result"
@@ -177,18 +179,18 @@ def main():
 
     result_path = result_files[-1]
     print(f"\n[步骤1] 加载识别结果：{result_path.name}")
-    result = load_identification_result(str(result_path))
+    result = FullDatasetRunner.load_result(str(result_path))
 
-    print("\n[步骤2] 筛选涡激共振（class 1）样本...")
-    samples = get_viv_samples(result)
-    print(f"✓ 共筛选到 {len(samples)} 个涡激共振样本")
+    print("\n[步骤2] 筛选风雨振（class 2）样本...")
+    samples = get_rwiv_samples(result)
+    print(f"✓ 共筛选到 {len(samples)} 个风雨振样本")
 
     print("\n[步骤3] 随机抽取样本...")
     samples = random_sample(samples)
 
     print("\n[步骤4] 加载原始数据并绘图...")
     unpacker = UNPACK(init_path=False)
-    inplane_figs, outplane_figs = plot_viv_timeseries(samples, unpacker)
+    inplane_figs, outplane_figs = plot_rwiv_timeseries(samples, unpacker)
 
     print("\n" + "=" * 80)
     print(f"✓ 面内图：{len(inplane_figs)} 张  |  面外图：{len(outplane_figs)} 张")

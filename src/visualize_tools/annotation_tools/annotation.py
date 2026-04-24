@@ -116,12 +116,13 @@ class AnnotationDataProvider:
     MODE_SUPER_EXTREME = 'super_extreme'
     MODE_REVIEW = 'review'  # 复盘模式
 
-    def __init__(self, use_cache: bool = True, force_recompute: bool = False, mode: str = MODE_EXTREME):
+    def __init__(self, use_cache: bool = True, force_recompute: bool = False, mode: str = MODE_EXTREME, filter_annotation: str = None):
         self.use_cache = use_cache
         self.force_recompute = force_recompute
         self.unpacker = UNPACK(init_path=False)
         self.extreme_windows = []
         self.mode = mode
+        self.filter_annotation = filter_annotation
         
     def fetch_metadata_and_extreme_windows(self) -> List[Dict]:
         """根据筛选模式获取数据"""
@@ -262,7 +263,16 @@ class AnnotationDataProvider:
         
         if not review_windows:
             raise ValueError("未找到任何已标注的极端窗口用于复盘")
-        
+
+        if self.filter_annotation:
+            review_windows = [
+                w for w in review_windows
+                if w.get('existing_annotation', '').strip() == self.filter_annotation
+            ]
+            print(f"✓ 按标注类别筛选后剩余：{len(review_windows)} 个窗口（筛选值: {self.filter_annotation!r}）")
+            if not review_windows:
+                raise ValueError(f"按标注类别 {self.filter_annotation!r} 筛选后无匹配样本")
+
         return review_windows
     
     def _load_extreme_windows(self, extreme_records: List[Dict]) -> List[Dict]:
@@ -452,7 +462,7 @@ class AnnotationFigureGenerator:
 class AnnotationWindowGUI:
     """基于工作流数据的人工标注GUI"""
     
-    def __init__(self, root, save_result_path: str = None):
+    def __init__(self, root, save_result_path: str = None, preset_config: dict = None):
         self.root = root
         self.root.title("振动数据标注系统")
         self.root.geometry("1800x1000")
@@ -478,6 +488,10 @@ class AnnotationWindowGUI:
         self.date_end = None
         self.sensor_ids = []
         
+        self._preset_config = preset_config
+        self._review_readonly = False
+        self.review_filter_annotation = None
+        
         self.data_provider = None
         self.figure_generator = AnnotationFigureGenerator(fs=FS)
         self.figure_cache = FigureCache(max_size=FIGURE_CACHE_SIZE)
@@ -487,7 +501,10 @@ class AnnotationWindowGUI:
         
         self._init_ui()
         
-        self.root.after(100, self._show_mode_selection_dialog)
+        if preset_config is not None:
+            self.root.after(100, self._apply_preset_config)
+        else:
+            self.root.after(100, self._show_mode_selection_dialog)
     
     def _init_ui(self):
         """初始化用户界面"""
@@ -535,158 +552,184 @@ class AnnotationWindowGUI:
         
         self._update_save_path_label()
     
-    def _show_mode_selection_dialog(self):
-        """显示模式选择对话框（作为主窗口的子窗口）"""
+    def _apply_preset_config(self):
+        self._show_mode_selection_dialog(defaults=self._preset_config)
+
+    def _show_mode_selection_dialog(self, defaults: dict = None):
+        d = defaults or {}
+
         dialog = Toplevel(self.root)
         dialog.title("选择筛选模式、日期范围和阈值")
-        dialog.geometry("500x550")
+        dialog.geometry("500x650")
         dialog.resizable(False, False)
         dialog.transient(self.root)
         dialog.grab_set()
-        
-        # 创建可滚动的框架
+
         canvas = tk.Canvas(dialog)
         scrollbar = ttk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
         scrollable_frame = Frame(canvas)
-        
+
         scrollable_frame.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        
+
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
-        
-        title_label = Label(scrollable_frame, text="请选择数据筛选模式", font=("Arial", 12, "bold"))
-        title_label.pack(pady=10)
-        
-        mode_var = StringVar(value=AnnotationDataProvider.MODE_EXTREME)
-        
-        # 模式选择
+
+        Label(scrollable_frame, text="请选择数据筛选模式", font=("Arial", 12, "bold")).pack(pady=10)
+
+        mode_var = StringVar(value=d.get('mode', AnnotationDataProvider.MODE_EXTREME))
+
         normal_frame = Frame(scrollable_frame, relief=FLAT, borderwidth=1)
         normal_frame.pack(fill=tk.X, padx=15, pady=5)
-        Radiobutton(normal_frame, text="正常模式 - 加载所有60秒窗口", 
-                      variable=mode_var, value=AnnotationDataProvider.MODE_NORMAL).pack(anchor=tk.W)
+        Radiobutton(normal_frame, text="正常模式 - 加载所有60秒窗口",
+                    variable=mode_var, value=AnnotationDataProvider.MODE_NORMAL).pack(anchor=tk.W)
         Label(normal_frame, text="不做任何数据切分或处理", fg="gray", font=("Arial", 8)).pack(anchor=tk.W, padx=20)
-        
+
         extreme_frame = Frame(scrollable_frame, relief=FLAT, borderwidth=1)
         extreme_frame.pack(fill=tk.X, padx=15, pady=5)
-        Radiobutton(extreme_frame, text="极端模式 - 只加载极端窗口（推荐）", 
-                      variable=mode_var, value=AnnotationDataProvider.MODE_EXTREME).pack(anchor=tk.W)
+        Radiobutton(extreme_frame, text="极端模式 - 只加载极端窗口（推荐）",
+                    variable=mode_var, value=AnnotationDataProvider.MODE_EXTREME).pack(anchor=tk.W)
         Label(extreme_frame, text="使用极端振动窗口的结果", fg="gray", font=("Arial", 8)).pack(anchor=tk.W, padx=20)
-        
+
         super_frame = Frame(scrollable_frame, relief=FLAT, borderwidth=1)
         super_frame.pack(fill=tk.X, padx=15, pady=5)
-        Radiobutton(super_frame, text="超级极端模式 - 0.25%分位数据", 
-                      variable=mode_var, value=AnnotationDataProvider.MODE_SUPER_EXTREME).pack(anchor=tk.W)
+        Radiobutton(super_frame, text="超级极端模式 - 0.25%分位数据",
+                    variable=mode_var, value=AnnotationDataProvider.MODE_SUPER_EXTREME).pack(anchor=tk.W)
         Label(super_frame, text="待0.25%分位数据实现后启用", fg="gray", font=("Arial", 8)).pack(anchor=tk.W, padx=20)
-        
+
         review_frame = Frame(scrollable_frame, relief=FLAT, borderwidth=1)
         review_frame.pack(fill=tk.X, padx=15, pady=5)
-        Radiobutton(review_frame, text="复盘模式 - 复盘已标注的样本", 
-                      variable=mode_var, value=AnnotationDataProvider.MODE_REVIEW).pack(anchor=tk.W)
+        Radiobutton(review_frame, text="复盘模式 - 复盘已标注的样本",
+                    variable=mode_var, value=AnnotationDataProvider.MODE_REVIEW).pack(anchor=tk.W)
         Label(review_frame, text="加载已标注过的样本进行复盘，检查标注是否正确", fg="gray", font=("Arial", 8)).pack(anchor=tk.W, padx=20)
-        
-        # 日期范围筛选
-        Label(scrollable_frame, text="日期范围筛选（格式: MM/DD，留空则不筛选）", 
+
+        # 复盘模式 — 标注类别检索
+        Label(scrollable_frame, text="复盘模式 — 标注类别检索（仅复盘模式生效，留空则加载全部）",
               font=("Arial", 10, "bold")).pack(pady=8, padx=15)
-        
+        Label(scrollable_frame,
+              text="填入与标注结果完全匹配的字符串，如 VIV、random_vibration 等",
+              fg="gray", font=("Arial", 8)).pack(pady=2, padx=15)
+
+        filter_frame = Frame(scrollable_frame)
+        filter_frame.pack(fill=tk.X, padx=15, pady=5)
+        Label(filter_frame, text="标注类别:", width=15, anchor=tk.W).pack(side=tk.LEFT)
+        filter_annotation_var = StringVar(value=d.get('review_filter_annotation', '') or '')
+        Entry(filter_frame, textvariable=filter_annotation_var, width=30).pack(side=tk.LEFT, padx=5)
+
+        # 日期范围筛选
+        Label(scrollable_frame, text="日期范围筛选（格式: MM/DD，留空则不筛选）",
+              font=("Arial", 10, "bold")).pack(pady=8, padx=15)
+
         date_frame = Frame(scrollable_frame)
         date_frame.pack(fill=tk.X, padx=15, pady=5)
         Label(date_frame, text="起始日期 (MM/DD):", width=15, anchor=tk.W).pack(side=tk.LEFT)
-        date_start_var = StringVar()
+        date_start_var = StringVar(value=d.get('date_start', '') or '')
         Entry(date_frame, textvariable=date_start_var, width=12).pack(side=tk.LEFT, padx=5)
         Label(date_frame, text="结束日期 (MM/DD):", width=15, anchor=tk.W).pack(side=tk.LEFT)
-        date_end_var = StringVar()
+        date_end_var = StringVar(value=d.get('date_end', '') or '')
         Entry(date_frame, textvariable=date_end_var, width=12).pack(side=tk.LEFT, padx=5)
-        
+
         # 传感器筛选
-        Label(scrollable_frame, text="传感器筛选（留空则不筛选）", 
+        Label(scrollable_frame, text="传感器筛选（留空则不筛选）",
               font=("Arial", 10, "bold")).pack(pady=8, padx=15)
-        
-        sensor_info = Label(scrollable_frame, 
-              text="单个: ST-VIC-C18-101-01 | 多个用逗号分隔: ST-VIC-C18-101-01, ST-VIC-C18-102-01", 
-              fg="gray", font=("Arial", 8), justify=tk.LEFT, wraplength=400)
-        sensor_info.pack(pady=3, padx=15)
-        
+        Label(scrollable_frame,
+              text="单个: ST-VIC-C18-101-01 | 多个用逗号分隔: ST-VIC-C18-101-01, ST-VIC-C18-102-01",
+              fg="gray", font=("Arial", 8), justify=tk.LEFT, wraplength=400).pack(pady=3, padx=15)
+
+        sensor_raw = d.get('sensor_ids')
+        if isinstance(sensor_raw, list):
+            sensor_default = ', '.join(sensor_raw)
+        elif isinstance(sensor_raw, str):
+            sensor_default = sensor_raw
+        else:
+            sensor_default = ''
+
         sensor_frame = Frame(scrollable_frame)
         sensor_frame.pack(fill=tk.X, padx=15, pady=5)
         Label(sensor_frame, text="传感器ID:", width=15, anchor=tk.W).pack(side=tk.LEFT)
-        sensor_var = StringVar()
+        sensor_var = StringVar(value=sensor_default)
         Entry(sensor_frame, textvariable=sensor_var, width=50).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        
+
         # 阈值过滤
-        Label(scrollable_frame, text="选择性阈值过滤（留空表示不使用）", 
+        Label(scrollable_frame, text="选择性阈值过滤（留空表示不使用）",
               font=("Arial", 10, "bold")).pack(pady=8, padx=15)
-        
+
+        rms_val = d.get('rms_threshold')
         rms_frame = Frame(scrollable_frame)
         rms_frame.pack(fill=tk.X, padx=15, pady=5)
         Label(rms_frame, text="RMS阈值 (m/s²):", width=18, anchor=tk.W).pack(side=tk.LEFT)
-        rms_var = StringVar()
+        rms_var = StringVar(value=str(rms_val) if rms_val is not None else '')
         Entry(rms_frame, textvariable=rms_var, width=12).pack(side=tk.LEFT, padx=5)
         Label(rms_frame, text="小于此值的样本将被忽略", fg="gray", font=("Arial", 8)).pack(side=tk.LEFT, padx=5)
-        
+
+        amp_val = d.get('amplitude_threshold')
         amp_frame = Frame(scrollable_frame)
         amp_frame.pack(fill=tk.X, padx=15, pady=5)
         Label(amp_frame, text="最大振幅阈值 (m/s²):", width=18, anchor=tk.W).pack(side=tk.LEFT)
-        amp_var = StringVar()
+        amp_var = StringVar(value=str(amp_val) if amp_val is not None else '')
         Entry(amp_frame, textvariable=amp_var, width=12).pack(side=tk.LEFT, padx=5)
         Label(amp_frame, text="小于此值的样本将被忽略", fg="gray", font=("Arial", 8)).pack(side=tk.LEFT, padx=5)
-        
+
         button_frame = Frame(scrollable_frame)
         button_frame.pack(pady=15)
-        
+
         def on_confirm():
             self.selected_mode = mode_var.get()
-            
-            # 解析日期
+
             date_start_str = date_start_var.get().strip()
             date_end_str = date_end_var.get().strip()
-            
+
             if date_start_str:
                 try:
                     self.date_start = datetime.strptime(date_start_str, "%m/%d")
                 except ValueError:
                     messagebox.showerror("输入错误", "起始日期格式错误，应为 MM/DD")
                     return
-            
+
             if date_end_str:
                 try:
                     self.date_end = datetime.strptime(date_end_str, "%m/%d")
                 except ValueError:
                     messagebox.showerror("输入错误", "结束日期格式错误，应为 MM/DD")
                     return
-            
-            # 解析传感器ID
+
             sensor_str = sensor_var.get().strip()
             if sensor_str:
                 self.sensor_ids = [s.strip() for s in sensor_str.split(',')]
                 print(f"✓ 筛选传感器: {self.sensor_ids}")
-            
+
             try:
                 rms_str = rms_var.get().strip()
                 self.rms_threshold = float(rms_str) if rms_str else None
             except ValueError:
                 messagebox.showerror("输入错误", "RMS阈值必须是数字或留空")
                 return
-            
+
             try:
                 amp_str = amp_var.get().strip()
                 self.amplitude_threshold = float(amp_str) if amp_str else None
             except ValueError:
                 messagebox.showerror("输入错误", "最大振幅阈值必须是数字或留空")
                 return
-            
+
+            filter_str = filter_annotation_var.get().strip()
+            self.review_filter_annotation = filter_str if filter_str else None
+
+            if self.selected_mode == AnnotationDataProvider.MODE_REVIEW:
+                self._review_readonly = not d.get('review_allow_edit', True)
+
             dialog.destroy()
             self._load_data()
-        
+
         def on_cancel():
             dialog.destroy()
             self.on_closing()
-        
+
         Button(button_frame, text="确认", command=on_confirm, width=10).pack(side=tk.LEFT, padx=5)
         Button(button_frame, text="取消", command=on_cancel, width=10).pack(side=tk.LEFT, padx=5)
-        
+
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
     
@@ -718,7 +761,11 @@ class AnnotationWindowGUI:
             self.status_label.config(text="正在加载数据...", fg="blue")
             self.root.update()
             
-            self.data_provider = AnnotationDataProvider(use_cache=True, mode=self.selected_mode)
+            self.data_provider = AnnotationDataProvider(
+                use_cache=True,
+                mode=self.selected_mode,
+                filter_annotation=self.review_filter_annotation,
+            )
             self.extreme_windows = self.data_provider.fetch_metadata_and_extreme_windows()
             
             if not self.extreme_windows:
@@ -943,15 +990,14 @@ class AnnotationWindowGUI:
         self.status_label.config(text=status_text, fg="green")
         
         self.entry_text.set(current_annotation)
-        
-        # 强制 UI 更新，确保图像完全渲染后再设置焦点
+        self.entry.config(state=tk.DISABLED if self._review_readonly else tk.NORMAL)
+
         self.root.update()
-        self.entry.focus_set()
-        
-        # 复盘模式下，将光标移到末尾
-        if self.selected_mode == AnnotationDataProvider.MODE_REVIEW:
-            self.entry.icursor(tk.END)
-            self.entry.selection_range(0, 0)  # 清除选择，仅将光标放在末尾
+        if not self._review_readonly:
+            self.entry.focus_set()
+            if self.selected_mode == AnnotationDataProvider.MODE_REVIEW:
+                self.entry.icursor(tk.END)
+                self.entry.selection_range(0, 0)
     
     def _on_annotation_changed(self, *args):
         """当标注内容改变时调用"""

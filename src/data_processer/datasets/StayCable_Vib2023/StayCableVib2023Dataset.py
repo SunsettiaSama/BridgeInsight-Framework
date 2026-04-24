@@ -193,6 +193,10 @@ class StayCableVib2023Dataset(Dataset):
             f"time_ordered={config.time_ordered}"
         )
 
+        # 在释放列表前保存数量，供 _compute_fingerprint() 在 __init__ 完成后使用。
+        self._vib_meta_count  = len(self._vib_meta_all)
+        self._wind_meta_count = len(self._wind_meta_all)
+
         # _vib_meta_all / _wind_meta_all 仅用于构建 _samples，构建完成后释放列表容器。
         # 各 _SampleRecord.inplane_meta / outplane_meta 持有 dict 的共享引用，
         # 引用计数 > 0，实际 dict 对象不会被 GC 回收。
@@ -526,8 +530,12 @@ class StayCableVib2023Dataset(Dataset):
             "require_wind_alignment":  self.config.require_wind_alignment,
             "missing_rate_threshold":  self.config.missing_rate_threshold,
             "time_ordered":            self.config.time_ordered,
-            "vib_record_count":        len(self._vib_meta_all),
-            "wind_record_count":       len(self._wind_meta_all),
+            # __init__ 期间（_vib_meta_all 仍存在，_vib_meta_count 尚未赋值）回退到 len()；
+            # __init__ 完成后（已 del _vib_meta_all）使用提前保存的计数。
+            # 注意：不能用 getattr(self, attr, len(self._vib_meta_all))，
+            # 因为第三参数在调用前就会被求值，导致已 del 时仍报 AttributeError。
+            "vib_record_count":        self._vib_meta_count  if hasattr(self, "_vib_meta_count")  else len(self._vib_meta_all),
+            "wind_record_count":       self._wind_meta_count if hasattr(self, "_wind_meta_count") else len(self._wind_meta_all),
         }
 
     @staticmethod

@@ -70,6 +70,107 @@ def _banner(step: str, title: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 工具：自动选取最优 checkpoint
+# ---------------------------------------------------------------------------
+
+def _find_best_checkpoint(checkpoint_dir: Path) -> Path:
+    """
+    在 checkpoint_dir 下的所有训练子目录中查找 best_metric 最高的 best_checkpoint.pth。
+
+    选取策略
+    --------
+    1. 扫描 checkpoint_dir/**/best_checkpoint.pth（仅搜索一层子目录）
+    2. 优先读取同名 .json 中的 train_step_state.best_metric，避免加载 .pth 权重
+    3. 若 .json 不可用，则回退到读取 .pth 中的 best_metric（torch.load map_location=cpu）
+    4. 若仍无法读取，按子目录名称（含时间戳）降序排列，取最新一份
+
+    Parameters
+    ----------
+    checkpoint_dir : 训练结果根目录，如 results/training_result/.../checkpoints
+
+    Returns
+    -------
+    Path
+        选中的 best_checkpoint.pth 绝对路径
+
+    Raises
+    ------
+    FileNotFoundError
+        checkpoint_dir 下找不到任何 best_checkpoint.pth 时
+    """
+    candidates = sorted(checkpoint_dir.glob("*/best_checkpoint.pth"))
+    if not candidates:
+        raise FileNotFoundError(
+            f"在 {checkpoint_dir} 下未找到任何 best_checkpoint.pth，"
+            "请先完成模型训练或在 pipeline.yaml 中手动指定 checkpoint 路径。"
+        )
+
+    scored: list[tuple[float, Path]] = []
+    fallback: list[Path] = []
+
+    for pth in candidates:
+        metric = _read_best_metric(pth)
+        if metric is not None:
+            scored.append((metric, pth))
+        else:
+            fallback.append(pth)
+
+    if scored:
+        scored.sort(key=lambda x: x[0], reverse=True)
+        best_metric, best_path = scored[0]
+        logger.info(
+            "自动选取最优 checkpoint：%s  (best_metric=%.6f)",
+            best_path.parent.name, best_metric,
+        )
+        if len(scored) > 1:
+            logger.info(
+                "其余 %d 份候选（按 best_metric 排序）：%s",
+                len(scored) - 1,
+                ", ".join(f"{p.parent.name}={m:.4f}" for m, p in scored[1:]),
+            )
+        return best_path
+
+    # 所有候选均无法读取 metric → 按目录名降序取最新
+    fallback.sort(key=lambda p: p.parent.name, reverse=True)
+    logger.warning(
+        "无法读取任何 checkpoint 的 best_metric，"
+        "回退到按目录名（时间戳）排序，选取最新：%s",
+        fallback[0].parent.name,
+    )
+    return fallback[0]
+
+
+def _read_best_metric(pth: Path) -> float | None:
+    """
+    从 best_checkpoint.pth 旁边的 .json 中读取 best_metric；
+    若 .json 不存在或字段缺失，则回退到 torch.load 读取 .pth。
+
+    返回 float 或 None（均无法获取时）。
+    """
+    # ① 优先读 JSON 旁置文件（快速，不加载权重张量）
+    json_path = pth.with_suffix(".json")
+    if json_path.exists():
+        with open(json_path, "r", encoding="utf-8") as f:
+            import json as _json
+            data = _json.load(f)
+        metric = (
+            data.get("train_step_state", {}).get("best_metric")
+            or data.get("best_metric")
+        )
+        if metric is not None:
+            return float(metric)
+
+    # ② 回退：torch.load（仅读取 best_metric 键，避免全量反序列化权重）
+    import torch as _torch
+    checkpoint = _torch.load(pth, map_location="cpu", weights_only=False)
+    metric = checkpoint.get("best_metric")
+    if metric is not None:
+        return float(metric)
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # 步骤1：数据预处理
 # ---------------------------------------------------------------------------
 
@@ -147,8 +248,16 @@ def run_identification(step_cfg: dict) -> str:
     from src.identifier.deeplearning_methods.full_dataset_runner import FullDatasetRunner
 
     dataset_config_path = project_root / step_cfg["dataset_config"]
-    checkpoint_path     = project_root / step_cfg["checkpoint"]
     model_config_path   = project_root / step_cfg["model_config"]
+
+    # checkpoint 路径：显式指定 > 自动从 checkpoint_dir 中选取最优
+    _explicit = step_cfg.get("checkpoint")
+    if _explicit:
+        checkpoint_path = project_root / _explicit
+        logger.info(f"使用指定 checkpoint：{checkpoint_path}")
+    else:
+        checkpoint_dir = project_root / step_cfg["checkpoint_dir"]
+        checkpoint_path = _find_best_checkpoint(checkpoint_dir)
 
     timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = project_root / "results" / "identification_result" / f"res_cnn_full_dataset_{timestamp}.json"
@@ -177,7 +286,7 @@ def run_identification(step_cfg: dict) -> str:
         batch_size=step_cfg.get("batch_size", 256),
         num_workers=step_cfg.get("num_workers", 4),
     )
-    predictions = runner.run(dataset)
+    predictions, inplane_predictions, outplane_predictions = runner.run(dataset)
     logger.info(f"识别完成，共 {len(predictions)} 条预测结果")
 
     FullDatasetRunner.save_predictions(
@@ -185,6 +294,8 @@ def run_identification(step_cfg: dict) -> str:
         predictions=predictions,
         dataset=dataset,
         model_info=step_cfg.get("model_info", ""),
+        inplane_predictions=inplane_predictions,
+        outplane_predictions=outplane_predictions,
     )
     logger.info(f"结果已保存：{output_path}")
 

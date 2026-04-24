@@ -3,14 +3,14 @@
 
 ## 项目概述
 
-本项目面向**桥梁斜拉索振动特性的全流程研究**，覆盖从原始多传感器时序数据的采集与预处理、基于深度学习的振动工况识别、多维振动特征提取与统计建模，到论文级图像生成的完整工作链路。
+本项目面向**桥梁斜拉索振动特性的全流程研究**，针对大规模、长序列时序数据的处理需求，覆盖从原始多传感器时序数据的采集与预处理、基于深度学习的振动工况识别、多维振动特征提取与统计建模，到论文级图像生成的完整工作链路。
 
 ### 核心研究方向
 
 - **振动工况识别**：基于 ResCNN 深度学习模型，对随机振动、涡激振动（VIV）、风雨振（RWIV）等四类工况进行全量自动分类
-- **特征统计分析**：提取主频、谱熵、RMS、耦合特征等多维振动统计量，支持分布拟合与 Copula 多变量联合建模
+- **特征统计分析**：提取主频、谱熵、RMS、耦合特征等多维振动统计量，支持边缘分布拟合（含 GMM 多峰）与多变量相关性分析
 - **风-振耦合分析**：融合多传感器风场数据，计算折减风速与紊流度，研究风荷载与拉索振动的统计耦合规律
-- **大规模并行处理**：多进程并行特征计算，支持数十万个振动窗口的全量处理
+- **大规模并行处理**：多进程并行特征计算，支持数十万个振动窗口的全量处理；文件级 I/O 分组 + 线程并行去噪，内存峰值恒定
 
 ---
 
@@ -28,15 +28,17 @@
 │   ├── train_eval/                        # 模型训练与评估框架
 │   ├── identifier/                        # 识别器模块
 │   │   ├── deeplearning_methods/          # 深度学习全量识别（DLVibrationIdentifier）
-│   │   └── process_full_data/             # 识别结果后处理（特征计算 + 按类归档）
-│   ├── statistics/                        # 统计分析模块（新增）
+│   │   ├── feature_analysis/              # 特征计算与按类归档（多进程）
+│   │   └── cable_analysis_methods/        # 拉索解析方法（MECC / 模态计算）
+│   ├── statistics/                        # 统计分析模块
 │   │   ├── fitting.py                     # 单变量分布 / 曲线拟合
 │   │   ├── copula.py                      # 五种 Copula 实现（Gaussian/t/Gumbel/Clayton/Frank）
-│   │   └── multivariate.py               # 多变量联合建模全流水线
+│   │   ├── multivariate.py               # 边缘分布拟合 + 相关性分析全流水线
+│   │   └── run.py                         # CLI 入口
 │   ├── figure_paintings/                  # 论文图像生成
 │   │   └── figs_for_thesis/
 │   │       ├── config.py                  # 全局字体 / 配色 / 尺寸配置
-│   │       ├── Chapter2/                  # 第二章图像
+│   │       ├── Chapter2/                  # 第二章图像（数据与识别方法）
 │   │       └── Chapter3/                  # 第三章图像（振动特性分析）
 │   ├── machine_learning_module/           # 传统机器学习模块（SVM / 朴素贝叶斯 / CA）
 │   ├── visualize_tools/                   # 可视化工具（PlotLib）
@@ -46,13 +48,16 @@
 │   ├── data_pipeline.yaml                 # 主流水线配置
 │   ├── data_processer/                    # 预处理配置
 │   ├── identifier/                        # 识别器配置
+│   ├── statistics/                        # 统计分析配置
 │   └── train/                             # 训练配置
 │
 ├── docs/                                  # 文档目录
 │   ├── README.md                          # 文档总索引
+│   ├── data_pipeline.md                   # 主流水线详细文档
 │   ├── identifier/
-│   │   ├── process_full_data/README.md    # 识别结果后处理模块详细文档
-│   │   └── deeplearning_methods/README.md
+│   │   ├── deeplearning_methods/README.md # 深度学习识别器文档
+│   │   └── feature_analysis/README.md    # 特征计算后处理模块文档
+│   ├── statistics/README.md              # 统计分析模块文档
 │   ├── deep_learning_module/
 │   ├── train_eval/
 │   ├── data_processer/
@@ -65,6 +70,7 @@
 │   │   ├── class_1_viv/
 │   │   ├── class_2_rwiv/
 │   │   └── class_3_transition/
+│   ├── statistics/                        # 统计分析结果 JSON
 │   ├── training_result/                   # 模型 checkpoint
 │   └── figures/                           # 输出图像
 │
@@ -98,7 +104,7 @@
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  步骤 4  统计建模（src/statistics/）                         │
-│  单变量分布拟合 / 相关性分析 / Copula 多变量联合建模          │
+│  边缘分布拟合（GMM 多峰选优）/ 相关性分析 / Copula 联合建模  │
 └────────────────────────┬────────────────────────────────────┘
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -135,15 +141,15 @@ steps:
 
 - 振动数据：缺失率筛选 → RMS统计 → 极端振动标记
 - 风数据：多传感器时序对齐 → 统计量聚合
-- 数据集：`StayCableVib2023Dataset` — 支持窗口化采样、去噪、指纹校验
+- 数据集：`StayCableVib2023Dataset` — 支持窗口化采样、分层去噪、指纹校验
 
 文档：[docs/data_processer/README.md](docs/data_processer/README.md)
 
 ---
 
-### 2. 深度学习识别 (`deep_learning_module` + `identifier`)
+### 2. 深度学习识别 (`deep_learning_module` + `identifier/deeplearning_methods`)
 
-基于 ResCNN 的振动工况四分类识别框架。
+基于 ResCNN 的振动工况四分类识别框架，针对大规模长序列数据设计文件级分组推理策略。
 
 | 类别 | label | 说明 |
 |------|-------|------|
@@ -153,14 +159,14 @@ steps:
 | 3 | transition | 过渡状态 |
 
 - **训练**：`src/train_eval/` — 支持早停、学习率调度、断点续训
-- **推理**：`src/identifier/deeplearning_methods/` — `DLVibrationIdentifier` 全量批量推理
-- **后处理**：`src/identifier/process_full_data/` — 多进程特征计算，按类别×传感器归档
+- **推理**：`src/identifier/deeplearning_methods/` — `DLVibrationIdentifier` 全量批量推理；文件分组顺序推理，内存峰值恒定
+- **去噪**：`ThreadPoolExecutor` 并行分层去噪，pywt 在 C 层释放 GIL 实现真正并行
 
-文档：[docs/identifier/process_full_data/README.md](docs/identifier/process_full_data/README.md)
+文档：[docs/identifier/deeplearning_methods/README.md](docs/identifier/deeplearning_methods/README.md)
 
 ---
 
-### 3. 特征后处理 (`identifier/process_full_data`)
+### 3. 特征计算与归档 (`identifier/feature_analysis`)
 
 对识别结果 JSON 并行计算振动特征，按类别归档保存（`results/enriched_stats/`）。
 
@@ -174,7 +180,7 @@ steps:
 | **风场** | `wind_stats[i].mean_wind_speed`、`turbulence_intensity` |
 | **折减风速** | `reduced_velocity[i].reduced_velocity` |
 
-输出 metadata 现包含完整溯源路径：
+输出 metadata 包含完整溯源路径：
 
 ```json
 {
@@ -187,11 +193,13 @@ steps:
 }
 ```
 
+文档：[docs/identifier/feature_analysis/README.md](docs/identifier/feature_analysis/README.md)
+
 ---
 
-### 4. 统计分析 (`statistics`) — 新增
+### 4. 统计分析 (`statistics`)
 
-提供从单变量分布拟合到多变量 Copula 联合建模的完整统计工具链。
+提供从单变量分布拟合到多变量 Copula 联合建模的完整统计工具链，面向大规模长序列振动特征数据（数十万样本级别）。
 
 #### `fitting.py` — 单变量拟合
 
@@ -206,38 +214,22 @@ print(result)   # 参数 + KS检验 + AIC/BIC
 result = fit(rms_values, form="power", x=wind_speed_values)
 print(result.params)     # {'a': ..., 'b': ...}
 print(result.r_squared)
-
-# 自定义函数
-result = fit(y, form="custom", x=x,
-             func=lambda x, a, b, c: a * np.exp(-b * x) + c,
-             param_names=["a", "b", "c"])
 ```
 
 内置分布：所有 `scipy.stats` 连续分布（`norm`、`lognorm`、`weibull_min`、`gamma`、`beta` 等）
 
 内置曲线形式：`linear` / `power` / `exponential` / `logarithmic` / `quadratic` / `cubic` / `sine`
 
-#### `copula.py` + `multivariate.py` — 多变量 Copula 建模
+#### `multivariate.py` — 边缘分布拟合与相关性分析
+
+针对 `enriched_stats` 中的振动模态特征（前 N 阶主频 + 能量占比），为每个变量独立拟合最优边缘分布（支持 GMM 多峰，按 AIC 选优），并计算 Pearson / Spearman / Kendall 三种相关矩阵。
 
 ```python
-from src.statistics import fit_multivariate, compare_copulas, sample_from_multivariate
-
-# 构造数据矩阵：前 k 阶主频 + 主频能量
-# data.shape = (n_samples, 2k)
-result = fit_multivariate(
-    data,
-    variable_names=["freq_1", "freq_2", "energy_1", "energy_2"],
-    marginal_distributions=["lognorm", "lognorm", "beta", "beta"],
-    copula_type="gaussian",
-)
-print(result.summary())
-
-# 模型选择：比较所有适合当前维度的 Copula，按 AIC 升序
-compare_copulas(result.u_matrix)
-
-# 从拟合的联合分布采样
-x_new, u_new = sample_from_multivariate(result, n_samples=5000)
+from src.statistics import run
+run()   # 使用默认配置
 ```
+
+#### `copula.py` — 多变量 Copula 建模
 
 支持的 Copula 类型：
 
@@ -249,6 +241,8 @@ x_new, u_new = sample_from_multivariate(result, n_samples=5000)
 | `clayton` | d = 2 | Kendall + MLE | 下尾依赖 |
 | `frank` | d = 2 | Kendall + MLE | 对称，允许负相关 |
 
+文档：[docs/statistics/README.md](docs/statistics/README.md)
+
 ---
 
 ### 5. 论文图像 (`figure_paintings`)
@@ -259,12 +253,22 @@ x_new, u_new = sample_from_multivariate(result, n_samples=5000)
 
 | 脚本 | 内容 |
 |------|------|
-| `fig3_2_all_data_display.py` | 全年四类振动占比饼图 |
-| `fig3_3_normal_vib_timeseries.py` | 随机振动时序展示 |
-| `fig3_4_normal_vib_mean.py` | 随机振动 RMS 分布（主体 / 尾部 / 散点） |
-| `fig3_5_normal_vib_trajectory.py` | 振动轨迹云图（面内 vs 面外散点） |
-| `fig3_6_normal_vib_modal.py` | 主频分布 / 主频-能量散点 / 主频能量分布 |
-| `fig3_7_normal_vib_modal.py` | 主频深度分析 |
+| `fig3_1_all_recognition_result.py` | 全年四类振动识别结果概览 |
+| `fig3_3_all_data_display.py` | 全年四类振动样本时序分布展示 |
+| `fig3_4_vib2freq2vib.py` | 振动信号→频谱→振动示意 |
+| `fig3_5_6_marginal_pdf_fitting.py` | 边缘概率密度分布拟合结果 |
+| `fig3_7_normal_vib_timeseries.py` | 随机振动时序展示 |
+| `fig3_8_9_normal_vib_mean.py` | 随机振动 RMS 主体分布 / 尾部 / 散点 |
+| `fig3_10_normal_vib_trajectory.py` | 振动轨迹云图（面内 vs 面外散点） |
+| `fig3_11_normal_vib_kurtosis.py` | 峭度分布与时域冲击分析 |
+| `fig3_12_normal_vib_freq_energy_scatter.py` | 主频-能量散点图 |
+| `fig3_13_normal_vib_energy_hist.py` | 模态能量分布直方图 |
+| `fig3_14_normal_vib_energy_cumsum.py` | 模态能量累积分布 |
+| `fig3_15_mean_wind_v_vib_rms_NORMAL.py` | 随机振动 RMS 与平均风速关系 |
+| `fig3_16_viv_timeseries.py` | 涡激振动时序展示 |
+| `fig3_16_normal_vib_wind_dir_turbulence.py` | 随机振动风向-紊流度分布 |
+| `fig3_17_normal_vib_marginal_fits.py` | 模态变量边缘分布拟合 |
+| `fig3_18_rwiv_timeseries.py` | 风雨振时序展示 |
 
 ---
 
@@ -303,8 +307,10 @@ lib.show()   # 交互式窗口，支持键盘切换图像
 | 文档 | 路径 | 说明 |
 |------|------|------|
 | 文档总索引 | [docs/README.md](docs/README.md) | 所有子模块文档入口 |
-| 识别结果后处理 | [docs/identifier/process_full_data/README.md](docs/identifier/process_full_data/README.md) | 特征字段说明、配置参考、输出结构 |
-| 深度学习识别器 | [docs/identifier/deeplearning_methods/README.md](docs/identifier/deeplearning_methods/README.md) | 推理接口与配置 |
+| 主流水线 | [docs/data_pipeline.md](docs/data_pipeline.md) | 三步流水线配置、数据流与内存管理 |
+| 深度学习识别器 | [docs/identifier/deeplearning_methods/README.md](docs/identifier/deeplearning_methods/README.md) | 推理接口、分层去噪与配置 |
+| 特征计算后处理 | [docs/identifier/feature_analysis/README.md](docs/identifier/feature_analysis/README.md) | 特征字段说明、配置参考、输出结构 |
+| 统计分析 | [docs/statistics/README.md](docs/statistics/README.md) | 边缘分布拟合、相关性分析、GMM 选优 |
 | 深度学习模块 | [docs/deep_learning_module/README.md](docs/deep_learning_module/README.md) | 模型架构与训练配置 |
 | 训练评估 | [docs/train_eval/README.md](docs/train_eval/README.md) | 训练流程与评估指标 |
 | 数据处理 | [docs/data_processer/README.md](docs/data_processer/README.md) | 预处理与数据集 |
@@ -322,15 +328,16 @@ lib.show()   # 交互式窗口，支持键盘切换图像
 | 提取主导模态阶数 | 10 |
 | 振动分类数 | 4 类 |
 | 识别模型 | ResCNN（val_acc=99.20%） |
+| 统计分析模态阶数 | 8（默认），面内 + 面外共 32 变量 |
 
 ---
 
 ## 开发工具
 
 - **语言**：Python 3.10+
-- **主要库**：numpy、scipy、torch、matplotlib、pydantic、tqdm
+- **主要库**：numpy、scipy、sklearn、torch、matplotlib、pydantic、tqdm
 - **配置管理**：YAML + Pydantic 配置类
-- **并行处理**：`multiprocessing.Pool`
+- **并行处理**：`multiprocessing.Pool`（特征计算）/ `ThreadPoolExecutor`（去噪）
 - **数据格式**：JSON（元数据与特征）、`.mat` / 二进制（原始振动）
 
 ---
@@ -339,9 +346,13 @@ lib.show()   # 交互式窗口，支持键盘切换图像
 
 | 日期 | 内容 |
 |------|------|
-| 2026-04-07 | 新增 `src/statistics/`：单变量拟合（`fitting.py`）、五种 Copula（`copula.py`）、多变量联合建模流水线（`multivariate.py`） |
+| 2026-04-21 | 第三章图像扩充：新增 fig3_5~6（边缘分布拟合）、fig3_8~9（RMS分布）、fig3_11（峭度）、fig3_12（主频-能量散点）、fig3_13~14（能量分布与累积）、fig3_15~18（风振关系与涡激/风雨振时序） |
+| 2026-04-07 | `identifier/process_full_data` 重命名为 `identifier/feature_analysis`，补充 `docs/identifier/feature_analysis/README.md` 与 `docs/statistics/README.md` |
+| 2026-04-07 | `statistics` 模块完善：`multivariate.py` 支持 GMM 多峰 AIC 选优；补充 `run.py` CLI 入口与配置系统 |
+| 2026-04-07 | `identifier/deeplearning_methods` 补充 `enrich_results_with_metadata.py`；分层去噪支持 YAML 硬编码频率阈值 |
+| 2026-04-07 | 新增 `docs/data_pipeline.md`：完整记录三步流水线配置、数据流与内存管理策略 |
 | 2026-04-07 | `identifier/process_full_data` 输出 metadata 补充 `source_result_path` 与 `wind_metadata_path` 完整溯源路径 |
-| 2026-04-07 | 新增第三章论文图像：`fig3_6_normal_vib_modal.py`（主频分布、主频-能量散点、主频能量分布） |
+| 2026-04-07 | 新增 `src/statistics/`：单变量拟合（`fitting.py`）、五种 Copula（`copula.py`）、多变量联合建模流水线（`multivariate.py`） |
 | 2026-04-06 | `identifier/process_full_data` 完成：多进程特征计算、按类别×传感器归档 |
 | 2026-04-02 | ResCNN 全量识别完成（val_acc=99.20%），识别结果归档 |
 | 2026-03-09 | 主流水线 `data_pipeline.py` 上线，统一编排三步处理流程 |

@@ -23,6 +23,7 @@ from collections import defaultdict
 from typing import Dict, List, Tuple, Optional
 
 from src.visualize_tools.utils import PlotLib
+from src.identifier.deeplearning_methods import FullDatasetRunner
 
 # 从统一配置模块导入图像配置（字体、尺寸、配色）
 from src.figure_paintings.figs_for_thesis.config import ENG_FONT, CN_FONT, FONT_SIZE, REC_FIG_SIZE, get_blue_color_map
@@ -46,138 +47,7 @@ _class_palette = get_blue_color_map(style="discrete", start_map_index=1, end_map
 CLASS_COLORS = {cls_id: _class_palette[cls_id] for cls_id in range(4)}
 
 
-def load_identification_result(result_path: str) -> Dict:
-    """
-    加载识别结果 JSON 文件。
-    
-    支持两种格式：
-    1. 新格式（含 sample_metadata）
-    2. 旧格式（不含 sample_metadata）- 将自动补全
-    
-    Parameters
-    ----------
-    result_path : str
-        识别结果 JSON 文件路径
-    
-    Returns
-    -------
-    Dict
-        包含 predictions、sample_metadata、by_file 等字段的字典
-    """
-    result_p = Path(result_path)
-    enriched_path = result_p.with_name(result_p.stem + "_enriched" + result_p.suffix)
-
-    # 优先加载已经补全过的文件，避免重复耗时补全
-    if enriched_path.exists():
-        logger.info(f"检测到已补全文件，直接加载：{enriched_path}")
-        with open(enriched_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-
-    logger.info(f"加载识别结果：{result_path}")
-    with open(result_path, "r", encoding="utf-8") as f:
-        result = json.load(f)
-
-    logger.info(f"  - 样本总数: {result['metadata']['num_samples']}")
-    logger.info(f"  - 类别数: {result['metadata']['num_classes']}")
-    logger.info(f"  - 生成时间: {result['metadata']['created_at']}")
-
-    # 检查是否需要补全 sample_metadata
-    if "sample_metadata" not in result or not result["sample_metadata"]:
-        logger.warning("⚠ 识别结果缺少 sample_metadata，将自动补全...")
-        result = _enrich_result_with_dataset_metadata(result)
-        with open(enriched_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-        logger.info(f"✓ 补全结果已保存至：{enriched_path}")
-
-    return result
-
-
-def _enrich_result_with_dataset_metadata(result: Dict) -> Dict:
-    """
-    从数据集补全识别结果中的 sample_metadata。
-    
-    Parameters
-    ----------
-    result : Dict
-        不含 sample_metadata 的识别结果
-    
-    Returns
-    -------
-    Dict
-        补全后的识别结果
-    """
-    from pathlib import Path
-    import yaml
-    from src.config.data_processer.datasets.StayCableVib2023Dataset.StayCableVib2023Config import (
-        StayCableVib2023Config,
-    )
-    from src.data_processer.datasets.data_factory import get_dataset
-    
-    logger.info("加载数据集以补全元数据...")
-    
-    # fig3_1_all_recognition_result.py 位于 src/figure_paintings/figs_for_thesis/Chapter3/
-    # 需要 5 个 parent 到达项目根目录
-    project_root = Path(__file__).parent.parent.parent.parent.parent
-    dataset_config_path = project_root / "config" / "train" / "datasets" / "total_staycable_vib.yaml"
-    
-    with open(dataset_config_path, "r", encoding="utf-8") as f:
-        dataset_config_dict = yaml.safe_load(f)
-    
-    dataset_config = StayCableVib2023Config(**dataset_config_dict)
-    dataset = get_dataset(dataset_config)
-    
-    logger.info(f"数据集加载完成（{len(dataset)} 个样本）")
-    
-    # 计算数据集指纹并验证
-    dataset_fingerprint = dataset._compute_fingerprint()
-    dataset_fingerprint_hash = dataset._fingerprint_hash(dataset_fingerprint)
-    logger.info(f"当前数据集指纹: {dataset_fingerprint_hash}")
-    
-    # 如果原结果中有指纹，验证是否匹配
-    original_hash = result.get("metadata", {}).get("dataset_fingerprint_hash")
-    if original_hash and original_hash != dataset_fingerprint_hash:
-        logger.warning(
-            f"⚠ 数据集指纹不匹配！\n"
-            f"  识别时指纹: {original_hash}\n"
-            f"  当前指纹:   {dataset_fingerprint_hash}\n"
-            f"  可能导致样本索引对应错误，请检查数据集配置是否变化"
-        )
-    
-    # 转换 predictions 键为整数
-    predictions = {int(k): int(v) for k, v in result["predictions"].items()}
-    
-    # 只为有预测结果的样本构建 sample_metadata
-    sample_metadata = {}
-    missing_count = 0
-    for idx in predictions.keys():
-        if idx < len(dataset._samples):
-            rec = dataset._samples[idx]
-            sample_metadata[str(idx)] = {
-                "cable_pair":          list(rec.cable_pair),
-                "timestamp":           list(rec.timestamp_key),
-                "window_idx":          rec.window_idx,
-                "inplane_sensor_id":   rec.inplane_meta.get("sensor_id"),
-                "outplane_sensor_id":  rec.outplane_meta.get("sensor_id"),
-                "inplane_file_path":   rec.inplane_meta.get("file_path"),
-                "outplane_file_path":  rec.outplane_meta.get("file_path"),
-                "missing_rate_in":     rec.inplane_meta.get("missing_rate"),
-                "missing_rate_out":    rec.outplane_meta.get("missing_rate"),
-                "has_wind":            rec.wind_meta is not None,
-            }
-        else:
-            logger.warning(f"样本索引 {idx} 超出数据集范围（数据集共 {len(dataset._samples)} 个样本）")
-            missing_count += 1
-    
-    if missing_count > 0:
-        logger.warning(f"共 {missing_count} 个样本索引超出范围")
-    
-    result["sample_metadata"] = sample_metadata
-    result["metadata"]["enrichment_note"] = "Sample metadata自动补全"
-    result["metadata"]["dataset_fingerprint_hash"] = dataset_fingerprint_hash
-    
-    logger.info(f"✓ 补全完成，共 {len(sample_metadata)} 个样本")
-    
-    return result
+load_identification_result = FullDatasetRunner.load_result
 
 
 def aggregate_by_month(

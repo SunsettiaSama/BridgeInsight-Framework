@@ -9,14 +9,14 @@ import os
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from collections import defaultdict
-
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
+
+_NORMAL_LABEL = 0
 
 
 def _make_extractor(enable_denoise: bool = False, freq_threshold=None):
@@ -39,21 +39,18 @@ class _InplaneWindowDataset(Dataset):
 
     def __init__(
         self,
-        records,                        # List[_SampleRecord]
+        records,
         window_size: int,
         enable_denoise: bool = False,
         original_indices: Optional[List[int]] = None,
         freq_threshold: Optional[float] = None,
-        extractor=None,                 # 可注入的 VICWindowExtractor，默认延迟构造
+        extractor=None,
     ):
-        self._records     = records
-        self._window_size = window_size
-        self._extractor   = (
-            extractor
-            if extractor is not None
-            else _make_extractor(enable_denoise=enable_denoise, freq_threshold=freq_threshold)
-        )
-        # 原始样本索引：用于在过滤后仍能映射回 dataset._samples 的位置
+        self._records        = records
+        self._window_size    = window_size
+        self._enable_denoise = enable_denoise
+        self._freq_threshold = freq_threshold
+        self._extractor      = None
         self._original_indices = (
             original_indices if original_indices is not None
             else list(range(len(records)))
@@ -63,12 +60,82 @@ class _InplaneWindowDataset(Dataset):
         return len(self._records)
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-        rec    = self._records[idx]
-        signal = self._extractor.extract_window(
-            rec.inplane_meta.get("file_path"),
+        if self._extractor is None:
+            self._extractor  = _make_extractor(
+                enable_denoise=self._enable_denoise,
+                freq_threshold=self._freq_threshold,
+            )
+            self._cache_path: Optional[str] = None
+            self._cache_data                = None
+
+        rec       = self._records[idx]
+        file_path = rec.inplane_meta.get("file_path")
+
+        if file_path != self._cache_path:
+            self._cache_data = self._extractor.load_file(file_path)
+            self._cache_path = file_path
+
+        signal = self._extractor.extract_window_from_data(
+            self._cache_data,
             rec.window_idx,
             self._window_size,
             metadata=rec.inplane_meta,
+            file_path=file_path,
+        )
+        return torch.from_numpy(signal).float(), self._original_indices[idx]
+
+
+class _OutplaneWindowDataset(Dataset):
+    """
+    仅加载面外振动窗口，用于 DL 推理阶段。
+
+    与 _InplaneWindowDataset 结构相同，仅读取 outplane_meta。
+    """
+
+    def __init__(
+        self,
+        records,
+        window_size: int,
+        enable_denoise: bool = False,
+        original_indices: Optional[List[int]] = None,
+        freq_threshold: Optional[float] = None,
+        extractor=None,
+    ):
+        self._records        = records
+        self._window_size    = window_size
+        self._enable_denoise = enable_denoise
+        self._freq_threshold = freq_threshold
+        self._extractor      = None
+        self._original_indices = (
+            original_indices if original_indices is not None
+            else list(range(len(records)))
+        )
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+        if self._extractor is None:
+            self._extractor  = _make_extractor(
+                enable_denoise=self._enable_denoise,
+                freq_threshold=self._freq_threshold,
+            )
+            self._cache_path: Optional[str] = None
+            self._cache_data                = None
+
+        rec       = self._records[idx]
+        file_path = rec.outplane_meta.get("file_path")
+
+        if file_path != self._cache_path:
+            self._cache_data = self._extractor.load_file(file_path)
+            self._cache_path = file_path
+
+        signal = self._extractor.extract_window_from_data(
+            self._cache_data,
+            rec.window_idx,
+            self._window_size,
+            metadata=rec.outplane_meta,
+            file_path=file_path,
         )
         return torch.from_numpy(signal).float(), self._original_indices[idx]
 
@@ -105,9 +172,11 @@ class FullDatasetRunner:
     # 主接口                                                                #
     # ------------------------------------------------------------------ #
 
-    def run(self, dataset) -> Dict[int, int]:
+    def run(
+        self, dataset
+    ) -> Tuple[Dict[int, int], Dict[int, int], Dict[int, int]]:
         """
-        对数据集所有样本执行推理。
+        对数据集所有样本同时执行面内、面外推理，并合并结果。
 
         Parameters
         ----------
@@ -115,29 +184,89 @@ class FullDatasetRunner:
 
         Returns
         -------
-        Dict[int, int]
-            ``{sample_idx: predicted_label}``，覆盖数据集全量样本。
+        Tuple[Dict[int, int], Dict[int, int], Dict[int, int]]
+            (merged_predictions, inplane_predictions, outplane_predictions)
+
+            - merged_predictions  : 任一方向非随机振动即取该特殊类别（面内优先）
+            - inplane_predictions : 面内识别结果 ``{sample_idx: label}``
+            - outplane_predictions: 面外识别结果 ``{sample_idx: label}``
         """
-        # 延迟构造 extractor，统一传入预验证与推理 Dataset，避免重复实例化
+        freq_threshold = getattr(dataset.config, "denoise_freq_threshold", None)
         extractor = _make_extractor(
             enable_denoise=dataset.config.enable_denoise,
-            freq_threshold=getattr(dataset.config, "denoise_freq_threshold", None),
+            freq_threshold=freq_threshold,
+        )
+        window_size    = dataset.config.window_size
+        enable_denoise = dataset.config.enable_denoise
+        n_orig         = len(dataset._samples)
+
+        # ---- 面内推理 ---------------------------------------------------- #
+        in_recs, in_idxs = self._validate_records(
+            dataset._samples, window_size, extractor=extractor
+        )
+        in_recs, in_idxs = self._sort_by_meta_path(in_recs, in_idxs, "inplane")
+
+        in_ds = _InplaneWindowDataset(
+            records          = in_recs,
+            window_size      = window_size,
+            enable_denoise   = enable_denoise,
+            original_indices = in_idxs,
+            freq_threshold   = freq_threshold,
+        )
+        logger.info(
+            f"[面内] 开始推理：{len(in_ds)} 个窗口"
+            f"（丢弃 {n_orig - len(in_ds)} 个不完整窗口）| "
+            f"batch={self.batch_size} | workers={self.num_workers} | "
+            f"device={self.identifier.device}"
+        )
+        inplane_predictions = self._run_inference_loop(in_ds, "DL面内识别")
+        del in_ds, in_recs, in_idxs
+
+        # ---- 面外推理 ---------------------------------------------------- #
+        out_recs, out_idxs = self._validate_outplane_records(
+            dataset._samples, window_size, extractor=extractor
+        )
+        out_recs, out_idxs = self._sort_by_meta_path(out_recs, out_idxs, "outplane")
+
+        out_ds = _OutplaneWindowDataset(
+            records          = out_recs,
+            window_size      = window_size,
+            enable_denoise   = enable_denoise,
+            original_indices = out_idxs,
+            freq_threshold   = freq_threshold,
+        )
+        logger.info(
+            f"[面外] 开始推理：{len(out_ds)} 个窗口"
+            f"（{n_orig - len(out_ds)} 个窗口无有效面外文件，视为随机振动）| "
+            f"batch={self.batch_size} | workers={self.num_workers} | "
+            f"device={self.identifier.device}"
+        )
+        outplane_predictions = self._run_inference_loop(out_ds, "DL面外识别")
+        del out_ds, out_recs, out_idxs
+        del extractor
+
+        # ---- 合并 --------------------------------------------------------- #
+        merged_predictions = self._merge_predictions(
+            inplane_predictions, outplane_predictions
         )
 
-        # 预验证：读取每个面内文件的真实长度，丢弃超出范围的不完整窗口
-        valid_records, valid_orig_indices = self._validate_records(
-            dataset._samples, dataset.config.window_size, extractor=extractor
-        )
+        import gc  # noqa: PLC0415
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
-        pred_ds = _InplaneWindowDataset(
-            records          = valid_records,
-            window_size      = dataset.config.window_size,
-            enable_denoise   = dataset.config.enable_denoise,
-            original_indices = valid_orig_indices,
-            freq_threshold   = getattr(dataset.config, "denoise_freq_threshold", None),
-            extractor        = extractor,
+        logger.info(
+            f"识别完成 | 面内={len(inplane_predictions)} | "
+            f"面外={len(outplane_predictions)} | 合并={len(merged_predictions)}"
         )
+        return merged_predictions, inplane_predictions, outplane_predictions
 
+    # ------------------------------------------------------------------ #
+    # 通用推理循环                                                          #
+    # ------------------------------------------------------------------ #
+
+    def _run_inference_loop(self, pred_ds: Dataset, desc: str) -> Dict[int, int]:
+        """对给定 Dataset 执行 DataLoader 推理循环，返回 {original_idx: label}。"""
         loader_kwargs: dict = dict(
             batch_size         = self.batch_size,
             shuffle            = False,
@@ -146,38 +275,66 @@ class FullDatasetRunner:
             persistent_workers = (self.num_workers > 0),
         )
         if self.num_workers > 0:
-            loader_kwargs["prefetch_factor"] = 2
+            loader_kwargs["prefetch_factor"] = 1
 
         loader      = DataLoader(pred_ds, **loader_kwargs)
         predictions: Dict[int, int] = {}
-        total       = len(pred_ds)
 
-        logger.info(
-            f"开始全量 DL 识别：{total} 个样本（原始 {len(dataset._samples)} 个，"
-            f"预验证丢弃 {len(dataset._samples) - total} 个不完整窗口）| "
-            f"batch={self.batch_size} | workers={self.num_workers} | "
-            f"device={self.identifier.device}"
-        )
-
-        with tqdm(total=total, desc="DL全量识别", unit="win") as pbar:
+        with tqdm(total=len(pred_ds), desc=desc, unit="win") as pbar:
             for signals, indices in loader:
                 preds = self.identifier.predict_batch(signals)
                 for pred, idx in zip(preds, indices.numpy()):
                     predictions[int(idx)] = int(pred)
                 pbar.update(len(indices))
-                del signals, preds   # 及时释放每批 tensor，防止显存/内存累积
+                del signals, preds
 
-        # 关闭 DataLoader worker 进程（persistent_workers 时不会自动退出）
         del loader
-        del pred_ds, valid_records, valid_orig_indices, extractor
-
-        import gc, torch  # noqa: PLC0415
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-        logger.info(f"识别完成，共 {len(predictions)} 条结果")
         return predictions
+
+    # ------------------------------------------------------------------ #
+    # 合并规则                                                              #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _merge_predictions(
+        inplane: Dict[int, int],
+        outplane: Dict[int, int],
+    ) -> Dict[int, int]:
+        """
+        合并面内、面外预测结果。
+
+        规则：任一方向非随机振动（label != _NORMAL_LABEL）则取该特殊类别；
+        若两者均为特殊振动，面内优先。
+        面外缺失的样本仅以面内结果为准；面内缺失的样本（极少）以面外为准。
+        """
+        all_indices = set(inplane.keys()) | set(outplane.keys())
+        merged: Dict[int, int] = {}
+        for idx in all_indices:
+            in_pred  = inplane.get(idx, _NORMAL_LABEL)
+            out_pred = outplane.get(idx, _NORMAL_LABEL)
+            if in_pred != _NORMAL_LABEL:
+                merged[idx] = in_pred
+            elif out_pred != _NORMAL_LABEL:
+                merged[idx] = out_pred
+            else:
+                merged[idx] = _NORMAL_LABEL
+        return merged
+
+    # ------------------------------------------------------------------ #
+    # 排序辅助                                                              #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _sort_by_meta_path(
+        records: list, orig_indices: List[int], direction: str
+    ) -> Tuple[list, List[int]]:
+        """按文件路径排序，使同文件窗口连续，提升单文件缓存命中率。"""
+        attr = f"{direction}_meta"
+        sorted_pairs = sorted(
+            zip(records, orig_indices),
+            key=lambda p: getattr(p[0], attr).get("file_path", ""),
+        )
+        return [p[0] for p in sorted_pairs], [p[1] for p in sorted_pairs]
 
     # ------------------------------------------------------------------ #
     # 预验证                                                                #
@@ -189,32 +346,21 @@ class FullDatasetRunner:
     ) -> Tuple[list, List[int]]:
         """
         读取每个面内 VIC 文件的真实数据长度，丢弃末尾不完整窗口。
-
-        对同一文件只读一次，通过字典缓存长度。
         返回 (有效记录列表, 对应的原始索引列表)。
-
-        Parameters
-        ----------
-        extractor : 可注入的 VICWindowExtractor 实例；为 None 时延迟构造（enable_denoise=False）。
         """
         if extractor is None:
             extractor = _make_extractor(enable_denoise=False)
         file_length_cache: Dict[str, int] = {}
 
-        unique_fps = [
-            rec.inplane_meta.get("file_path")
-            for rec in records
-            if rec.inplane_meta.get("file_path") and rec.inplane_meta.get("file_path") not in file_length_cache
-        ]
-        # 去重（保持首次出现顺序）
         seen: set = set()
         unique_fps_dedup = []
-        for fp in unique_fps:
-            if fp not in seen:
+        for rec in records:
+            fp = rec.inplane_meta.get("file_path")
+            if fp and fp not in seen:
                 seen.add(fp)
                 unique_fps_dedup.append(fp)
 
-        with tqdm(unique_fps_dedup, desc="预验证文件长度", unit="file") as pbar:
+        with tqdm(unique_fps_dedup, desc="[面内] 预验证文件长度", unit="file") as pbar:
             for fp in pbar:
                 vic_data = extractor.unpacker.VIC_DATA_Unpack(str(fp))
                 file_length_cache[fp] = len(vic_data)
@@ -236,7 +382,61 @@ class FullDatasetRunner:
 
         if skipped:
             logger.warning(
-                f"预验证：{skipped} 个窗口索引超出文件实际长度（window_size={window_size}），已跳过"
+                f"[面内] 预验证：{skipped} 个窗口超出文件实际长度（window_size={window_size}），已跳过"
+            )
+
+        return valid_records, valid_orig_indices
+
+    @staticmethod
+    def _validate_outplane_records(
+        records, window_size: int, extractor=None
+    ) -> Tuple[list, List[int]]:
+        """
+        读取每个面外 VIC 文件的真实数据长度，丢弃无效路径及末尾不完整窗口。
+        没有有效面外文件的记录直接忽略（推理时缺失值将视为随机振动）。
+        返回 (有效记录列表, 对应的原始索引列表)。
+        """
+        if extractor is None:
+            extractor = _make_extractor(enable_denoise=False)
+        file_length_cache: Dict[str, int] = {}
+
+        seen: set = set()
+        unique_fps_dedup = []
+        for rec in records:
+            fp = rec.outplane_meta.get("file_path") if rec.outplane_meta else None
+            if fp and fp not in seen:
+                seen.add(fp)
+                unique_fps_dedup.append(fp)
+
+        with tqdm(unique_fps_dedup, desc="[面外] 预验证文件长度", unit="file") as pbar:
+            for fp in pbar:
+                vic_data = extractor.unpacker.VIC_DATA_Unpack(str(fp))
+                file_length_cache[fp] = len(vic_data)
+                del vic_data
+
+        valid_records: list = []
+        valid_orig_indices: List[int] = []
+        skipped_invalid = 0
+        skipped_len     = 0
+
+        for orig_idx, rec in enumerate(records):
+            fp = rec.outplane_meta.get("file_path") if rec.outplane_meta else None
+            if not fp:
+                skipped_invalid += 1
+                continue
+            actual_len = file_length_cache.get(fp, 0)
+            end_idx    = (rec.window_idx + 1) * window_size
+            if actual_len > 0 and end_idx <= actual_len:
+                valid_records.append(rec)
+                valid_orig_indices.append(orig_idx)
+            else:
+                skipped_len += 1
+
+        if skipped_invalid:
+            logger.info(f"[面外] {skipped_invalid} 条记录无有效面外文件路径，将视为随机振动")
+        if skipped_len:
+            logger.warning(
+                f"[面外] {skipped_len} 个窗口超出文件实际长度（window_size={window_size}），已跳过"
             )
 
         return valid_records, valid_orig_indices
@@ -288,69 +488,47 @@ class FullDatasetRunner:
         predictions: Dict[int, int],
         dataset,
         model_info: str = "",
+        inplane_predictions: Optional[Dict[int, int]] = None,
+        outplane_predictions: Optional[Dict[int, int]] = None,
     ) -> None:
         """
         将识别结果持久化为 JSON。
 
         JSON 结构
         ---------
-        .. code-block:: json
-
-            {
-              "metadata": {
-                "created_at": "...",
-                "num_samples": 12345,
-                "num_classes": 4,
-                "model_info":  "..."
-              },
-              "predictions": {"0": 1, "1": 0, ...},
-              "sample_metadata": {
-                "0": {
-                  "cable_pair": ["sensor_in", "sensor_out"],
-                  "timestamp": [month, day, hour],
-                  "window_idx": 0,
-                  "inplane_sensor_id": "...",
-                  "outplane_sensor_id": "...",
-                  "missing_rate_in": 0.01,
-                  "missing_rate_out": 0.02,
-                  "has_wind": true
-                },
-                ...
-              },
-              "by_file": {
-                "ST-VIC-C34-101-01_9_1_0": [0, 0, 1, 0, ...],
-                ...
-              }
-            }
-
-        - ``predictions``       : 平铺格式，键为样本索引字符串，值为预测类别。
-        - ``sample_metadata``   : 每个样本的完整元数据（用于追溯和统计）。
-        - ``by_file``           : 按（传感器, 月, 日, 时）分组的窗口预测列表，
-                                  列表下标即 window_idx。
+        - ``predictions``          : 合并后的最终预测（任一方向特殊振动即取之）。
+        - ``predictions_inplane``  : 仅面内识别结果（可选）。
+        - ``predictions_outplane`` : 仅面外识别结果（可选）。
+        - ``sample_metadata``      : 每个样本的完整元数据（用于追溯和统计）。
+        - ``by_file``              : 按（传感器, 月, 日, 时）分组的合并预测列表。
         """
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
 
-        # 只为有预测结果的样本构建元数据（而非全量 dataset._samples）
+        all_indices = set(predictions.keys())
+        if inplane_predictions:
+            all_indices |= set(inplane_predictions.keys())
+        if outplane_predictions:
+            all_indices |= set(outplane_predictions.keys())
+
         sample_metadata = {}
-        for idx in predictions.keys():
+        for idx in all_indices:
             if idx < len(dataset._samples):
                 rec = dataset._samples[idx]
                 sample_metadata[str(idx)] = {
                     "cable_pair":          list(rec.cable_pair),
-                    "timestamp":           list(rec.timestamp_key),  # (month, day, hour)
+                    "timestamp":           list(rec.timestamp_key),
                     "window_idx":          rec.window_idx,
                     "inplane_sensor_id":   rec.inplane_meta.get("sensor_id"),
-                    "outplane_sensor_id":  rec.outplane_meta.get("sensor_id"),
+                    "outplane_sensor_id":  rec.outplane_meta.get("sensor_id") if rec.outplane_meta else None,
                     "inplane_file_path":   rec.inplane_meta.get("file_path"),
-                    "outplane_file_path":  rec.outplane_meta.get("file_path"),
+                    "outplane_file_path":  rec.outplane_meta.get("file_path") if rec.outplane_meta else None,
                     "missing_rate_in":     rec.inplane_meta.get("missing_rate"),
-                    "missing_rate_out":    rec.outplane_meta.get("missing_rate"),
+                    "missing_rate_out":    rec.outplane_meta.get("missing_rate") if rec.outplane_meta else None,
                     "has_wind":            rec.wind_meta is not None,
                 }
             else:
                 logger.warning(f"样本索引 {idx} 超出数据集范围（数据集共 {len(dataset._samples)} 个样本）")
 
-        # 计算数据集指纹（用于后续验证一致性）
         dataset_fingerprint = dataset._compute_fingerprint()
 
         payload = {
@@ -361,15 +539,20 @@ class FullDatasetRunner:
                 "model_info":  model_info,
                 "dataset_fingerprint_hash": dataset._fingerprint_hash(dataset_fingerprint),
             },
-            "predictions": {str(k): int(v) for k, v in predictions.items()},
-            "sample_metadata": sample_metadata,
-            "by_file":      FullDatasetRunner.to_file_indexed(predictions, dataset),
+            "predictions":          {str(k): int(v) for k, v in predictions.items()},
+            "predictions_inplane":  {str(k): int(v) for k, v in (inplane_predictions or {}).items()},
+            "predictions_outplane": {str(k): int(v) for k, v in (outplane_predictions or {}).items()},
+            "sample_metadata":      sample_metadata,
+            "by_file":              FullDatasetRunner.to_file_indexed(predictions, dataset),
         }
 
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
 
-        logger.info(f"识别结果已保存：{path}（{len(predictions)} 条）")
+        logger.info(
+            f"识别结果已保存：{path} | 合并={len(predictions)} | "
+            f"面内={len(inplane_predictions or {})} | 面外={len(outplane_predictions or {})}"
+        )
 
 
     @staticmethod
@@ -392,3 +575,112 @@ class FullDatasetRunner:
             f"生成时间={meta.get('created_at', 'unknown')}"
         )
         return predictions
+
+    @staticmethod
+    def load_result(result_path: str) -> Dict:
+        """
+        加载完整识别结果 JSON，自动补全缺失的 sample_metadata。
+
+        若同目录存在 ``<stem>_enriched<suffix>`` 文件则优先加载，
+        否则在原文件基础上补全后写入 enriched 文件供后续复用。
+
+        Parameters
+        ----------
+        result_path : str
+            识别结果 JSON 路径（由 save_predictions() 生成）
+
+        Returns
+        -------
+        Dict
+            含 predictions / sample_metadata / by_file / metadata 等字段的字典
+        """
+        from pathlib import Path as _Path  # noqa: PLC0415
+
+        result_p     = _Path(result_path)
+        enriched_path = result_p.with_name(result_p.stem + "_enriched" + result_p.suffix)
+
+        if enriched_path.exists():
+            logger.info(f"检测到已补全文件，直接加载：{enriched_path}")
+            with open(enriched_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+
+        logger.info(f"加载识别结果：{result_path}")
+        with open(result_path, "r", encoding="utf-8") as f:
+            result = json.load(f)
+
+        logger.info(
+            f"  - 样本总数: {result['metadata']['num_samples']} | "
+            f"类别数: {result['metadata']['num_classes']} | "
+            f"生成时间: {result['metadata']['created_at']}"
+        )
+
+        if "sample_metadata" not in result or not result["sample_metadata"]:
+            logger.warning("识别结果缺少 sample_metadata，将自动补全...")
+            result = FullDatasetRunner._enrich_with_dataset_metadata(result)
+            with open(enriched_path, "w", encoding="utf-8") as f:
+                json.dump(result, f, ensure_ascii=False, indent=2)
+            logger.info(f"补全结果已保存至：{enriched_path}")
+
+        return result
+
+    @staticmethod
+    def _enrich_with_dataset_metadata(result: Dict) -> Dict:
+        """
+        从当前数据集配置为识别结果补全 sample_metadata 字段。
+
+        仅在识别结果不含 sample_metadata 时调用（向后兼容旧格式）。
+        """
+        import yaml  # noqa: PLC0415
+        from pathlib import Path as _Path  # noqa: PLC0415
+        from src.config.data_processer.datasets.StayCableVib2023Dataset.StayCableVib2023Config import (  # noqa: PLC0415
+            StayCableVib2023Config,
+        )
+        from src.data_processer.datasets.data_factory import get_dataset  # noqa: PLC0415
+
+        project_root        = _Path(__file__).parent.parent.parent.parent
+        dataset_config_path = project_root / "config" / "train" / "datasets" / "total_staycable_vib.yaml"
+
+        with open(dataset_config_path, "r", encoding="utf-8") as f:
+            dataset_config_dict = yaml.safe_load(f)
+
+        dataset = get_dataset(StayCableVib2023Config(**dataset_config_dict))
+        logger.info(f"数据集加载完成（{len(dataset)} 个样本）")
+
+        fp_hash = dataset._fingerprint_hash(dataset._compute_fingerprint())
+        original_hash = result.get("metadata", {}).get("dataset_fingerprint_hash")
+        if original_hash and original_hash != fp_hash:
+            logger.warning(
+                f"数据集指纹不匹配！识别时：{original_hash}  当前：{fp_hash}\n"
+                f"可能导致样本索引对应错误，请检查数据集配置是否变化。"
+            )
+
+        predictions     = {int(k): int(v) for k, v in result["predictions"].items()}
+        sample_metadata = {}
+        missing         = 0
+        for idx in predictions:
+            if idx < len(dataset._samples):
+                rec = dataset._samples[idx]
+                sample_metadata[str(idx)] = {
+                    "cable_pair":         list(rec.cable_pair),
+                    "timestamp":          list(rec.timestamp_key),
+                    "window_idx":         rec.window_idx,
+                    "inplane_sensor_id":  rec.inplane_meta.get("sensor_id"),
+                    "outplane_sensor_id": rec.outplane_meta.get("sensor_id"),
+                    "inplane_file_path":  rec.inplane_meta.get("file_path"),
+                    "outplane_file_path": rec.outplane_meta.get("file_path"),
+                    "missing_rate_in":    rec.inplane_meta.get("missing_rate"),
+                    "missing_rate_out":   rec.outplane_meta.get("missing_rate"),
+                    "has_wind":           rec.wind_meta is not None,
+                }
+            else:
+                logger.warning(f"样本索引 {idx} 超出数据集范围（共 {len(dataset._samples)} 个）")
+                missing += 1
+
+        if missing:
+            logger.warning(f"共 {missing} 个样本索引超出范围")
+
+        result["sample_metadata"]                          = sample_metadata
+        result["metadata"]["enrichment_note"]              = "sample_metadata 自动补全"
+        result["metadata"]["dataset_fingerprint_hash"]     = fp_hash
+        logger.info(f"补全完成，共 {len(sample_metadata)} 个样本")
+        return result

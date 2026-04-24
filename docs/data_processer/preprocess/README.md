@@ -174,7 +174,23 @@ for pair in data_pairs:
 
 ---
 
-### 3. `vib_metadata2data.py` - 振动数据解析器
+### 3. `get_data_vib.py` - VICWindowExtractor
+
+**用途**: 从二进制 VIC 文件中按窗口索引提取振动信号，支持可选的分层小波去噪。
+
+#### 核心方法
+
+| 方法 | 说明 |
+|------|------|
+| `load_file(path)` | 读取整个 VIC 文件，返回原始 `np.ndarray`；调用方负责持有与释放 |
+| `extract_window_from_data(vic_data, idx, size, ...)` | 从已加载数组切片 + 去噪，无 I/O；线程安全，可在 `ThreadPoolExecutor` 中并行调用 |
+| `extract_window(path, idx, size, ...)` | 原子接口，内部依次调用上面两个方法；适合单窗口场景 |
+
+`load_file` + `extract_window_from_data` 的分离设计适用于批量处理同一文件多个窗口的场景（例如全量 DL 推理），可将每个文件的读盘次数从 O(窗口数) 降为 O(1)。
+
+---
+
+### 4. `vib_metadata2data.py` - 振动数据解析器
 
 **用途**: 将振动元数据转换为实际的振动数据
 
@@ -602,8 +618,8 @@ parser = MetadataParser(validate_metadata=False)  # 默认值
 
 ## 版本信息
 
-- **最后更新**: 2026年3月12日
-- **模块版本**: 2.0
+- **最后更新**: 2026年4月7日
+- **模块版本**: 2.1
 - **核心改进**:
   - ✅ 统一的parse_data()接口
   - ✅ 元数据自动验证和过滤
@@ -612,6 +628,7 @@ parser = MetadataParser(validate_metadata=False)  # 默认值
   - ✅ 标注数据集构建
   - ✅ PyTorch格式导出
   - ✅ 灵活的日志控制
+  - ✅ VICWindowExtractor 新增 `load_file` / `extract_window_from_data` 接口，支持文件级缓存与线程并行去噪
 
 ---
 

@@ -12,13 +12,13 @@ from src.config.data_processer.preprocess.vibration_io_process.config import *
 
 
 # ==================== 字号配置 ====================
-FONT_SIZE = 22
-LABEL_FONT_SIZE = 22
+FONT_SIZE = 24
+LABEL_FONT_SIZE = 24
 REC_FIG_SIZE = (12, 8) # 矩形配置，Word图像大小为12 cm
 SQUARE_FIG_SIZE = (10, 8) # 正方形配置，Word图像大小为7.5cm
 
 REC_FONT_SIZE = 24
-SQUARE_FONT_SIZE = 28
+SQUARE_FONT_SIZE = 30
 
 
 
@@ -49,6 +49,10 @@ NORMAL_EDGE_COLOR = '#A0A0A0'
 # 涡激共振（VIV）颜色
 VIV_VIB_COLOR = '#606060'
 VIV_EDGE_COLOR = '#303030'
+
+# VIV 统计图面内/面外通道颜色（高对比度）
+VIV_INPLANE_COLOR  = '#8074C8'   # 深紫（冷色）
+VIV_OUTPLANE_COLOR = '#E3625D'   # 珊瑚红（暖色）
 
 # 阈值线颜色
 THRESHOLD_COLOR = '#202020'   # 深灰色

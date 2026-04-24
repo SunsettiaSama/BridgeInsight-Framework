@@ -1,3 +1,4 @@
+import io
 import tkinter as tk
 from tkinter import ttk, filedialog
 import matplotlib.pyplot as plt
@@ -8,8 +9,10 @@ import matplotlib.pyplot as plt
 from scipy import signal
 import os
 import re
+import yaml
 import pandas as pd
 import matplotlib.animation as animation
+from pathlib import Path
 from tkinter import Tk, Label, Button, Entry, StringVar, filedialog, messagebox
 from PIL import Image, ImageTk
 
@@ -17,6 +20,9 @@ GLOBAL_FONT_SIZE = 10
 plt.style.use('default')
 plt.rcParams['font.sans-serif'] = ['Times New Roman']
 plt.rcParams['font.size'] = GLOBAL_FONT_SIZE
+
+_project_root = Path(__file__).parent.parent.parent
+_plotlib_cfg_path = _project_root / "config" / "visualize_tools" / "plotlib.yaml"
 
 
 
@@ -55,21 +61,28 @@ class ChartApp:
     root.mainloop()
     
     """
-    def __init__(self, root, figs):
+    _SIDE_PANEL_W = 280   # 右侧辅助缩略图面板宽度（像素）
+
+    def __init__(self, root, figs, cfg=None):
+        self._cfg = cfg or {}
         self.root = root
         self.figs = figs
         self.current_fig_index = 0
+        self._thumb_refs = []   # 防止 ImageTk 对象被 GC 回收
 
-        # 创建一个Frame来放置图表
+        fig_cfg = self._cfg.get('figure', {})
+        if fig_cfg.get('apply_tight_layout', True):
+            pad = fig_cfg.get('tight_layout_pad', 1.2)
+            for item in self.figs:
+                main_fig, _ = self._unpack_item(item)
+                if not any(hasattr(ax, 'get_zlim') for ax in main_fig.get_axes()):
+                    main_fig.tight_layout(pad=pad)
+
         self.chart_frame = tk.Frame(root)
         self.chart_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        # 创建一个FigureCanvasTkAgg对象
-        self.canvas = FigureCanvasTkAgg(self.figs[self.current_fig_index], master=self.chart_frame)
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self._build_chart_area(self.current_fig_index)
 
-        # 创建按钮
         self.prev_button = ttk.Button(root, text="Previous", command=self.show_previous)
         self.prev_button.pack(side=tk.LEFT, padx=5, pady=5)
 
@@ -78,6 +91,59 @@ class ChartApp:
 
         self.save_button = ttk.Button(root, text="Save", command=self.save_current_chart)
         self.save_button.pack(side=tk.BOTTOM, padx=5, pady=5)
+
+        self.root.after(0, self._apply_window_position)
+
+    # ------------------------------------------------------------------
+    # 元组解包：(main_fig, aux) → (main_fig, [aux_fig, ...])
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _unpack_item(item):
+        if isinstance(item, tuple):
+            main_fig, aux = item
+            aux_figs = list(aux) if isinstance(aux, (list, tuple)) else [aux]
+            return main_fig, aux_figs
+        return item, []
+
+    # ------------------------------------------------------------------
+    # 构建主图区（左）+ 辅助缩略图区（右，仅当有 aux 时出现）
+    # ------------------------------------------------------------------
+    def _build_chart_area(self, index):
+        self._thumb_refs = []
+        for w in self.chart_frame.winfo_children():
+            w.destroy()
+
+        main_fig, aux_figs = self._unpack_item(self.figs[index])
+
+        # 右侧面板宽度 = 主图像素宽度，实现 1:1 布局。
+        # 必须先 pack 固定宽度的侧边栏，expand=True 的主区域最后 pack。
+        if aux_figs:
+            panel_w = int(main_fig.get_figwidth() * main_fig.dpi)
+            right = tk.Frame(self.chart_frame, width=panel_w, bg='#f0f0f0')
+            right.pack(side=tk.RIGHT, fill=tk.Y)
+            right.pack_propagate(False)
+            self._render_aux_thumbnails(right, aux_figs, panel_w)
+
+        left = tk.Frame(self.chart_frame)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.canvas = FigureCanvasTkAgg(main_fig, master=left)
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def _render_aux_thumbnails(self, parent, aux_figs, panel_w=None):
+        w = panel_w or self._SIDE_PANEL_W
+        for fig in aux_figs:
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=120, bbox_inches='tight')
+            buf.seek(0)
+            img = Image.open(buf).convert('RGB')
+            orig_w, orig_h = img.size
+            new_h = int(orig_h * w / orig_w)
+            img = img.resize((w, new_h), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            self._thumb_refs.append(photo)   # 防 GC
+            tk.Label(parent, image=photo, bg='#f0f0f0').pack(padx=4, pady=6)
 
     def show_previous(self):
         self.current_fig_index = (self.current_fig_index - 1) % len(self.figs)
@@ -88,18 +154,47 @@ class ChartApp:
         self.update_chart()
 
     def update_chart(self):
-        # 清除当前画布
-        self.canvas.get_tk_widget().destroy()
-        # 重新创建画布
-        self.canvas = FigureCanvasTkAgg(self.figs[self.current_fig_index], master=self.chart_frame)
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self._build_chart_area(self.current_fig_index)
 
     def save_current_chart(self):
         file_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG files", "*.png"), ("All files", "*.*")])
         if file_path:
-            self.figs[self.current_fig_index].savefig(file_path)
+            main_fig, _ = self._unpack_item(self.figs[self.current_fig_index])
+            main_fig.savefig(file_path)
             print(f"Chart saved to {file_path}")
+
+    def _apply_window_position(self):
+        win_cfg = self._cfg.get('window', {})
+        position = win_cfg.get('position')
+        if not position:
+            return
+
+        margin = int(win_cfg.get('margin') or 40)
+        fixed_w = win_cfg.get('width')
+        fixed_h = win_cfg.get('height')
+
+        self.root.update_idletasks()
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        win_w = int(fixed_w) if fixed_w else self.root.winfo_width()
+        win_h = int(fixed_h) if fixed_h else self.root.winfo_height()
+
+        if position == 'right':
+            x = screen_w - win_w - margin
+            y = margin
+        elif position == 'left':
+            x = margin
+            y = margin
+        elif position == 'center':
+            x = (screen_w - win_w) // 2
+            y = (screen_h - win_h) // 2
+        else:
+            return
+
+        if fixed_w or fixed_h:
+            self.root.geometry(f"{win_w}x{win_h}+{x}+{y}")
+        else:
+            self.root.geometry(f"+{x}+{y}")
 
 
 # ===============================================画图模块=========================================================
@@ -107,7 +202,13 @@ class PlotLib():
 
     def __init__(self):
         self.figs = []
-        return 
+        self._cfg = self._load_cfg()
+
+    @staticmethod
+    def _load_cfg() -> dict:
+        if _plotlib_cfg_path.exists():
+            return yaml.safe_load(_plotlib_cfg_path.read_text(encoding='utf-8')) or {}
+        return {}
 
     def plot(self, y, x = None, title = None, 
              xlabel = None, 
@@ -1015,12 +1116,41 @@ class PlotLib():
         return fig, axes
 
     def show(self):
-        '''
-        显示所有记录的图像
-        
-        '''
-        tk = Tk()
-        app = ChartApp(tk, self.figs)
-        tk.mainloop()
-        return 
+        root = Tk()
+        app = ChartApp(root, self.figs, cfg=self._cfg)
+        root.mainloop()
+
+    def show_web(
+        self,
+        page: str = "default",
+        cols: int = 3,
+        port: int = 5678,
+        dpi: int = 150,
+        titles: list = None,
+        blocking: bool = True,
+    ):
+        """
+        将 self.figs 按 slot 顺序推送到 VibDash Web 仪表盘。
+
+        参数
+        ----
+        page     : 页面名称（每次调用对应一页）
+        cols     : 九宫格列数
+        port     : 服务端口（默认 5678）
+        dpi      : 图像渲染分辨率
+        titles   : 每个 slot 的标题列表（None 则自动编号）
+        blocking : True 时阻塞进程直到 Ctrl+C（默认 True）
+        """
+        from src.visualize_tools.web_dashboard import _get_or_start_dashboard
+
+        dash = _get_or_start_dashboard(port=port, cols=cols)
+
+        for i, fig in enumerate(self.figs):
+            title = titles[i] if (titles and i < len(titles)) else f'slot {i}'
+            # 首个 slot 携带 page_cols，后续 slot 传 None（服务端首次创建时已记录）
+            dash.push(fig, page=page, slot=i, title=title, dpi=dpi,
+                      page_cols=cols if i == 0 else None)
+
+        if blocking:
+            dash.wait()
     

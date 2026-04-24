@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 DATASET_CONFIG_PATH = r"F:\Research\Vibration Characteristics In Cable Vibration\config\train\datasets\annotation_dataset.yaml"
 MODEL_CONFIG_PATH   = r"F:\Research\Vibration Characteristics In Cable Vibration\config\train\models\res_cnn.yaml"
-MODEL_SAVE_DIR      = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\res_cnn"
-SEARCH_RESULT_PATH  = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\search_best_hyperparams\mlp_search_result.json"
+MODEL_SAVE_DIR      = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\res_cnn\no_denoise"
+SEARCH_RESULT_PATH  = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\search_best_hyperparams/mlp_search_result.json"
 
 
 def load_dataset_config(config_path: str) -> AnnotationDatasetConfig:

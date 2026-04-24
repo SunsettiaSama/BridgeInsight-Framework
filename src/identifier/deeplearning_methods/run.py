@@ -84,8 +84,11 @@ def main():
         num_workers=4,
     )
 
-    predictions = runner.run(dataset)
-    logger.info(f"识别完成，共 {len(predictions)} 条预测结果")
+    merged_predictions, inplane_predictions, outplane_predictions = runner.run(dataset)
+    logger.info(
+        f"识别完成 | 合并={len(merged_predictions)} | "
+        f"面内={len(inplane_predictions)} | 面外={len(outplane_predictions)}"
+    )
 
     # -------------------------------------------------------------------------
     # 5. 保存识别结果
@@ -101,9 +104,11 @@ def main():
 
     FullDatasetRunner.save_predictions(
         path=str(output_path),
-        predictions=predictions,
+        predictions=merged_predictions,
         dataset=dataset,
         model_info=model_info,
+        inplane_predictions=inplane_predictions,
+        outplane_predictions=outplane_predictions,
     )
 
     logger.info("=" * 80)

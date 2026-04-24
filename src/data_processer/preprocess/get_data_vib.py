@@ -17,6 +17,10 @@ from src.config.data_processer.preprocess.vib_metadata2data_config import (
     STRATIFIED_DENOISE_ENABLED,
     DOMINANT_FREQ_PERCENTILE,
     DOMINANT_FREQ_RESULT_PATH,
+    RMS_THRESHOLD_ENABLED,
+    RMS_THRESHOLD,
+    RMS_THRESHOLD_PERCENTILE,
+    RMS_THRESHOLD_RESULT_PATH,
     WAVELET_NAME,
     WAVELET_DECOMPOSITION_LEVEL,
     THRESHOLD_TYPE,
@@ -65,6 +69,7 @@ class VICWindowExtractor:
         enable_denoise: bool = False,
         enable_extreme_window: bool = False,
         freq_threshold: Optional[float] = None,
+        rms_threshold: Optional[float] = None,
     ):
         """
         初始化VIC窗口提取器
@@ -76,92 +81,150 @@ class VICWindowExtractor:
                 仅在 enable_denoise=True 且 STRATIFIED_DENOISE_ENABLED=True 时生效。
                 None 时由 _get_freq_threshold() 从统计文件读取 95% 分位数；
                 仍不可用时降级为全窗口去噪。
+            rms_threshold: 分层去噪 RMS 阈值（与 freq_threshold 独立）。
+                仅在 enable_denoise=True 且 RMS_THRESHOLD_ENABLED=True 时生效。
+                None 时优先使用 RMS_THRESHOLD 配置常量；仍为 None 则从统计文件
+                读取 RMS_THRESHOLD_PERCENTILE 分位数；均不可用时跳过 RMS 判断。
         """
         from src.data_processer.io_unpacker import UNPACK
         self.unpacker = UNPACK(init_path=False)
         self.enable_denoise = enable_denoise
         self.enable_extreme_window = enable_extreme_window
         self.freq_threshold = freq_threshold
+        self.rms_threshold = rms_threshold
     
+    def load_file(self, file_path: str) -> np.ndarray:
+        """
+        读取整个 VIC 文件，返回原始数组。
+
+        调用方可缓存返回值，避免对同一文件的重复 I/O。
+        """
+        vic_data = self.unpacker.VIC_DATA_Unpack(str(file_path))
+        if len(vic_data) == 0:
+            raise RuntimeError(
+                f"VIC_DATA_Unpack 返回空数组，内部异常已被静默捕获，"
+                f"请检查文件完整性或内存是否充足：{file_path}"
+            )
+        return vic_data
+
+    def extract_window_from_data(
+        self,
+        vic_data: np.ndarray,
+        window_index: int,
+        window_size: Optional[int] = None,
+        metadata: Optional[Dict] = None,
+        file_path: Optional[str] = None,
+    ) -> Optional[np.ndarray]:
+        """
+        从已加载的 vic_data 中提取单个窗口。
+
+        供批量处理时使用：调用方先通过 load_file() 读取文件，
+        随后对同一文件的多个窗口反复调用本方法，无需重复读盘。
+        """
+        if window_size is None:
+            window_size = self.WINDOW_SIZE
+
+        start_idx = window_index * window_size
+        end_idx   = start_idx + window_size
+
+        if start_idx < 0:
+            raise ValueError(f"窗口起始索引不能为负: {start_idx}")
+        if end_idx > len(vic_data):
+            logger.debug(
+                "窗口超出数据范围，已跳过: window_index=%d, 需要[%d, %d], 数据长度=%d%s",
+                window_index, start_idx, end_idx, len(vic_data),
+                f"，文件：{file_path}" if file_path else "",
+            )
+            return None
+
+        window_data = np.array(vic_data[start_idx:end_idx])
+
+        if self.enable_denoise:
+            window_data = self._apply_denoise(window_data, window_index, metadata)
+
+        if window_data.ndim == 1:
+            window_data = window_data.reshape(-1, 1)
+
+        return window_data.astype(np.float32)
+
     def extract_window(
         self,
         file_path: str,
         window_index: int,
         window_size: Optional[int] = None,
         metadata: Optional[Dict] = None
-    ) -> np.ndarray:
+    ) -> Optional[np.ndarray]:
         """
         从VIC文件中提取单个窗口
-        
+
         📌 【关键约束】每个样本 = 单个独立窗口，长度固定为 window_size，NO拼接
-        
-        参数:
-            file_path: VIC文件路径
-            window_index: 窗口号（从0开始）
-            window_size: 窗口大小（采样点数），默认3000
-            metadata: 元数据字典，包含extreme_freq_indices和其他信息
-        
-        返回:
-            窗口数据，shape: (window_size, 1) 的2D数组
-        
-        异常:
-            ValueError: 窗口超出范围或参数错误
+
+        注意：此方法每次调用都会读盘。批量处理同一文件的多个窗口时，
+        应改用 load_file() + extract_window_from_data() 组合以避免重复 I/O。
         """
-        if window_size is None:
-            window_size = self.WINDOW_SIZE
-        
-        # 1. 加载完整VIC数据
-        vic_data = self.unpacker.VIC_DATA_Unpack(str(file_path))
-        
-        # 2. 计算窗口索引范围
-        start_idx = window_index * window_size
-        end_idx = start_idx + window_size
-        
-        # 3. 边界检查
-        if end_idx > len(vic_data):
-            raise ValueError(
-                f"窗口超出数据范围: window_index={window_index}, "
-                f"需要索引范围[{start_idx}, {end_idx}], "
-                f"但数据长度={len(vic_data)}"
-            )
-        
-        if start_idx < 0:
-            raise ValueError(f"窗口起始索引不能为负: {start_idx}")
-        
-        # 4. 提取窗口（显式拷贝，随即释放整文件数组）
-        window_data = np.array(vic_data[start_idx:end_idx])
+        vic_data = self.load_file(file_path)
+        result   = self.extract_window_from_data(
+            vic_data, window_index, window_size, metadata, file_path=file_path
+        )
         del vic_data
-        
-        # 5. 应用去噪（可选）
-        # metadata 为 None 时 _apply_denoise 内部自动走实时 FFT fallback
-        if self.enable_denoise:
-            window_data = self._apply_denoise(window_data, window_index, metadata)
-        
-        # 6. 转为2D格式 (seq_len, 1)
-        if window_data.ndim == 1:
-            window_data = window_data.reshape(-1, 1)
-        
-        return window_data.astype(np.float32)
+        return result
     
+    # 哨兵对象：区分"尚未计算"与"计算后确实为 None"
+    _THRESHOLD_UNSET = object()
+
     def _get_freq_threshold(self) -> Optional[float]:
         """
-        获取分层去噪频率阈值（Hz）。
+        获取分层去噪频率阈值（Hz），结果在实例层面缓存，只读统计文件一次。
 
         优先级：
         1. self.freq_threshold 硬编码值（来自 YAML denoise_freq_threshold）
-        2. 从主频统计文件读取全量数据 95% 分位数
+        2. 从主频统计文件读取全量数据 95% 分位数（首次调用后缓存）
         3. 两者均不可用 → 返回 None
         """
         if self.freq_threshold is not None:
             return self.freq_threshold
+        # 检查缓存（多线程环境下的良性竞争：最坏情况是重复计算一次，结果相同）
+        cached = getattr(self, "_cached_stat_threshold", self._THRESHOLD_UNSET)
+        if cached is not self._THRESHOLD_UNSET:
+            return cached
         try:
             freq_stats = _load_dominant_freq_statistics()
-            return _calculate_freq_threshold(freq_stats)
+            result = _calculate_freq_threshold(freq_stats)
         except Exception as e:
             logger.warning(
                 f"无法从统计文件获取主频阈值，分层去噪将退化为全窗口去噪: {e}"
             )
-            return None
+            result = None
+        self._cached_stat_threshold = result
+        return result
+
+    def _get_rms_threshold(self) -> Optional[float]:
+        """
+        获取分层去噪 RMS 阈值，结果在实例层面缓存，只读统计文件一次。
+
+        优先级：
+        1. self.rms_threshold 实例硬编码值（构造参数传入）
+        2. RMS_THRESHOLD 配置常量（vib_metadata2data_config.py）
+        3. 从 RMS_THRESHOLD_RESULT_PATH 统计文件读取 RMS_THRESHOLD_PERCENTILE 分位数
+        4. 均不可用 → 返回 None（RMS 判断被跳过）
+        """
+        if self.rms_threshold is not None:
+            return self.rms_threshold
+        if RMS_THRESHOLD is not None:
+            return float(RMS_THRESHOLD)
+        cached = getattr(self, "_cached_rms_threshold", self._THRESHOLD_UNSET)
+        if cached is not self._THRESHOLD_UNSET:
+            return cached
+        try:
+            rms_stats = _load_rms_statistics()
+            result = _calculate_rms_threshold(rms_stats)
+        except Exception as e:
+            logger.warning(
+                "无法从统计文件获取 RMS 阈值，RMS 分层判断将被跳过: %s", e
+            )
+            result = None
+        self._cached_rms_threshold = result
+        return result
 
     def _compute_dominant_freq(self, window_data: np.ndarray) -> float:
         """
@@ -181,29 +244,27 @@ class VICWindowExtractor:
         """
         对窗口应用分层去噪策略。
 
-        分层判断依据：窗口主频 vs 全量数据主频的 95% 分位数阈值。
-        主频 > 阈值 → 跳过去噪（保留原始特征）；否则 → 应用小波去噪。
+        任一分层条件命中（主频超阈值 OR RMS 超阈值）即跳过去噪，保留原始特征。
 
-        注意：extreme_rms_indices / extreme_freq_indices 仅供标注使用，
-              不参与去噪决策。
-
-        判断优先级（由高到低）：
-
+        主频分层判断优先级（由高到低）：
         ① dominant_freq_per_window 存在（预处理写入）+ 阈值可获取
-            → 直接使用预处理主频值与阈值比对（与全量统计完全一致）
-
+            → 直接使用预处理主频值与阈值比对
         ② dominant_freq_per_window 缺失 + 阈值可获取
             → 实时 FFT 计算窗口主频与阈值比对（fallback）
-
         ③ 阈值不可获取
-            → 对所有窗口应用去噪（兜底）
+            → 跳过主频判断，继续后续逻辑
+
+        RMS 分层判断（仅 RMS_THRESHOLD_ENABLED=True 时激活）：
+        ④ RMS > rms_threshold → 跳过去噪
+        ⑤ rms_threshold 不可获取 → 跳过 RMS 判断，继续执行去噪
         """
         if not STRATIFIED_DENOISE_ENABLED:
             pass  # 全局分层开关关闭 → 无差别去噪，直接落入末尾去噪逻辑
         else:
-            threshold = self._get_freq_threshold()
+            # ---- 主频分层判断 ----
+            freq_threshold = self._get_freq_threshold()
 
-            if threshold is not None:
+            if freq_threshold is not None:
                 per_window_freqs = metadata.get("dominant_freq_per_window") if metadata else None
 
                 if per_window_freqs is not None and window_index < len(per_window_freqs):
@@ -213,17 +274,31 @@ class VICWindowExtractor:
                     # ② 实时 FFT fallback（仅在无预处理主频时使用）
                     dominant_freq = self._compute_dominant_freq(window_data)
                     logger.debug(
-                        f"dominant_freq_per_window 缺失，使用实时 FFT: "
-                        f"window_index={window_index}, freq={dominant_freq:.3f} Hz"
+                        "dominant_freq_per_window 缺失，使用实时 FFT: "
+                        "window_index=%d, freq=%.3f Hz",
+                        window_index, dominant_freq,
                     )
 
-                if dominant_freq > threshold:
+                if dominant_freq > freq_threshold:
                     logger.debug(
-                        f"跳过去噪（主频 {dominant_freq:.3f} Hz > 阈值 {threshold:.3f} Hz）: "
-                        f"window_index={window_index}"
+                        "跳过去噪（主频 %.3f Hz > 阈值 %.3f Hz）: window_index=%d",
+                        dominant_freq, freq_threshold, window_index,
                     )
                     return window_data
-            # ③ 阈值不可获取 → 兜底，继续执行去噪
+            # ③ 主频阈值不可获取 → 继续后续判断
+
+            # ---- RMS 分层判断 ----
+            if RMS_THRESHOLD_ENABLED:
+                rms_threshold = self._get_rms_threshold()
+                if rms_threshold is not None:
+                    rms = float(np.sqrt(np.mean(window_data.ravel() ** 2)))
+                    if rms > rms_threshold:
+                        logger.debug(
+                            "跳过去噪（RMS %.6f > 阈值 %.6f）: window_index=%d",
+                            rms, rms_threshold, window_index,
+                        )
+                        return window_data
+                # ⑤ RMS 阈值不可获取 → 继续执行去噪
 
         try:
             denoised_data, _ = denoise(
@@ -591,6 +666,65 @@ def _load_dominant_freq_statistics() -> Dict:
         stats = json.load(f)
     
     return stats
+
+
+def _load_rms_statistics() -> Dict:
+    """
+    加载 RMS 统计结果文件，用于推导 RMS 分位数阈值。
+
+    文件由预处理流程写入，路径由 RMS_THRESHOLD_RESULT_PATH 指定。
+    期望字段（任一即可）：
+      - "rms_p95"              直接的 95% 分位数值
+      - "rms_stats.p95"        嵌套格式
+      - "all_rms_values"       全量 RMS 列表，由本函数现场计算分位数
+
+    返回:
+        包含 RMS 统计信息的字典
+    """
+    if not os.path.exists(RMS_THRESHOLD_RESULT_PATH):
+        raise FileNotFoundError(
+            f"RMS 统计结果文件不存在: {RMS_THRESHOLD_RESULT_PATH}\n"
+            f"请先运行预处理流程生成该文件，或在配置中硬编码 RMS_THRESHOLD。"
+        )
+    with open(RMS_THRESHOLD_RESULT_PATH, "r", encoding="utf-8") as f:
+        stats = json.load(f)
+    return stats
+
+
+def _calculate_rms_threshold(rms_statistics: Dict) -> float:
+    """
+    从 RMS 统计结果中计算 RMS 阈值。
+
+    字段查找顺序（找到即返回）：
+    1. rms_p{N}（如 rms_p95）
+    2. rms_stats.p{N}
+    3. all_rms_values → 现场计算分位数
+
+    参数:
+        rms_statistics: _load_rms_statistics() 返回的字典
+
+    返回:
+        RMS 阈值（与原始信号同单位）
+    """
+    pct = RMS_THRESHOLD_PERCENTILE
+    pct_key = f"rms_p{int(pct * 100)}"
+
+    if pct_key in rms_statistics:
+        return float(rms_statistics[pct_key])
+
+    nested = rms_statistics.get("rms_stats", {})
+    p_key = f"p{int(pct * 100)}"
+    if p_key in nested:
+        return float(nested[p_key])
+
+    all_vals = rms_statistics.get("all_rms_values")
+    if all_vals:
+        return float(np.percentile(all_vals, pct * 100))
+
+    raise ValueError(
+        f"无法从 RMS 统计结果中推导 {int(pct * 100)}% 分位数阈值。"
+        f"可用字段: {list(rms_statistics.keys())}"
+    )
 
 
 def _calculate_freq_threshold(freq_statistics: Dict) -> float:
