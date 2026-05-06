@@ -1,4 +1,4 @@
-import json
+﻿import json
 import sys
 from pathlib import Path
 
@@ -61,3 +61,4 @@ for rank, result in enumerate(sorted_by_acc, 1):
     print(f'   batch_size: {result["params"]["batch_size"]}, lr: {result["params"]["learning_rate"]}, '
           f'weight_decay: {result["params"]["weight_decay"]}, grad_clip: {result["params"]["gradient_clip_norm"]}')
     print()
+

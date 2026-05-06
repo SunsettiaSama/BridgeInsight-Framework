@@ -33,12 +33,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 import torch
 import torch.nn as nn
-from src.config.deep_learning_module.models.SimpleMLPConfig import SimpleMLPConfig
+from src.config.deep_learning_module.models.mlp import SimpleMLPConfig
 from src.config.deep_learning_module.models.unet import UNetConfig
 from src.config.deep_learning_module.models.lstm import LSTMConfig
 from src.config.deep_learning_module.models.cnn import CNNConfig, ConvConfig, FCConfig, DropoutConfig, PoolConfig
 from src.config.deep_learning_module.models.rnn import RNNConfig
-from src.deep_learning_module.model_factory import get_model
+from src.training.deep_learning.model_factory import get_model
 
 
 def print_section(title: str):

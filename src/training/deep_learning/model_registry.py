@@ -39,12 +39,12 @@ MODEL_CONFIG_REGISTRY: Dict[str, Type[BaseConfig]] = {
 # 导入模型类（这里需要根据实际项目结构调整导入路径）
 # 假设模型存放在 src/deep_learning_module/models/ 下
 try:
-    from src.deep_learning_module.models.unet import UNet
-    from src.deep_learning_module.models.mlp import MLP
-    from src.deep_learning_module.models.lstm import LSTM
-    from src.deep_learning_module.models.cnn import CNN
-    from src.deep_learning_module.models.rnn import RNN
-    from src.deep_learning_module.models.res_cnn import ResCNN
+    from src.training.deep_learning.models.unet import UNet
+    from src.training.deep_learning.models.mlp import MLP
+    from src.training.deep_learning.models.lstm import LSTM
+    from src.training.deep_learning.models.cnn import CNN
+    from src.training.deep_learning.models.rnn import RNN
+    from src.training.deep_learning.models.res_cnn import ResCNN
 except ImportError as e:
     import warnings
     warnings.warn(f"模型导入失败，部分模型可能不可用：{e}")

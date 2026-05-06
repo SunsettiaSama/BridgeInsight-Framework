@@ -27,6 +27,7 @@ backUp/
 config/
 src/config/
 env_deploy/ 
+.webui_img/
 
 
 

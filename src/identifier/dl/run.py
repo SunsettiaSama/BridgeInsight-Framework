@@ -1,4 +1,4 @@
-
+﻿
 import sys
 from pathlib import Path
 
@@ -12,8 +12,8 @@ from src.config.data_processer.datasets.StayCableVib2023Dataset.StayCableVib2023
     StayCableVib2023Config,
 )
 from src.data_processer.datasets.data_factory import get_dataset
-from src.identifier.deeplearning_methods.dl_identifier import DLVibrationIdentifier
-from src.identifier.deeplearning_methods.full_dataset_runner import FullDatasetRunner
+from src.identifier.dl.identifier import DLVibrationIdentifier
+from src.identifier.dl.runner import FullDatasetRunner
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,7 +34,7 @@ def main():
     # -------------------------------------------------------------------------
     project_root = Path(__file__).parent.parent.parent.parent
 
-    dataset_config_path = project_root / "config" / "identifier" / "dl_identifier" / "total_staycable_vib.yaml"
+    dataset_config_path = project_root / "config" / "datasets" / "total_staycable_vib.yaml"
     checkpoint_path     = project_root / "results" / "training_result" / "deep_learning_module" / "res_cnn" / "checkpoints" / "ResCNN_20260402_111429" / "best_checkpoint.pth"
     model_config_path   = project_root / "config" / "train" / "models" / "res_cnn.yaml"
 
@@ -118,4 +118,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

@@ -8,10 +8,19 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
 from src.figure_paintings.figs_for_thesis.config import (
     CN_FONT, FONT_SIZE, REC_FIG_SIZE,
     VIV_INPLANE_COLOR, VIV_OUTPLANE_COLOR,
+)
+
+_chapter4_dir = str(Path(__file__).parent)
+if _chapter4_dir not in sys.path:
+    sys.path.insert(0, _chapter4_dir)
+from _viv_pipeline import (
+    load_latest_result, get_viv_samples,
+    build_enriched_lookup, load_mecc_wind_by_sensor,
+    MECC_INPLANE_COLOR, MECC_OUTPLANE_COLOR,
 )
 
 
@@ -37,6 +46,8 @@ class Config:
         'C34 跨中': 'ST-VIC-C34-201-01.json',
         'C34 辅跨': 'ST-VIC-C34-301-01.json',
     }
+
+    MECC_RESULT_GLOB = project_root / "results" / "identification_result_mecc_viv" / "mecc_viv_only_*.json"
 
 
 # ==================== 数据加载 ====================
@@ -92,28 +103,34 @@ def _add_legend(ax):
 
 
 # ==================== 绘图 ====================
-def plot_wind_vs_vibration(data: dict, location_name: str = '') -> plt.Figure:
-    wind  = data["wind_speeds"]
-    r_in  = data["rms_inplane"]
-    r_out = data["rms_outplane"]
-
+def plot_wind_vs_vibration(
+    dl_data: dict,
+    location_name: str = '',
+    mecc_data: dict | None = None,
+) -> plt.Figure:
     fig, ax = plt.subplots(figsize=Config.FIG_SIZE)
 
-    ax.scatter(wind, r_in,
-               color=Config.INPLANE_COLOR,  s=Config.SCATTER_SIZE,
-               alpha=Config.SCATTER_ALPHA,  edgecolors='none',
-               label='面内')
-    ax.scatter(wind, r_out,
-               color=Config.OUTPLANE_COLOR, s=Config.SCATTER_SIZE,
-               alpha=Config.SCATTER_ALPHA,  edgecolors='none',
-               label='面外')
+    wind  = dl_data["wind_speeds"]
+    r_in  = dl_data["rms_inplane"]
+    r_out = dl_data["rms_outplane"]
+    ax.scatter(wind, r_in,  color=Config.INPLANE_COLOR,  s=Config.SCATTER_SIZE,
+               alpha=Config.SCATTER_ALPHA, edgecolors='none', label='DL 面内')
+    ax.scatter(wind, r_out, color=Config.OUTPLANE_COLOR, s=Config.SCATTER_SIZE,
+               alpha=Config.SCATTER_ALPHA, edgecolors='none', label='DL 面外')
 
-    ax.set_xlabel('平均风速（m/s）', labelpad=10,
-                  fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    ax.set_ylabel('加速度RMS（m/s²）', labelpad=10,
-                  fontproperties=CN_FONT, fontsize=FONT_SIZE)
+    if mecc_data is not None and len(mecc_data.get("wind_speeds", [])) > 0:
+        mw   = mecc_data["wind_speeds"]
+        mr_i = mecc_data["rms_inplane"]
+        mr_o = mecc_data["rms_outplane"]
+        ax.scatter(mw, mr_i, color=MECC_INPLANE_COLOR,  s=Config.SCATTER_SIZE,
+                   alpha=Config.SCATTER_ALPHA, edgecolors='none', marker='D', label='MECC 面内')
+        ax.scatter(mw, mr_o, color=MECC_OUTPLANE_COLOR, s=Config.SCATTER_SIZE,
+                   alpha=Config.SCATTER_ALPHA, edgecolors='none', marker='D', label='MECC 面外')
+
+    ax.set_xlabel('平均风速（m/s）', labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
+    ax.set_ylabel('加速度RMS（m/s²）', labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
     if location_name:
-        ax.set_title(f'涡激共振风速–振动RMS关系（{location_name}）',
+        ax.set_title(f'涡激共振风速–振动RMS关系（{location_name}）[DL vs MECC]',
                      fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=14)
     ax.tick_params(axis='both', which='major', labelsize=FONT_SIZE - 2)
     _add_legend(ax)
@@ -125,38 +142,48 @@ def plot_wind_vs_vibration(data: dict, location_name: str = '') -> plt.Figure:
 # ==================== 主函数 ====================
 def main():
     print("=" * 80)
-    print("涡激共振平均风速–振动RMS散点图")
+    print("涡激共振平均风速–振动RMS散点图（DL vs MECC）")
     print("=" * 80)
 
+    print("\n[步骤1] 加载 MECC 识别结果并构建风数据查找表...")
+    mecc_result  = load_latest_result(Config.MECC_RESULT_GLOB)
+    mecc_samples = get_viv_samples(mecc_result)
+    print(f"  MECC VIV 样本：{len(mecc_samples)} 个")
+    wind_lookup   = build_enriched_lookup(Config.ENRICHED_STATS_DIR)
+    print(f"  风数据查找表：{len(wind_lookup)} 条记录")
+    mecc_by_sensor = load_mecc_wind_by_sensor(mecc_samples, wind_lookup, Config.SENSOR_GROUPS)
+    print(f"  MECC 匹配传感器：{list(mecc_by_sensor.keys())}")
+
+    print("\n[步骤2] 按传感器生成图像并推送 WebUI...")
+    PAGE = 'fig4_27 风速-RMS DL vs MECC'
+    slot = 0
     stats_dir = Config.ENRICHED_STATS_DIR
-    ploter = PlotLib()
 
     for location_name, filename in Config.SENSOR_GROUPS.items():
         json_file = stats_dir / filename
-        print(f"\n[加载] {location_name}：{filename}")
-
-        data = load_wind_vib_data(json_file)
-
-        n = len(data["wind_speeds"])
-        print(f"  ✓ 有效样本：{n}")
-        if n == 0:
-            print("  跳过（无有效样本）")
+        print(f"\n  [加载 DL] {location_name}：{filename}")
+        dl_data = load_wind_vib_data(json_file)
+        n_dl = len(dl_data["wind_speeds"])
+        if n_dl == 0:
+            print("  跳过（DL 无有效样本）")
             continue
-        print(f"  风速范围：{data['wind_speeds'].min():.2f} ~ "
-              f"{data['wind_speeds'].max():.2f} m/s")
-        print(f"  面内RMS：mean={data['rms_inplane'].mean():.4f}  "
-              f"max={data['rms_inplane'].max():.4f}")
-        print(f"  面外RMS：mean={data['rms_outplane'].mean():.4f}  "
-              f"max={data['rms_outplane'].max():.4f}")
+        print(f"  DL 有效样本：{n_dl}")
 
-        fig = plot_wind_vs_vibration(data, location_name=location_name)
-        ploter.figs.append(fig)
-        print(f"  ✓ 图像生成完成")
+        mecc_data = mecc_by_sensor.get(location_name)
+        if mecc_data:
+            print(f"  MECC 匹配样本：{len(mecc_data['wind_speeds'])}")
+        else:
+            print(f"  MECC 无匹配样本（仅显示 DL）")
+
+        fig = plot_wind_vs_vibration(dl_data, location_name=location_name, mecc_data=mecc_data)
+        web_push(fig, page=PAGE, slot=slot, title=location_name,
+                 page_cols=2 if slot == 0 else None)
+        slot += 1
+        print(f"  ✓ 图像推送完成（slot {slot - 1}）")
 
     print("\n" + "=" * 80)
-    print(f"共生成 {len(ploter.figs)} 张图表")
+    print(f"共推送 {slot} 张图表")
     print("=" * 80)
-    ploter.show()
 
 
 if __name__ == "__main__":

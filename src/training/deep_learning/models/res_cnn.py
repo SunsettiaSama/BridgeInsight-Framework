@@ -1,4 +1,4 @@
-import torch
+﻿import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import List, TYPE_CHECKING
@@ -144,7 +144,7 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
     from src.config.deep_learning_module.models.res_cnn import ResCNNConfig
-    from src.deep_learning_module.models.res_cnn import ResCNN
+    from src.training.deep_learning.models.res_cnn import ResCNN
 
     cfg = ResCNNConfig(
         in_channels=1,
@@ -166,3 +166,4 @@ if __name__ == "__main__":
     total = sum(p.numel() for p in model.parameters())
     print(f"总参数量：{total:,}")
     print("ResCNN 测试通过")
+

@@ -8,10 +8,18 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
 from src.figure_paintings.figs_for_thesis.config import (
     CN_FONT, FONT_SIZE, REC_FIG_SIZE,
     VIV_INPLANE_COLOR, VIV_OUTPLANE_COLOR,
+)
+
+_chapter4_dir = str(Path(__file__).parent)
+if _chapter4_dir not in sys.path:
+    sys.path.insert(0, _chapter4_dir)
+from _viv_pipeline import (
+    load_latest_result, get_viv_samples, compute_signal_stats, load_enriched_stats,
+    MECC_INPLANE_COLOR, MECC_OUTPLANE_COLOR,
 )
 
 
@@ -32,6 +40,10 @@ class Config:
     ENRICHED_STATS_DIR = (
         project_root / "results" / "enriched_stats" / "class_1_viv"
     )
+
+    DL_RESULT_GLOB   = project_root / "results" / "identification_result"        / "res_cnn_full_dataset_*.json"
+    MECC_RESULT_GLOB = project_root / "results" / "identification_result_mecc_viv" / "mecc_viv_only_*.json"
+    MAX_SAMPLES      = 5000
 
 
 # ==================== 数据加载 ====================
@@ -107,43 +119,50 @@ def _add_legend(ax):
 
 
 # ==================== 绘图 ====================
-def plot_energy_cumsum(data: dict) -> plt.Figure:
+def plot_energy_cumsum(dl_data: dict, mecc_data: dict | None = None) -> plt.Figure:
     n = Config.N_MODES
-    stats_in  = _aggregate(data["cumsum_in"],  n)
-    stats_out = _aggregate(data["cumsum_out"], n)
+    stats_in  = _aggregate(dl_data["cumsum_in"],  n)
+    stats_out = _aggregate(dl_data["cumsum_out"], n)
 
     x = np.arange(1, n + 1)
-
     fig, ax = plt.subplots(figsize=Config.FIG_SIZE)
 
-    mean_in = stats_in["mean"]
-    std_in  = stats_in["std"]
+    mean_in, std_in   = stats_in["mean"],  stats_in["std"]
+    mean_out, std_out = stats_out["mean"], stats_out["std"]
+
     ax.plot(x, mean_in, color=Config.INPLANE_COLOR,
-            linewidth=Config.LINE_WIDTH, marker='o', markersize=6,
-            label='面内')
-    ax.fill_between(x,
-                    np.clip(mean_in - std_in, 0, 1),
-                    np.clip(mean_in + std_in, 0, 1),
+            linewidth=Config.LINE_WIDTH, marker='o', markersize=6, label='DL 面内')
+    ax.fill_between(x, np.clip(mean_in - std_in, 0, 1), np.clip(mean_in + std_in, 0, 1),
                     color=Config.INPLANE_COLOR, alpha=Config.SHADE_ALPHA)
 
-    mean_out = stats_out["mean"]
-    std_out  = stats_out["std"]
     ax.plot(x, mean_out, color=Config.OUTPLANE_COLOR,
-            linewidth=Config.LINE_WIDTH, marker='s', markersize=6,
-            label='面外')
-    ax.fill_between(x,
-                    np.clip(mean_out - std_out, 0, 1),
-                    np.clip(mean_out + std_out, 0, 1),
+            linewidth=Config.LINE_WIDTH, marker='s', markersize=6, label='DL 面外')
+    ax.fill_between(x, np.clip(mean_out - std_out, 0, 1), np.clip(mean_out + std_out, 0, 1),
                     color=Config.OUTPLANE_COLOR, alpha=Config.SHADE_ALPHA)
 
-    ax.axhline(y=1.0, color='gray', linewidth=1.0, linestyle='--', alpha=0.6)
+    if mecc_data is not None:
+        ms_in  = _aggregate(mecc_data["cumsum_in"],  n)
+        ms_out = _aggregate(mecc_data["cumsum_out"], n)
+        mm_in,  msd_in  = ms_in["mean"],  ms_in["std"]
+        mm_out, msd_out = ms_out["mean"], ms_out["std"]
+        ax.plot(x, mm_in, color=MECC_INPLANE_COLOR,
+                linewidth=Config.LINE_WIDTH, marker='D', markersize=5,
+                linestyle='--', label='MECC 面内')
+        ax.fill_between(x, np.clip(mm_in - msd_in, 0, 1), np.clip(mm_in + msd_in, 0, 1),
+                        color=MECC_INPLANE_COLOR, alpha=Config.SHADE_ALPHA)
+        ax.plot(x, mm_out, color=MECC_OUTPLANE_COLOR,
+                linewidth=Config.LINE_WIDTH, marker='^', markersize=5,
+                linestyle='--', label='MECC 面外')
+        ax.fill_between(x, np.clip(mm_out - msd_out, 0, 1), np.clip(mm_out + msd_out, 0, 1),
+                        color=MECC_OUTPLANE_COLOR, alpha=Config.SHADE_ALPHA)
 
+    ax.axhline(y=1.0, color='gray', linewidth=1.0, linestyle='--', alpha=0.6)
     ax.set_xlim(0.5, n + 0.5)
     ax.set_ylim(0, 1.05)
     ax.set_xticks(x)
     ax.set_xlabel('主频阶序', labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
     ax.set_ylabel('累积能量占比', labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    ax.set_title('前10阶主频累积能量分布（涡激共振）', fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=14)
+    ax.set_title('前10阶主频累积能量分布（DL vs MECC）', fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=14)
     ax.tick_params(axis='both', which='major', labelsize=FONT_SIZE - 2)
     _add_legend(ax)
     _apply_grid(ax)
@@ -154,32 +173,29 @@ def plot_energy_cumsum(data: dict) -> plt.Figure:
 # ==================== 主函数 ====================
 def main():
     print("=" * 80)
-    print("涡激共振前10阶主频累积能量分布")
+    print("涡激共振前10阶主频累积能量分布（DL vs MECC）")
     print("=" * 80)
 
-    print(f"\n[步骤1] 从 enriched_stats 加载 PSD 模态数据...")
-    print(f"  数据目录：{Config.ENRICHED_STATS_DIR}")
-    data = load_psd_modes()
+    print(f"\n[步骤1] 从 enriched_stats 加载 DL PSD 数据...")
+    dl_stats = load_enriched_stats(Config.ENRICHED_STATS_DIR)
+    print(f"✓ DL 面内累积曲线：{len(dl_stats['cumsum_in'])}，面外：{len(dl_stats['cumsum_out'])}")
 
-    n_in  = len(data["cumsum_in"])
-    n_out = len(data["cumsum_out"])
-    print(f"✓ 面内有效样本：{n_in}，面外有效样本：{n_out}")
+    print(f"\n[步骤2] 加载 MECC 识别结果并计算统计量...")
+    mecc_result  = load_latest_result(Config.MECC_RESULT_GLOB)
+    mecc_samples = get_viv_samples(mecc_result, max_n=Config.MAX_SAMPLES)
+    print(f"  MECC VIV 样本：{len(mecc_samples)} 个")
+    mecc_stats = compute_signal_stats(mecc_samples, source='MECC')
+    print(f"✓ MECC 面内累积曲线：{len(mecc_stats['cumsum_in'])}，面外：{len(mecc_stats['cumsum_out'])}")
 
-    stats_in  = _aggregate(data["cumsum_in"],  Config.N_MODES)
-    stats_out = _aggregate(data["cumsum_out"], Config.N_MODES)
-    print(f"  面内  第1阶占比均值：{stats_in['mean'][0]:.4f}  "
-          f"前10阶累积均值：{stats_in['mean'][-1]:.4f}")
-    print(f"  面外  第1阶占比均值：{stats_out['mean'][0]:.4f}  "
-          f"前10阶累积均值：{stats_out['mean'][-1]:.4f}")
-
-    print("\n[步骤2] 绘制图像...")
-    fig = plot_energy_cumsum(data)
+    print("\n[步骤3] 绘制图像...")
+    fig = plot_energy_cumsum(dl_stats, mecc_stats)
     print("✓ 图像生成完成")
-    print("=" * 80)
 
-    ploter = PlotLib()
-    ploter.figs.append(fig)
-    ploter.show()
+    print("\n[步骤4] 推送到 WebUI...")
+    web_push(fig, page='fig4_26 累积能量 DL vs MECC', slot=0,
+             title='前10阶累积能量对比', page_cols=1)
+    print("✓ 推送完成")
+    print("=" * 80)
 
 
 if __name__ == "__main__":

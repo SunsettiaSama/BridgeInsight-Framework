@@ -10,12 +10,17 @@ if str(project_root) not in sys.path:
 
 from src.data_processer.io_unpacker import UNPACK
 from src.data_processer.signals.wavelets import denoise
-from src.visualize_tools.utils import PlotLib
 from src.identifier.deeplearning_methods import FullDatasetRunner
+from src.visualize_tools.web_dashboard import push as web_push
 from src.figure_paintings.figs_for_thesis.config import (
     ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE, VIV_VIB_COLOR,
     get_viridis_color_map,
 )
+
+_chapter4_dir = str(Path(__file__).parent)
+if _chapter4_dir not in sys.path:
+    sys.path.insert(0, _chapter4_dir)
+from _viv_pipeline import load_latest_result, get_viv_samples as _pipeline_get_viv_samples
 
 
 # ==================== 常量配置 ====================
@@ -49,6 +54,9 @@ class Config:
     SPECTROGRAM_SEGMENT_S = 2   # 每段时长（秒）用于时频谱
 
     VIV_CLASS_ID = 1            # 涡激共振对应的类别编号
+
+    DL_RESULT_GLOB   = project_root / "results" / "identification_result"        / "res_cnn_full_dataset_*.json"
+    MECC_RESULT_GLOB = project_root / "results" / "identification_result_mecc_viv" / "mecc_viv_only_*.json"
 
 
 # ==================== 数据获取 ====================
@@ -309,58 +317,68 @@ def plot_viv_spectrograms(samples: list, unpacker: UNPACK):
     return inplane_figs, outplane_figs
 
 
-# ==================== 主函数 ====================
-def main():
-    print("=" * 80)
-    print("第三章 涡激共振时域波形绘制（面内 & 面外）")
-    print("=" * 80)
-
-    result_dir = project_root / "results" / "identification_result"
-    if not result_dir.exists():
-        raise FileNotFoundError(f"识别结果目录不存在：{result_dir}")
-
-    result_files = sorted(result_dir.glob("res_cnn_full_dataset_*.json"))
-    if not result_files:
-        raise FileNotFoundError("未找到识别结果文件 res_cnn_full_dataset_*.json")
-
-    result_path = result_files[-1]
-    print(f"\n[步骤1] 加载识别结果：{result_path.name}")
-    result = FullDatasetRunner.load_result(str(result_path))
-
-    print("\n[步骤2] 筛选涡激共振（class 1）样本...")
-    samples = get_viv_samples(result)
-    print(f"✓ 共筛选到 {len(samples)} 个涡激共振样本")
-
-    print("\n[步骤3] 随机抽取样本...")
-    samples = random_sample(samples)
-
-    print("\n[步骤4] 加载原始数据并绘图...")
+# ==================== 共享绘图入口 ====================
+def _plot_and_push(samples: list, page_prefix: str):
+    """为给定样本列表绘制三类图并推送到 WebUI。"""
     unpacker = UNPACK(init_path=False)
 
-    print("\n  -- 时域波形 --")
+    print(f"\n  -- {page_prefix} 时域波形 --")
     inplane_ts, outplane_ts = plot_viv_timeseries(samples, unpacker)
 
-    print("\n  -- 功率谱密度（PSD）--")
+    print(f"\n  -- {page_prefix} 功率谱密度（PSD）--")
     inplane_sp, outplane_sp = plot_viv_spectra(samples, unpacker)
 
-    print("\n  -- 时频谱 --")
+    print(f"\n  -- {page_prefix} 时频谱 --")
     inplane_sg, outplane_sg = plot_viv_spectrograms(samples, unpacker)
-
-    print("\n" + "=" * 80)
-    print(f"✓ 时域  面内：{len(inplane_ts)} 张  面外：{len(outplane_ts)} 张")
-    print(f"✓ 频谱  面内：{len(inplane_sp)} 张  面外：{len(outplane_sp)} 张")
-    print(f"✓ 时频  面内：{len(inplane_sg)} 张  面外：{len(outplane_sg)} 张")
-    print("=" * 80)
 
     all_figs = (
         inplane_ts + outplane_ts
         + inplane_sp + outplane_sp
         + inplane_sg + outplane_sg
     )
-    ploter = PlotLib()
-    for fig in all_figs:
-        ploter.figs.append(fig)
-    ploter.show()
+    titles = (
+        [f'面内时程 {i+1}' for i in range(len(inplane_ts))]
+        + [f'面外时程 {i+1}' for i in range(len(outplane_ts))]
+        + [f'面内频谱 {i+1}' for i in range(len(inplane_sp))]
+        + [f'面外频谱 {i+1}' for i in range(len(outplane_sp))]
+        + [f'面内时频谱 {i+1}' for i in range(len(inplane_sg))]
+        + [f'面外时频谱 {i+1}' for i in range(len(outplane_sg))]
+    )
+
+    print(f"\n  推送 {len(all_figs)} 张图到 WebUI 页面「{page_prefix}」...")
+    for slot, (fig, title) in enumerate(zip(all_figs, titles)):
+        web_push(fig, page=page_prefix, slot=slot, title=title,
+                 page_cols=4 if slot == 0 else None)
+    print(f"  ✓ 推送完成")
+
+
+# ==================== 主函数 ====================
+def main():
+    print("=" * 80)
+    print("涡激共振时域波形绘制（DL vs MECC，面内 & 面外）")
+    print("=" * 80)
+
+    print("\n[步骤1] 加载 DL 识别结果...")
+    dl_result   = load_latest_result(Config.DL_RESULT_GLOB)
+    dl_samples  = _pipeline_get_viv_samples(dl_result)
+    print(f"✓ DL VIV 样本：{len(dl_samples)} 个")
+    dl_plot = random_sample(dl_samples)
+
+    print("\n[步骤2] 加载 MECC 识别结果...")
+    mecc_result  = load_latest_result(Config.MECC_RESULT_GLOB)
+    mecc_samples = _pipeline_get_viv_samples(mecc_result)
+    print(f"✓ MECC VIV 样本：{len(mecc_samples)} 个")
+    mecc_plot = random_sample(mecc_samples)
+
+    print("\n[步骤3] 绘制 DL 样本并推送到 WebUI...")
+    _plot_and_push(dl_plot, "fig4_19 VIV时程 DL")
+
+    print("\n[步骤4] 绘制 MECC 样本并推送到 WebUI...")
+    _plot_and_push(mecc_plot, "fig4_19 VIV时程 MECC")
+
+    print("\n" + "=" * 80)
+    print("全部图像已推送完成")
+    print("=" * 80)
 
 
 if __name__ == "__main__":

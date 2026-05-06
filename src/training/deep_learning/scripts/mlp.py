@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
@@ -14,8 +14,8 @@ from src.data_processer.datasets.AnnotationDataset.AnnotationDataset import Anno
 from src.config.data_processer.datasets.AnnotationDataset.AnnotationDatasetConfig import AnnotationDatasetConfig
 from src.config.deep_learning_module.models.mlp import SimpleMLPConfig, DropoutConfig
 from src.config.train_eval.deep_learning_module.sft import SFTTrainerConfig
-from src.deep_learning_module.model_factory import get_model
-from src.train_eval.deep_learning_module.trainer.sft import SFTTrainer
+from src.training.deep_learning.model_factory import get_model
+from src.training.deep_learning.trainer.sft import SFTTrainer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -344,3 +344,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

@@ -1,4 +1,4 @@
-import torch
+﻿import torch
 import torch.nn as nn
 from typing import Optional, List, TYPE_CHECKING
 
@@ -115,7 +115,7 @@ SimpleMLP = MLP
 # ── 测试示例 ──────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import torch
-    from src.deep_learning_module.models.mlp import MLP
+    from src.training.deep_learning.models.mlp import MLP
     from src.config.deep_learning_module.models.mlp import SimpleMLPConfig, DropoutConfig
 
     ts_shape   = (300, 5)
@@ -168,3 +168,4 @@ if __name__ == "__main__":
     assert out.shape == (4, 2, 3)
 
     print("\n所有 MLP 任务测试通过")
+

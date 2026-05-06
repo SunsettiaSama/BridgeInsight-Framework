@@ -1,4 +1,4 @@
-import torch
+﻿import torch
 import torch.nn as nn
 from typing import Dict, Optional, Tuple
 # 导入配置类（根据实际路径调整）
@@ -130,7 +130,7 @@ class LSTM(nn.Module):
 if __name__ == '__main__':
 
     import torch
-    from src.deep_learning_module.models.lstm import LSTM
+    from src.training.deep_learning.models.lstm import LSTM
     from src.config.deep_learning_module.models.lstm import LSTMConfig
 
     # ==================== 测试1：分类任务 ====================

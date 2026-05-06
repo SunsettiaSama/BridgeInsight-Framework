@@ -1,4 +1,4 @@
-import warnings
+﻿import warnings
 import torch
 import torch.nn as nn
 from typing import Optional, Tuple, Union
@@ -156,7 +156,7 @@ class RNN(nn.Module):
 # ── 测试示例 ──────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     import torch
-    from src.deep_learning_module.models.rnn import RNN
+    from src.training.deep_learning.models.rnn import RNN
     from src.config.deep_learning_module.models.rnn import RNNConfig
 
     # 测试1：分类任务
@@ -219,3 +219,4 @@ if __name__ == '__main__':
         print(f"  task_type='{alias}'  →  输出: {out.shape}  ✓")
 
     print("\n所有RNN任务测试通过")
+

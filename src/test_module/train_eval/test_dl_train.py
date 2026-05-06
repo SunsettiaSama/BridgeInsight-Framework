@@ -6,8 +6,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from src.deep_learning_module.configs.base_config import BaseConfig
-from src.train_eval.deep_learning_module.sft import SFTTrainer
+from src.config.train_eval.deep_learning_module.base_config import BaseConfig
+from src.training.deep_learning.trainer.sft import SFTTrainer
 
 
 class SimpleFullyConnectedNet(nn.Module):

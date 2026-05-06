@@ -8,10 +8,18 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
 from src.figure_paintings.figs_for_thesis.config import (
     CN_FONT, FONT_SIZE, REC_FIG_SIZE,
     VIV_INPLANE_COLOR, VIV_OUTPLANE_COLOR,
+)
+
+_chapter4_dir = str(Path(__file__).parent)
+if _chapter4_dir not in sys.path:
+    sys.path.insert(0, _chapter4_dir)
+from _viv_pipeline import (
+    load_latest_result, get_viv_samples, compute_signal_stats, load_enriched_stats,
+    MECC_INPLANE_COLOR, MECC_OUTPLANE_COLOR,
 )
 
 
@@ -32,6 +40,10 @@ class Config:
     ENRICHED_STATS_DIR = (
         project_root / "results" / "enriched_stats" / "class_1_viv"
     )
+
+    DL_RESULT_GLOB   = project_root / "results" / "identification_result"        / "res_cnn_full_dataset_*.json"
+    MECC_RESULT_GLOB = project_root / "results" / "identification_result_mecc_viv" / "mecc_viv_only_*.json"
+    MAX_SAMPLES      = 5000
 
 
 # ==================== 数据加载 ====================
@@ -94,9 +106,9 @@ def _add_legend(ax):
 
 
 # ==================== 绘图 ====================
-def plot_dominant_energy_histogram(data: dict) -> plt.Figure:
-    energy_in  = data["dom_energy_in"]
-    energy_out = data["dom_energy_out"]
+def plot_dominant_energy_histogram(dl_data: dict, mecc_data: dict | None = None) -> plt.Figure:
+    energy_in  = dl_data["dom_energy_in"]
+    energy_out = dl_data["dom_energy_out"]
 
     combined = np.concatenate([energy_in, energy_out])
     x_max = float(np.percentile(combined, Config.ENERGY_X_PERCENTILE))
@@ -112,10 +124,18 @@ def plot_dominant_energy_histogram(data: dict) -> plt.Figure:
     fig, ax = plt.subplots(figsize=Config.FIG_SIZE)
     _grouped_bars(ax, centers, counts_in, counts_out, width)
 
+    if mecc_data is not None:
+        mei  = mecc_data["dom_energy_in"]
+        meo  = mecc_data["dom_energy_out"]
+        ax.step(bins[:-1], np.histogram(mei[mei   <= x_max], bins=bins)[0],
+                where='post', color=MECC_INPLANE_COLOR,  linewidth=1.6, alpha=0.85, label='MECC 面内')
+        ax.step(bins[:-1], np.histogram(meo[meo   <= x_max], bins=bins)[0],
+                where='post', color=MECC_OUTPLANE_COLOR, linewidth=1.6, alpha=0.85, label='MECC 面外')
+
     ax.set_xlim(0, x_max)
     ax.set_xlabel('主频能量占比', labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
     ax.set_ylabel('样本数（个）', labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    ax.set_title('涡激共振主频能量占比分布', fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=14)
+    ax.set_title('涡激共振主频能量占比分布（DL vs MECC）', fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=14)
     ax.tick_params(axis='both', which='major', labelsize=FONT_SIZE - 2)
     _add_legend(ax)
     _apply_grid(ax)
@@ -126,29 +146,29 @@ def plot_dominant_energy_histogram(data: dict) -> plt.Figure:
 # ==================== 主函数 ====================
 def main():
     print("=" * 80)
-    print("涡激共振主频能量占比分布直方图")
+    print("涡激共振主频能量占比分布直方图（DL vs MECC）")
     print("=" * 80)
 
-    print(f"\n[步骤1] 从 enriched_stats 加载主频能量数据...")
-    print(f"  数据目录：{Config.ENRICHED_STATS_DIR}")
-    data = load_energy_data()
+    print(f"\n[步骤1] 从 enriched_stats 加载 DL 主频能量数据...")
+    dl_stats = load_enriched_stats(Config.ENRICHED_STATS_DIR)
+    print(f"✓ DL 面内：{len(dl_stats['dom_energy_in'])}，面外：{len(dl_stats['dom_energy_out'])}")
 
-    n_in  = len(data["dom_energy_in"])
-    n_out = len(data["dom_energy_out"])
-    print(f"✓ 面内有效样本：{n_in}，面外有效样本：{n_out}")
-    print(f"  面内主频能量：mean={data['dom_energy_in'].mean():.4f}  "
-          f"median={float(np.median(data['dom_energy_in'])):.4f}")
-    print(f"  面外主频能量：mean={data['dom_energy_out'].mean():.4f}  "
-          f"median={float(np.median(data['dom_energy_out'])):.4f}")
+    print(f"\n[步骤2] 加载 MECC 识别结果并计算统计量...")
+    mecc_result  = load_latest_result(Config.MECC_RESULT_GLOB)
+    mecc_samples = get_viv_samples(mecc_result, max_n=Config.MAX_SAMPLES)
+    print(f"  MECC VIV 样本：{len(mecc_samples)} 个")
+    mecc_stats = compute_signal_stats(mecc_samples, source='MECC')
+    print(f"✓ MECC 面内：{len(mecc_stats['dom_energy_in'])}，面外：{len(mecc_stats['dom_energy_out'])}")
 
-    print("\n[步骤2] 绘制图像...")
-    fig = plot_dominant_energy_histogram(data)
+    print("\n[步骤3] 绘制图像...")
+    fig = plot_dominant_energy_histogram(dl_stats, mecc_stats)
     print("✓ 图像生成完成")
-    print("=" * 80)
 
-    ploter = PlotLib()
-    ploter.figs.append(fig)
-    ploter.show()
+    print("\n[步骤4] 推送到 WebUI...")
+    web_push(fig, page='fig4_25 能量占比直方图 DL vs MECC', slot=0,
+             title='主频能量占比分布对比', page_cols=1)
+    print("✓ 推送完成")
+    print("=" * 80)
 
 
 if __name__ == "__main__":

@@ -1128,28 +1128,45 @@ class PlotLib():
         dpi: int = 150,
         titles: list = None,
         blocking: bool = True,
+        compress_level: int = 1,
+        tight: bool = True,
+        cache_dir: str = '.webui_img',
+        max_rounds: int = 20,
     ):
-        """
-        将 self.figs 按 slot 顺序推送到 VibDash Web 仪表盘。
+        from src.visualize_tools.web_dashboard import (
+            _get_or_start_dashboard,
+            _fig_to_data_uri,
+        )
+        from concurrent.futures import ThreadPoolExecutor
 
-        参数
-        ----
-        page     : 页面名称（每次调用对应一页）
-        cols     : 九宫格列数
-        port     : 服务端口（默认 5678）
-        dpi      : 图像渲染分辨率
-        titles   : 每个 slot 的标题列表（None 则自动编号）
-        blocking : True 时阻塞进程直到 Ctrl+C（默认 True）
-        """
-        from src.visualize_tools.web_dashboard import _get_or_start_dashboard
+        dash = _get_or_start_dashboard(
+            port=port, cols=cols,
+            cache_dir=cache_dir or None, max_rounds=max_rounds,
+        )
+        n = len(self.figs)
 
-        dash = _get_or_start_dashboard(port=port, cols=cols)
+        def _render(args):
+            i, fig = args
+            main_fig = fig[0] if isinstance(fig, tuple) else fig
+            return i, _fig_to_data_uri(main_fig, dpi,
+                                       compress_level=compress_level,
+                                       tight=tight)
 
-        for i, fig in enumerate(self.figs):
+        # 并行渲染：savefig 中的 PNG 压缩（zlib）会释放 GIL，线程池可有效并发
+        max_workers = min(n, 4)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            rendered = list(pool.map(_render, enumerate(self.figs)))
+
+        # 按 slot 顺序推送（渲染已完成，推送仅做存储+SSE 广播，极快）
+        for i, image in sorted(rendered, key=lambda x: x[0]):
             title = titles[i] if (titles and i < len(titles)) else f'slot {i}'
-            # 首个 slot 携带 page_cols，后续 slot 传 None（服务端首次创建时已记录）
-            dash.push(fig, page=page, slot=i, title=title, dpi=dpi,
-                      page_cols=cols if i == 0 else None)
+            dash._store_and_broadcast({
+                'page'     : page,
+                'slot'     : str(i),
+                'image'    : image,
+                'title'    : title,
+                'page_cols': cols if i == 0 else None,
+            })
 
         if blocking:
             dash.wait()

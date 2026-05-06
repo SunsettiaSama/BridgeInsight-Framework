@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
@@ -13,10 +13,10 @@ import yaml
 
 from src.data_processer.datasets.AnnotationDataset.AnnotationDataset import AnnotationDataset
 from src.config.data_processer.datasets.AnnotationDataset.AnnotationDatasetConfig import AnnotationDatasetConfig
-from src.config.deep_learning_module.models.cnn import CNNConfig, ConvConfig, PoolConfig, FCConfig, DropoutConfig
+from src.config.deep_learning_module.models.rnn import RNNConfig
 from src.config.train_eval.deep_learning_module.sft import SFTTrainerConfig
-from src.deep_learning_module.model_factory import get_model
-from src.train_eval.deep_learning_module.trainer.sft import SFTTrainer
+from src.training.deep_learning.model_factory import get_model
+from src.training.deep_learning.trainer.sft import SFTTrainer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,10 +25,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DATASET_CONFIG_PATH = r"F:\Research\Vibration Characteristics In Cable Vibration\config\train\datasets\annotation_dataset.yaml"
-MODEL_CONFIG_PATH = r"F:\Research\Vibration Characteristics In Cable Vibration\config\train\models\cnn.yaml"
-MODEL_SAVE_DIR = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\cnn"
+MODEL_CONFIG_PATH = r"F:\Research\Vibration Characteristics In Cable Vibration\config\train\models\rnn.yaml"
+MODEL_SAVE_DIR = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\rnn"
 SEARCH_RESULT_PATH = r"F:\Research\Vibration Characteristics In Cable Vibration\results\training_result\deep_learning_module\search_best_hyperparams\mlp_search_result.json"
-
 
 def load_dataset_config(config_path: str) -> AnnotationDatasetConfig:
     """从YAML配置文件加载数据集配置"""
@@ -36,9 +35,7 @@ def load_dataset_config(config_path: str) -> AnnotationDatasetConfig:
     
     with open(config_path, 'r', encoding='utf-8') as f:
         config_dict = yaml.safe_load(f)
-    
-    config_dict['auto_split'] = True
-    
+
     config = AnnotationDatasetConfig(**config_dict)
     logger.info(f"数据集配置加载完成（auto_split=True）")
     
@@ -110,7 +107,7 @@ def create_dataloaders(
     return train_dataloader, val_dataloader, dataset.get_num_classes()
 
 
-def train_cnn(
+def train_rnn(
     dataset_config_path: str,
     model_config_path: str,
     best_params: dict = None,
@@ -118,7 +115,7 @@ def train_cnn(
     output_dir: str = None
 ):
     """
-    CNN模型训练主流程（使用搜索得到的最佳参数）
+    RNN模型训练主流程（使用搜索得到的最佳参数）
     
     参数：
         dataset_config_path: 数据集配置文件路径
@@ -139,7 +136,7 @@ def train_cnn(
     os.makedirs(output_dir, exist_ok=True)
     
     logger.info("=" * 60)
-    logger.info("开始CNN模型训练（使用搜索最佳参数）")
+    logger.info("开始RNN模型训练（使用搜索最佳参数）")
     logger.info("=" * 60)
     
     # 1. 加载配置和数据集
@@ -164,56 +161,33 @@ def train_cnn(
     logger.info("-" * 60)
     
     sample_data, _ = train_dataloader.dataset[0]
-    input_size = sample_data.shape[0]
+    input_size = sample_data.shape[-1] if sample_data.ndim > 1 else 1
     
     logger.info(f"输入大小：{input_size}")
     logger.info(f"类别数：{num_classes}")
     
-    in_channels = model_config.get('in_channels', 1)
-    input_type = model_config.get('input_type', 'timeseries')
-    activation_type = model_config.get('activation_type', 'relu')
+    hidden_size = model_config.get('hidden_size', 256)
+    num_layers = model_config.get('num_layers', 1)
+    bidirectional = model_config.get('bidirectional', False)
+    dropout = model_config.get('dropout', 0.5)
+    batch_first = model_config.get('batch_first', True)
+    nonlinearity = model_config.get('nonlinearity', 'tanh')
+    seq_dropout = model_config.get('seq_dropout', 0.5)
+    classifier_dropout = model_config.get('classifier_dropout', 0.5)
     
-    # 卷积层配置
-    conv_config_dict = model_config.get('conv', {})
-    conv_config = ConvConfig(
-        conv_channels=conv_config_dict.get('conv_channels', [32, 64, 128]),
-        kernel_size=conv_config_dict.get('kernel_size', 3),
-        stride=conv_config_dict.get('stride', 1),
-        padding=conv_config_dict.get('padding', 1)
-    )
-    
-    # 池化层配置
-    pool_config_dict = model_config.get('pool', {})
-    pool_config = PoolConfig(
-        pool_type=pool_config_dict.get('pool_type', 'max'),
-        pool_kernel_size=pool_config_dict.get('pool_kernel_size', 2),
-        pool_stride=pool_config_dict.get('pool_stride', 2)
-    )
-    
-    # 全连接层配置
-    fc_config_dict = model_config.get('fc', {})
-    fc_config = FCConfig(
-        fc_hidden_dims=fc_config_dict.get('fc_hidden_dims', [256, 128])
-    )
-    
-    # Dropout配置
-    dropout_config_dict = model_config.get('dropout', {})
-    dropout_config = DropoutConfig(
-        enable=dropout_config_dict.get('enable', True),
-        prob=dropout_config_dict.get('prob', 0.5)
-    )
-    
-    model_config_obj = CNNConfig(
-        in_channels=in_channels,
-        input_type=input_type,
-        task_type="classification",
+    model_config_obj = RNNConfig(
         input_size=input_size,
-        num_classes=num_classes,
-        activation_type=activation_type,
-        conv=conv_config,
-        pool=pool_config,
-        fc=fc_config,
-        dropout=dropout_config
+        num_output_dim=num_classes,
+        predict_seq_len=1,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        bidirectional=bidirectional,
+        dropout=dropout,
+        batch_first=batch_first,
+        nonlinearity=nonlinearity,
+        task_type="classification",
+        seq_dropout=seq_dropout,
+        classifier_dropout=classifier_dropout
     )
     
     model = get_model(model_config_obj)
@@ -281,18 +255,17 @@ def train_cnn(
     
     final_result = {
         'model_config': {
-            'model_type': 'CNN',
-            'in_channels': in_channels,
-            'input_type': input_type,
+            'model_type': 'RNN',
             'input_size': input_size,
-            'num_classes': num_classes,
-            'activation_type': activation_type,
-            'conv_channels': conv_config.conv_channels,
-            'kernel_size': conv_config.kernel_size,
-            'pool_type': pool_config.pool_type,
-            'fc_hidden_dims': fc_config.fc_hidden_dims,
-            'dropout_enable': dropout_config.enable,
-            'dropout_prob': dropout_config.prob,
+            'hidden_size': hidden_size,
+            'num_layers': num_layers,
+            'bidirectional': bidirectional,
+            'num_output_dim': num_classes,
+            'nonlinearity': nonlinearity,
+            'dropout': dropout,
+            'batch_first': batch_first,
+            'seq_dropout': seq_dropout,
+            'classifier_dropout': classifier_dropout,
             'total_params': total_params,
             'trainable_params': trainable_params
         },
@@ -319,7 +292,7 @@ def train_cnn(
     }
     
     # 6. 保存结果
-    result_save_path = os.path.join(output_dir, "cnn_train_result.json")
+    result_save_path = os.path.join(output_dir, "rnn_train_result.json")
     
     os.makedirs(os.path.dirname(result_save_path) or '.', exist_ok=True)
     with open(result_save_path, 'w', encoding='utf-8') as f:
@@ -329,19 +302,16 @@ def train_cnn(
     
     # 7. 打印训练总结
     logger.info("\n" + "=" * 60)
-    logger.info("【CNN训练总结】")
+    logger.info("【RNN训练总结】")
     logger.info("=" * 60)
     logger.info(f"模型类型：{final_result['model_config']['model_type']}")
     logger.info(f"总参数数：{final_result['model_config']['total_params']:,}")
     logger.info(f"可训练参数：{final_result['model_config']['trainable_params']:,}")
     logger.info(f"\n模型配置：")
-    logger.info(f"  - 输入类型：{final_result['model_config']['input_type']}")
-    logger.info(f"  - 输入大小：{final_result['model_config']['input_size']}")
-    logger.info(f"  - 卷积通道：{final_result['model_config']['conv_channels']}")
-    logger.info(f"  - 卷积核大小：{final_result['model_config']['kernel_size']}")
-    logger.info(f"  - 池化类型：{final_result['model_config']['pool_type']}")
-    logger.info(f"  - 激活函数：{final_result['model_config']['activation_type']}")
-    logger.info(f"  - Dropout开启：{final_result['model_config']['dropout_enable']}")
+    logger.info(f"  - 隐藏层大小：{final_result['model_config']['hidden_size']}")
+    logger.info(f"  - 隐藏层数：{final_result['model_config']['num_layers']}")
+    logger.info(f"  - 激活函数：{final_result['model_config']['nonlinearity']}")
+    logger.info(f"  - 双向：{final_result['model_config']['bidirectional']}")
     logger.info(f"\n训练配置：")
     logger.info(f"  - 总轮数：{final_result['train_config']['epochs']}")
     logger.info(f"  - 批次大小：{final_result['train_config']['batch_size']}")
@@ -362,7 +332,7 @@ def main():
     """主函数"""
     best_params = load_best_params(SEARCH_RESULT_PATH)
     
-    result = train_cnn(
+    result = train_rnn(
         dataset_config_path=DATASET_CONFIG_PATH,
         model_config_path=MODEL_CONFIG_PATH,
         best_params=best_params,
@@ -375,3 +345,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

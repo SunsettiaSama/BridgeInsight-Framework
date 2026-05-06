@@ -9,9 +9,17 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
 from src.figure_paintings.figs_for_thesis.config import (
     CN_FONT, ENG_FONT, SQUARE_FONT_SIZE, get_red_color_map, SQUARE_FIG_SIZE
+)
+
+_chapter4_dir = str(Path(__file__).parent)
+if _chapter4_dir not in sys.path:
+    sys.path.insert(0, _chapter4_dir)
+from _viv_pipeline import (
+    load_latest_result, get_viv_samples,
+    build_enriched_lookup, load_mecc_wind_dir_by_sensor,
 )
 
 FONT_SIZE = SQUARE_FONT_SIZE
@@ -38,6 +46,8 @@ class Config:
         'C34 跨中': 'ST-VIC-C34-201-01.json',
         'C34 辅跨': 'ST-VIC-C34-301-01.json',
     }
+
+    MECC_RESULT_GLOB = project_root / "results" / "identification_result_mecc_viv" / "mecc_viv_only_*.json"
 
 
 # ==================== 数据加载 ====================
@@ -208,53 +218,76 @@ def merge_all_sensors(sensor_data: dict[str, dict]) -> dict:
 # ==================== 主函数 ====================
 def main():
     print("=" * 80)
-    print("涡激共振 风向–RMS 极坐标图")
+    print("涡激共振 风向–RMS 极坐标图（DL vs MECC）")
     print("=" * 80)
 
-    print("\n[步骤 1/3] 加载各传感器数据...")
-    sensor_data = load_sensor_data()
-
-    for label, d in sensor_data.items():
+    print("\n[步骤1] 加载 DL 各传感器数据...")
+    dl_sensor_data = load_sensor_data()
+    for label, d in dl_sensor_data.items():
         n = len(d["wind_dirs"])
-        print(f"  {label}：有效样本 {n}，"
-              f"面内RMS mean={d['rms_in'].mean():.4f}，"
-              f"面外RMS mean={d['rms_out'].mean():.4f}")
+        print(f"  {label}：DL 有效样本 {n}")
 
-    print("\n[步骤 2/3] 设定全局紊流度映射范围（vmin / vmax）...")
+    print("\n[步骤2] 加载 MECC 识别结果并匹配风数据...")
+    mecc_result  = load_latest_result(Config.MECC_RESULT_GLOB)
+    mecc_samples = get_viv_samples(mecc_result)
+    print(f"  MECC VIV 样本：{len(mecc_samples)} 个")
+    wind_lookup      = build_enriched_lookup(Config.ENRICHED_STATS_DIR)
+    mecc_sensor_data = load_mecc_wind_dir_by_sensor(
+        mecc_samples, wind_lookup, Config.SENSOR_GROUPS,
+    )
+    for label, d in mecc_sensor_data.items():
+        print(f"  {label}：MECC 匹配 {len(d['wind_dirs'])} 条")
+
+    print("\n[步骤3] 设定全局紊流度范围 0%~60%...")
     vmin, vmax = 0.0, 0.6
-    print(f"  全局紊流度范围：{vmin:.4f} ~ {vmax:.4f}（显示为 0%~60%）")
-
-    print("\n[步骤 3/3] 生成独立图像...")
     n_bins = Config.INTERVAL_NUMS
     step   = 360.0 / n_bins
     bins   = np.arange(0, 360 + step, step)
 
-    ploter = PlotLib()
+    print("\n[步骤4] 生成独立图像并推送 WebUI...")
+    PAGE = 'fig4_28 风向极坐标 DL vs MECC'
+    slot = 0
 
-    for label, d in sensor_data.items():
+    for label, dl_d in dl_sensor_data.items():
         for direction, rms_key in [('面内', 'rms_in'), ('面外', 'rms_out')]:
+            # DL polar figure
             mean_rms, mean_ti, _ = _bin_by_direction(
-                d["wind_dirs"], d[rms_key], d["turb_intens"]
+                dl_d["wind_dirs"], dl_d[rms_key], dl_d["turb_intens"]
             )
-            title = f'{label}  {direction}振动 RMS（m/s²）'
-            fig   = make_single_figure(mean_rms, mean_ti, bins, title, vmin, vmax)
-            ploter.figs.append(fig)
-            print(f"  ✓ {title}")
+            title_dl = f'{label} DL {direction}振动 RMS（m/s²）'
+            fig_dl   = make_single_figure(mean_rms, mean_ti, bins, title_dl, vmin, vmax)
+            web_push(fig_dl, page=PAGE, slot=slot, title=title_dl,
+                     page_cols=3 if slot == 0 else None)
+            slot += 1
 
-    print("\n[补充] 生成整体汇总图（所有传感器合并）...")
-    all_data = merge_all_sensors(sensor_data)
+            # MECC polar figure (if data available)
+            mecc_d = mecc_sensor_data.get(label)
+            if mecc_d is not None and len(mecc_d["wind_dirs"]) >= Config.MIN_BIN_SAMPLES:
+                mean_rms_m, mean_ti_m, _ = _bin_by_direction(
+                    mecc_d["wind_dirs"], mecc_d[rms_key], mecc_d["turb_intens"]
+                )
+                title_mecc = f'{label} MECC {direction}振动 RMS（m/s²）'
+                fig_mecc   = make_single_figure(mean_rms_m, mean_ti_m, bins, title_mecc, vmin, vmax)
+                web_push(fig_mecc, page=PAGE, slot=slot, title=title_mecc)
+                slot += 1
+                print(f"  ✓ {label} {direction}：DL + MECC 各1张")
+            else:
+                print(f"  ✓ {label} {direction}：DL 1张（MECC 无数据）")
+
+    print("\n[步骤5] 生成整体汇总图...")
+    all_dl = merge_all_sensors(dl_sensor_data)
     for direction, rms_key in [('面内', 'rms_in'), ('面外', 'rms_out')]:
         mean_rms, mean_ti, _ = _bin_by_direction(
-            all_data["wind_dirs"], all_data[rms_key], all_data["turb_intens"]
+            all_dl["wind_dirs"], all_dl[rms_key], all_dl["turb_intens"]
         )
-        title = f'整体汇总  {direction}振动 RMS（m/s²）'
+        title = f'DL 整体汇总 {direction}振动 RMS（m/s²）'
         fig   = make_single_figure(mean_rms, mean_ti, bins, title, vmin, vmax)
-        ploter.figs.append(fig)
+        web_push(fig, page=PAGE, slot=slot, title=title)
+        slot += 1
         print(f"  ✓ {title}")
 
-    print(f"\n共生成 {len(ploter.figs)} 张图像")
+    print(f"\n共推送 {slot} 张图像")
     print("=" * 80)
-    ploter.show()
 
 
 if __name__ == "__main__":

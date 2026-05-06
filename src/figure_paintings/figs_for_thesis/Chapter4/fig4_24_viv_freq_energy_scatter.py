@@ -8,10 +8,18 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
 from src.figure_paintings.figs_for_thesis.config import (
     CN_FONT, FONT_SIZE, REC_FIG_SIZE,
     VIV_INPLANE_COLOR, VIV_OUTPLANE_COLOR,
+)
+
+_chapter4_dir = str(Path(__file__).parent)
+if _chapter4_dir not in sys.path:
+    sys.path.insert(0, _chapter4_dir)
+from _viv_pipeline import (
+    load_latest_result, get_viv_samples, compute_signal_stats, load_enriched_stats,
+    MECC_INPLANE_COLOR, MECC_OUTPLANE_COLOR,
 )
 
 
@@ -33,6 +41,10 @@ class Config:
     ENRICHED_STATS_DIR = (
         project_root / "results" / "enriched_stats" / "class_1_viv"
     )
+
+    DL_RESULT_GLOB   = project_root / "results" / "identification_result"        / "res_cnn_full_dataset_*.json"
+    MECC_RESULT_GLOB = project_root / "results" / "identification_result_mecc_viv" / "mecc_viv_only_*.json"
+    MAX_SAMPLES      = 5000
 
 
 # ==================== 数据加载 ====================
@@ -100,12 +112,7 @@ def _add_legend(ax):
 
 
 # ==================== 绘图 ====================
-def plot_freq_energy_scatter(data: dict) -> plt.Figure:
-    freq_in   = data["dom_freq_in"]
-    freq_out  = data["dom_freq_out"]
-    energy_in  = data["dom_energy_in"]
-    energy_out = data["dom_energy_out"]
-
+def plot_freq_energy_scatter(dl_data: dict, mecc_data: dict | None = None) -> plt.Figure:
     def _downsample(x, y, seed, max_pts):
         n = len(x)
         if n <= max_pts:
@@ -114,33 +121,40 @@ def plot_freq_energy_scatter(data: dict) -> plt.Figure:
         idx = rng.choice(n, size=max_pts, replace=False)
         return x[idx], y[idx]
 
+    freq_in   = dl_data["dom_freq_in"]
+    freq_out  = dl_data["dom_freq_out"]
+    energy_in  = dl_data["dom_energy_in"]
+    energy_out = dl_data["dom_energy_out"]
+
     fi, ei = _downsample(freq_in,  energy_in,  Config.SCATTER_SEED,     Config.SCATTER_MAX_POINTS)
     fo, eo = _downsample(freq_out, energy_out, Config.SCATTER_SEED + 1, Config.SCATTER_MAX_POINTS)
 
     fig, ax = plt.subplots(figsize=Config.FIG_SIZE)
 
-    ax.scatter(
-        fi, ei,
-        s=Config.SCATTER_SIZE,
-        color=Config.INPLANE_COLOR,
-        alpha=Config.SCATTER_ALPHA,
-        linewidths=0,
-        label='面内',
-        zorder=1,
-    )
-    ax.scatter(
-        fo, eo,
-        s=Config.SCATTER_SIZE,
-        color=Config.OUTPLANE_COLOR,
-        alpha=Config.SCATTER_ALPHA,
-        linewidths=0,
-        label='面外',
-        zorder=2,
-    )
+    ax.scatter(fi, ei, s=Config.SCATTER_SIZE, color=Config.INPLANE_COLOR,
+               alpha=Config.SCATTER_ALPHA, linewidths=0, label='DL 面内', zorder=1)
+    ax.scatter(fo, eo, s=Config.SCATTER_SIZE, color=Config.OUTPLANE_COLOR,
+               alpha=Config.SCATTER_ALPHA, linewidths=0, label='DL 面外', zorder=2)
+
+    if mecc_data is not None:
+        mfi, mei = _downsample(
+            mecc_data["dom_freq_in"], mecc_data["dom_energy_in"],
+            Config.SCATTER_SEED + 2, Config.SCATTER_MAX_POINTS,
+        )
+        mfo, meo = _downsample(
+            mecc_data["dom_freq_out"], mecc_data["dom_energy_out"],
+            Config.SCATTER_SEED + 3, Config.SCATTER_MAX_POINTS,
+        )
+        ax.scatter(mfi, mei, s=Config.SCATTER_SIZE, color=MECC_INPLANE_COLOR,
+                   alpha=Config.SCATTER_ALPHA, linewidths=0, marker='D',
+                   label='MECC 面内', zorder=3)
+        ax.scatter(mfo, meo, s=Config.SCATTER_SIZE, color=MECC_OUTPLANE_COLOR,
+                   alpha=Config.SCATTER_ALPHA, linewidths=0, marker='D',
+                   label='MECC 面外', zorder=4)
 
     ax.set_xlabel('主频 (Hz)', labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
     ax.set_ylabel('主频能量占比', labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    ax.set_title('涡激共振主频与能量占比散点图', fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=14)
+    ax.set_title('涡激共振主频与能量占比散点图（DL vs MECC）', fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=14)
     ax.tick_params(axis='both', which='major', labelsize=FONT_SIZE - 2)
     _add_legend(ax)
     _apply_grid(ax)
@@ -151,29 +165,29 @@ def plot_freq_energy_scatter(data: dict) -> plt.Figure:
 # ==================== 主函数 ====================
 def main():
     print("=" * 80)
-    print("涡激共振主频与能量占比散点图")
+    print("涡激共振主频与能量占比散点图（DL vs MECC）")
     print("=" * 80)
 
-    print(f"\n[步骤1] 从 enriched_stats 加载主频及能量数据...")
-    print(f"  数据目录：{Config.ENRICHED_STATS_DIR}")
-    data = load_freq_energy_data()
+    print(f"\n[步骤1] 从 enriched_stats 加载 DL 主频能量数据...")
+    dl_stats = load_enriched_stats(Config.ENRICHED_STATS_DIR)
+    print(f"✓ DL 面内：{len(dl_stats['dom_freq_in'])}，面外：{len(dl_stats['dom_freq_out'])}")
 
-    n_in  = len(data["dom_freq_in"])
-    n_out = len(data["dom_freq_out"])
-    print(f"✓ 面内有效样本：{n_in}，面外有效样本：{n_out}")
-    print(f"  面内主频能量：mean={data['dom_energy_in'].mean():.4f}  "
-          f"median={float(np.median(data['dom_energy_in'])):.4f}")
-    print(f"  面外主频能量：mean={data['dom_energy_out'].mean():.4f}  "
-          f"median={float(np.median(data['dom_energy_out'])):.4f}")
+    print(f"\n[步骤2] 加载 MECC 识别结果并计算统计量...")
+    mecc_result  = load_latest_result(Config.MECC_RESULT_GLOB)
+    mecc_samples = get_viv_samples(mecc_result, max_n=Config.MAX_SAMPLES)
+    print(f"  MECC VIV 样本：{len(mecc_samples)} 个")
+    mecc_stats = compute_signal_stats(mecc_samples, source='MECC')
+    print(f"✓ MECC 面内：{len(mecc_stats['dom_freq_in'])}，面外：{len(mecc_stats['dom_freq_out'])}")
 
-    print("\n[步骤2] 绘制图像...")
-    fig = plot_freq_energy_scatter(data)
+    print("\n[步骤3] 绘制图像...")
+    fig = plot_freq_energy_scatter(dl_stats, mecc_stats)
     print("✓ 图像生成完成")
-    print("=" * 80)
 
-    ploter = PlotLib()
-    ploter.figs.append(fig)
-    ploter.show()
+    print("\n[步骤4] 推送到 WebUI...")
+    web_push(fig, page='fig4_24 主频-能量散点 DL vs MECC', slot=0,
+             title='主频-能量散点对比', page_cols=1)
+    print("✓ 推送完成")
+    print("=" * 80)
 
 
 if __name__ == "__main__":

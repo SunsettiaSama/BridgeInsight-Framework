@@ -9,7 +9,7 @@ import yaml
 from .sft import SFTTrainer
 from src.config.train_eval.deep_learning_module.sft import SFTTrainerConfig
 from src.config.data_processer.datasets.AnnotationDataset.AnnotationDatasetConfig import AnnotationDatasetConfig
-from src.deep_learning_module.model_factory import get_model
+from src.training.deep_learning.model_factory import get_model
 from src.data_processer.datasets.data_factory import get_dataset
 
 logger = logging.getLogger(__name__)

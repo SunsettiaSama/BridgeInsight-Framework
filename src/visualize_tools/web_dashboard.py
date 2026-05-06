@@ -28,9 +28,12 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime
 import io
 import json
+import pathlib
 import queue
+import shutil
 import socketserver
 import threading
 import time
@@ -68,7 +71,9 @@ body{display:flex;height:100vh;background:var(--bg);color:var(--text);
 
 /* ── 侧边栏 ── */
 #sidebar{width:var(--sidebar);min-width:var(--sidebar);display:flex;
-  flex-direction:column;border-right:1px solid var(--border);background:var(--surface)}
+  flex-direction:column;background:var(--surface);
+  transition:width .2s ease,min-width .2s ease;overflow:hidden}
+#sidebar.collapsed{width:0;min-width:0}
 #sb-header{padding:14px 16px 10px;border-bottom:1px solid var(--border)}
 #sb-title{font-size:16px;font-weight:700;letter-spacing:.4px;color:var(--accent)}
 #conn{font-size:11px;color:var(--dim);margin-top:4px}
@@ -78,6 +83,18 @@ body{display:flex;height:100vh;background:var(--bg);color:var(--text);
   color:var(--text);font-size:12px;width:calc(100% - 20px);outline:none}
 #sb-search::placeholder{color:var(--dim)}
 #pages-list{flex:1;overflow-y:auto;padding:4px 0}
+
+/* ── 侧边栏折叠按钮 ── */
+#sb-toggle{
+  flex-shrink:0;width:16px;padding:0;
+  background:var(--surface);border:none;
+  border-left:1px solid var(--border);border-right:1px solid var(--border);
+  cursor:pointer;color:var(--dim);
+  display:flex;align-items:center;justify-content:center;
+  transition:background .15s,color .15s;user-select:none;font-size:11px}
+#sb-toggle:hover{background:var(--btn-hover);color:var(--text)}
+#sb-toggle .toggle-arrow{
+  display:inline-block;transition:transform .2s ease;line-height:1}
 
 .page-item{
   padding:9px 16px;cursor:pointer;
@@ -195,6 +212,10 @@ body{display:flex;height:100vh;background:var(--bg);color:var(--text);
   <div id="pages-list"></div>
 </div>
 
+<button id="sb-toggle" onclick="toggleSidebar()" title="收起 / 展开侧边栏">
+  <span class="toggle-arrow">&#8249;</span>
+</button>
+
 <div id="main">
   <div id="topbar">
     <button class="nav-btn" id="btn-prev" onclick="prevPage()" disabled>&#8592; 上一页</button>
@@ -239,6 +260,14 @@ const pageSlots = {};      // {name: {slot: {image, title}}} — 本地缓存
 
 let lbSlots = [];          // 灯箱当前页所有 slot
 let lbIdx   = 0;
+
+// ── 侧边栏折叠 ────────────────────────────────────────────
+function toggleSidebar() {
+  const sb    = document.getElementById('sidebar');
+  const arrow = document.querySelector('#sb-toggle .toggle-arrow');
+  const collapsed = sb.classList.toggle('collapsed');
+  arrow.style.transform = collapsed ? 'rotate(180deg)' : '';
+}
 
 // ── 列数管理 ──────────────────────────────────────────────
 function getActiveCols() {
@@ -364,18 +393,70 @@ function filterPages(q) {
     el.classList.toggle('filtered', q !== '' && !el.dataset.page.toLowerCase().includes(q)));
 }
 
-// ── 下载 ─────────────────────────────────────────────────
-function downloadPage() {
-  if (!currentPage) return;
-  const slots = pageSlots[currentPage] || {};
-  Object.entries(slots).forEach(([slot, info]) => {
+// ── 文件保存工具 ──────────────────────────────────────────
+function _dataUriToBlob(dataUri) {
+  const [head, b64] = dataUri.split(',');
+  const mime = head.match(/:(.*?);/)[1];
+  const bin  = atob(b64);
+  const buf  = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return new Blob([buf], { type: mime });
+}
+
+// 单文件：调用系统"另存为"对话框（File System Access API）；
+// 浏览器不支持时回退到传统 <a download>。
+async function _saveOne(dataUri, suggestedName) {
+  if (window.showSaveFilePicker) {
+    const handle = await window.showSaveFilePicker({
+      suggestedName,
+      types: [{ description: 'PNG 图像', accept: { 'image/png': ['.png'] } }],
+    });
+    const writable = await handle.createWritable();
+    await writable.write(_dataUriToBlob(dataUri));
+    await writable.close();
+  } else {
     const a = document.createElement('a');
-    a.href = info.image;
-    a.download = currentPage.replace(/[\/\\:*?"<>|]/g, '_') + '_slot' + slot + '.png';
-    document.body.appendChild(a);
+    a.href = dataUri;
+    a.download = suggestedName;
     a.click();
-    document.body.removeChild(a);
-  });
+  }
+}
+
+// 多文件：调用系统"选择文件夹"对话框，将所有图像批量写入；
+// 浏览器不支持时逐文件触发传统下载。
+async function _saveMany(entries, pagePrefix) {
+  if (window.showDirectoryPicker) {
+    let dirHandle;
+    dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    for (const [slot, info] of entries) {
+      const name = pagePrefix + '_slot' + slot + '.png';
+      const fh = await dirHandle.getFileHandle(name, { create: true });
+      const w  = await fh.createWritable();
+      await w.write(_dataUriToBlob(info.image));
+      await w.close();
+    }
+  } else {
+    for (const [slot, info] of entries) {
+      const a = document.createElement('a');
+      a.href = info.image;
+      a.download = pagePrefix + '_slot' + slot + '.png';
+      a.click();
+    }
+  }
+}
+
+// ── 下载 ─────────────────────────────────────────────────
+async function downloadPage() {
+  if (!currentPage) return;
+  const slots   = pageSlots[currentPage] || {};
+  const entries = Object.entries(slots).filter(([, info]) => info && info.image);
+  if (!entries.length) return;
+  const prefix  = currentPage.replace(/[\/\\:*?"<>|]/g, '_');
+  if (entries.length === 1) {
+    await _saveOne(entries[0][1].image, prefix + '_slot' + entries[0][0] + '.png');
+  } else {
+    await _saveMany(entries, prefix);
+  }
 }
 
 // ── 灯箱 ─────────────────────────────────────────────────
@@ -402,15 +483,11 @@ function lbStep(dir) {
   lbIdx = Math.max(0, Math.min(lbSlots.length - 1, lbIdx + dir));
   _renderLightbox();
 }
-function lbDownload() {
+async function lbDownload() {
   if (!lbSlots.length) return;
   const [slot, info] = lbSlots[lbIdx];
-  const a = document.createElement('a');
-  a.href = info.image;
-  a.download = currentPage.replace(/[\/\\:*?"<>|]/g,'_') + '_slot' + slot + '.png';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  const name = currentPage.replace(/[\/\\:*?"<>|]/g,'_') + '_slot' + slot + '.png';
+  await _saveOne(info.image, name);
 }
 function closeLightbox() {
   document.getElementById('lightbox').classList.remove('open');
@@ -428,11 +505,21 @@ document.addEventListener('keydown', e => {
 const es = new EventSource('/stream');
 
 es.addEventListener('update', e => {
-  const d = JSON.parse(e.data);
-  if (!pageSlots[d.page]) pageSlots[d.page] = {};
-  pageSlots[d.page][d.slot] = {image: d.image, title: d.title};
-  if (d.page === currentPage) setSlot(parseInt(d.slot), d.image, d.title);
-  else markDirty(d.page);
+  const d = JSON.parse(e.data);   // {page, slot, title} — 不含图像
+  if (d.page === currentPage) {
+    // 当前页：立即 fetch 图像并渲染
+    fetch('/api/image/' + encodeURIComponent(d.page) + '/' + encodeURIComponent(d.slot))
+      .then(r => r.json())
+      .then(info => {
+        if (!pageSlots[d.page]) pageSlots[d.page] = {};
+        pageSlots[d.page][d.slot] = info;
+        setSlot(parseInt(d.slot), info.image, info.title);
+      });
+  } else {
+    // 非当前页：使缓存失效（切换到该页时重新拉取），并标记为有更新
+    if (pageSlots[d.page]) delete pageSlots[d.page];
+    markDirty(d.page);
+  }
 });
 
 es.addEventListener('new_page', e => {
@@ -500,6 +587,21 @@ class _Handler(BaseHTTPRequestHandler):
             with self.dashboard._lock:
                 meta = dict(self.dashboard._meta.get(name, {'cols': self.dashboard._cols}))
             self._json(meta)
+        elif path.startswith('/api/image/'):
+            # /api/image/<page>/<slot>  — 按需返回单个 slot 的图像 JSON
+            rest  = urllib.parse.unquote(path[len('/api/image/'):])
+            slash = rest.find('/')
+            if slash > 0:
+                pg = rest[:slash]
+                sl = rest[slash + 1:]
+                with self.dashboard._lock:
+                    info = self.dashboard._pages.get(pg, {}).get(sl)
+                if info:
+                    self._json(info)
+                else:
+                    self.send_error(404)
+            else:
+                self.send_error(400)
         elif path.startswith('/api/download/'):
             # /api/download/<page>/<slot>
             rest  = urllib.parse.unquote(path[len('/api/download/'):])
@@ -597,24 +699,44 @@ class WebDashboard:
 
     参数
     ----
-    port      : 监听端口（默认 5678）
-    cols      : 默认格子列数（可被 per-page page_cols 覆盖，默认 3）
-    auto_open : 启动后是否自动打开浏览器（默认 True）
+    port       : 监听端口（默认 5678）
+    cols       : 默认格子列数（可被 per-page page_cols 覆盖，默认 3）
+    auto_open  : 启动后是否自动打开浏览器（默认 True）
+    cache_dir  : 本地图像缓存目录（默认 '.webui_img'）。
+                 设为 None 或 '' 时禁用磁盘缓存。
+    max_rounds : 最多保留的历史页面数（默认 20）。
+                 超出部分按最旧顺序清理。0 表示无限制。
     """
 
-    def __init__(self, port: int = 5678, cols: int = 3, auto_open: bool = True):
-        self._port      = port
-        self._cols      = cols
-        self._auto_open = auto_open
+    # Windows/Linux 均不允许在路径中出现的字符
+    _INVALID_PATH_CHARS = frozenset(r'\/:*?"<>|')
 
-        # 数据存储
+    def __init__(
+        self,
+        port: int = 5678,
+        cols: int = 3,
+        auto_open: bool = True,
+        cache_dir: Optional[str] = '.webui_img',
+        max_rounds: int = 20,
+    ):
+        self._port       = port
+        self._cols       = cols
+        self._auto_open  = auto_open
+        self._max_rounds = max_rounds
+        self._cache_dir  = pathlib.Path(cache_dir) if cache_dir else None
+
+        # 内存数据存储
         self._pages: Dict[str, Dict[str, dict]] = {}
         self._meta:  Dict[str, dict]             = {}   # {page: {cols: int, ...}}
         self._clients: List[queue.Queue]          = []
-        self._lock    = threading.Lock()
+        self._lock      = threading.Lock()
+        self._disk_lock = threading.Lock()   # 保护磁盘读写，与 _lock 解耦
         self._server: Optional[_ThreadedHTTPServer] = None
 
         self._html_cache = _HTML_TEMPLATE.replace('COLS_VALUE', str(cols))
+
+        # 启动时从磁盘缓存恢复历史页面
+        self._load_cache()
 
     # ── 服务生命周期 ──────────────────────────────────────────────────────
 
@@ -643,6 +765,117 @@ class WebDashboard:
         except KeyboardInterrupt:
             self.stop()
 
+    # ── 磁盘缓存 ──────────────────────────────────────────────────────────
+
+    def _sanitize_page(self, page: str) -> str:
+        """将 page 名称中的非法路径字符替换为下划线，保证目录名合法。"""
+        return ''.join('_' if c in self._INVALID_PATH_CHARS else c for c in page)
+
+    def _page_dir(self, page: str) -> pathlib.Path:
+        return self._cache_dir / self._sanitize_page(page)
+
+    def _index_path(self) -> pathlib.Path:
+        return self._cache_dir / '_index.json'
+
+    def _load_cache(self):
+        """启动时从磁盘恢复历史页面到内存。按 oldest-first 顺序插入，
+        保证 /api/pages 返回的键顺序与浏览器侧边栏的 newest-first 一致。"""
+        if self._cache_dir is None:
+            return
+        idx = self._index_path()
+        if not idx.exists():
+            return
+
+        with open(idx, encoding='utf-8') as f:
+            index: list = json.load(f)
+
+        loaded = 0
+        for entry in reversed(index):   # oldest first → newest 最后插入 _pages
+            page     = entry['page']
+            cols     = entry.get('cols', self._cols)
+            page_dir = self._page_dir(page)
+            meta_p   = page_dir / '_meta.json'
+            if not page_dir.exists() or not meta_p.exists():
+                continue
+
+            with open(meta_p, encoding='utf-8') as f:
+                meta = json.load(f)
+
+            self._pages[page] = {}
+            self._meta[page]  = {'cols': cols}
+            for slot_str, slot_info in meta.get('slots', {}).items():
+                png_p = page_dir / f'{slot_str}.png'
+                if not png_p.exists():
+                    continue
+                raw = png_p.read_bytes()
+                b64 = base64.b64encode(raw).decode('ascii')
+                self._pages[page][slot_str] = {
+                    'image': f'data:image/png;base64,{b64}',
+                    'title': slot_info.get('title', f'slot {slot_str}'),
+                }
+            loaded += 1
+
+        if loaded:
+            print(f'[VibDash] 从缓存加载了 {loaded} 个历史页面 ← {self._cache_dir}')
+
+    def _save_slot(self, page: str, slot: str, image_uri: str, title: str):
+        """将单个 slot 的 PNG 写入磁盘，并更新该页面的 _meta.json。"""
+        page_dir = self._page_dir(page)
+        page_dir.mkdir(parents=True, exist_ok=True)
+
+        # 解码 base64 data URI 并存为原始 PNG（比存 base64 字符串省约 33%）
+        prefix = 'data:image/png;base64,'
+        raw    = base64.b64decode(image_uri[len(prefix):])
+        (page_dir / f'{slot}.png').write_bytes(raw)
+
+        # 更新 per-page 元数据
+        meta_p = page_dir / '_meta.json'
+        meta   = json.loads(meta_p.read_text(encoding='utf-8')) if meta_p.exists() \
+                 else {'slots': {}}
+        meta['slots'][slot] = {'title': title}
+        meta_p.write_text(json.dumps(meta, ensure_ascii=False), encoding='utf-8')
+
+    def _update_index_file(self, page: str, cols: int) -> List[str]:
+        """维护全局 _index.json，返回被淘汰的页面名列表。
+
+        同一 page 重复 push 时，移动到最新位置而不新增条目，
+        不会累计占用 round 配额。
+        """
+        if self._cache_dir is None or self._max_rounds == 0:
+            return []
+
+        with self._disk_lock:
+            idx = self._index_path()
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+            index: list = json.loads(idx.read_text(encoding='utf-8')) \
+                          if idx.exists() else []
+
+            # 移除该 page 的旧条目（无论是否首次），再插到最前
+            index = [e for e in index if e['page'] != page]
+            index.insert(0, {
+                'page'      : page,
+                'cols'      : cols,
+                'created_at': datetime.datetime.now().isoformat(timespec='seconds'),
+            })
+
+            # 淘汰超出 max_rounds 的最旧条目
+            evicted_names: List[str] = []
+            if self._max_rounds > 0 and len(index) > self._max_rounds:
+                old    = index[self._max_rounds:]
+                index  = index[:self._max_rounds]
+                for entry in old:
+                    old_dir = self._page_dir(entry['page'])
+                    if old_dir.exists():
+                        shutil.rmtree(old_dir, ignore_errors=True)
+                    evicted_names.append(entry['page'])
+
+            idx.write_text(
+                json.dumps(index, ensure_ascii=False, indent=2),
+                encoding='utf-8',
+            )
+
+        return evicted_names
+
     # ── 图像注入（同进程）────────────────────────────────────────────────
 
     def push(
@@ -653,15 +886,19 @@ class WebDashboard:
         title: Optional[str] = None,
         dpi: int = 150,
         page_cols: Optional[int] = None,
+        compress_level: int = 1,
+        tight: bool = True,
     ):
         """
         将 matplotlib Figure 注入指定页面的指定 slot。
 
         fig 可以是 Figure 对象，也可以是 (main_fig, aux_figs) 元组——仅取 main_fig。
-        page_cols : 该页面的网格列数（仅首次创建页面时生效）。
+        page_cols      : 该页面的网格列数（仅首次创建页面时生效）。
+        compress_level : PNG 压缩级别 0-9，默认 1（快速）。
+        tight          : 是否使用 bbox_inches='tight'，默认 True。
         """
         main_fig = fig[0] if isinstance(fig, tuple) else fig
-        image    = _fig_to_data_uri(main_fig, dpi)
+        image    = _fig_to_data_uri(main_fig, dpi, compress_level=compress_level, tight=tight)
         title    = title or f'slot {slot}'
 
         self._store_and_broadcast({
@@ -687,18 +924,25 @@ class WebDashboard:
                 self._pages[page] = {}
                 self._meta[page]  = {'cols': page_cols if page_cols is not None else self._cols}
             self._pages[page][slot] = {'image': image, 'title': title}
+            cols = self._meta[page]['cols']
 
+        # SSE 广播（先广播，让浏览器尽早知晓，磁盘 I/O 在后面异步完成）
         if is_new:
-            self._broadcast('new_page', {
-                'page': page,
-                'cols': self._meta[page]['cols'],
-            })
-        self._broadcast('update', {
-            'page' : page,
-            'slot' : slot,
-            'image': image,
-            'title': title,
-        })
+            self._broadcast('new_page', {'page': page, 'cols': cols})
+        # update 事件只携带元信息，图像通过 /api/image/ 按需拉取
+        self._broadcast('update', {'page': page, 'slot': slot, 'title': title})
+
+        # ── 磁盘持久化（在 _lock 外执行，不阻塞其他请求）────────────────
+        if self._cache_dir is not None:
+            self._save_slot(page, slot, image, title)
+            evicted = self._update_index_file(page, cols)
+            if evicted:
+                # 将被淘汰的页面同步从内存移除
+                with self._lock:
+                    for ep in evicted:
+                        self._pages.pop(ep, None)
+                        self._meta.pop(ep, None)
+                print(f'[VibDash] 缓存已淘汰 {len(evicted)} 个旧页面：{evicted}')
 
     def _broadcast(self, event: str, data: dict):
         msg = f'event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n'
@@ -718,6 +962,8 @@ def push(
     port: int = 5678,
     dpi: int = 150,
     page_cols: Optional[int] = None,
+    compress_level: int = 1,
+    tight: bool = True,
 ):
     """
     从任意脚本/进程向已运行的 VibDash 服务推送一张图。
@@ -727,18 +973,20 @@ def push(
 
     参数
     ----
-    fig       : matplotlib.Figure 或 (main_fig, aux_figs) 元组
-    page      : 页面名称（同名多次 push 累积到同一页）
-    slot      : 格子编号（0-based）
-    title     : 格子标题（默认 "slot N"）
-    port      : VibDash 服务端口（默认 5678）
-    dpi       : 渲染分辨率（默认 150）
-    page_cols : 该页面列数（仅首次创建页面时生效）
+    fig            : matplotlib.Figure 或 (main_fig, aux_figs) 元组
+    page           : 页面名称（同名多次 push 累积到同一页）
+    slot           : 格子编号（0-based）
+    title          : 格子标题（默认 "slot N"）
+    port           : VibDash 服务端口（默认 5678）
+    dpi            : 渲染分辨率（默认 150）
+    page_cols      : 该页面列数（仅首次创建页面时生效）
+    compress_level : PNG 压缩级别 0-9，默认 1（快速）
+    tight          : 是否使用 bbox_inches='tight'，默认 True
     """
     import requests
 
     main_fig = fig[0] if isinstance(fig, tuple) else fig
-    image    = _fig_to_data_uri(main_fig, dpi)
+    image    = _fig_to_data_uri(main_fig, dpi, compress_level=compress_level, tight=tight)
     title    = title or f'slot {slot}'
 
     url = f'http://localhost:{port}/push'
@@ -762,11 +1010,28 @@ def push(
 # 内部工具
 # ---------------------------------------------------------------------------
 
-def _fig_to_data_uri(fig, dpi: int = 150) -> str:
-    """将 matplotlib Figure 序列化为 base64 data URI。"""
+def _fig_to_data_uri(
+    fig,
+    dpi: int = 150,
+    compress_level: int = 1,
+    tight: bool = True,
+) -> str:
+    """将 matplotlib Figure 序列化为 base64 data URI。
+
+    compress_level : PNG 压缩级别 0-9，越低越快（默认 1）。
+                     matplotlib 默认为 6，level=1 编码速度约快 3-5x，
+                     文件体积增加约 20-30%，对 Web 显示无感知差异。
+    tight          : 是否使用 bbox_inches='tight'（默认 True）。
+                     设为 False 可跳过 tight-layout 二次渲染，约快 50%，
+                     但需要确保 Figure 本身已通过 tight_layout() 处理好边距。
+    """
     buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight',
-                facecolor='white', edgecolor='none')
+    fig.savefig(
+        buf, format='png', dpi=dpi,
+        bbox_inches='tight' if tight else None,
+        facecolor='white', edgecolor='none',
+        pil_kwargs={'compress_level': compress_level},
+    )
     buf.seek(0)
     b64 = base64.b64encode(buf.getvalue()).decode('ascii')
     return f'data:image/png;base64,{b64}'
@@ -779,11 +1044,19 @@ def _fig_to_data_uri(fig, dpi: int = 150) -> str:
 _global_dashboard: Optional[WebDashboard] = None
 
 
-def _get_or_start_dashboard(port: int, cols: int) -> WebDashboard:
+def _get_or_start_dashboard(
+    port: int,
+    cols: int,
+    cache_dir: Optional[str] = '.webui_img',
+    max_rounds: int = 20,
+) -> WebDashboard:
     """返回全局 dashboard 实例，若未启动则自动启动。"""
     global _global_dashboard
     if _global_dashboard is None or _global_dashboard._port != port:
-        _global_dashboard = WebDashboard(port=port, cols=cols).start()
+        _global_dashboard = WebDashboard(
+            port=port, cols=cols,
+            cache_dir=cache_dir, max_rounds=max_rounds,
+        ).start()
     return _global_dashboard
 
 
@@ -796,15 +1069,19 @@ if __name__ == '__main__':
         description='VibDash 独立服务器 — 启动后任意脚本可通过 push() 注入图像',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument('--port',       type=int,  default=5678, help='监听端口')
-    parser.add_argument('--cols',       type=int,  default=3,    help='默认网格列数')
-    parser.add_argument('--no-browser', action='store_true',     help='不自动打开浏览器')
+    parser.add_argument('--port',       type=int,  default=5678,       help='监听端口')
+    parser.add_argument('--cols',       type=int,  default=3,          help='默认网格列数')
+    parser.add_argument('--no-browser', action='store_true',           help='不自动打开浏览器')
+    parser.add_argument('--cache-dir',  type=str,  default='.webui_img', help='本地图像缓存目录（留空则禁用）')
+    parser.add_argument('--max-rounds', type=int,  default=20,         help='最多保留的历史页面数（0=无限制）')
     args = parser.parse_args()
 
     dash = WebDashboard(
         port=args.port,
         cols=args.cols,
         auto_open=not args.no_browser,
+        cache_dir=args.cache_dir or None,
+        max_rounds=args.max_rounds,
     )
     dash.start()
     dash.wait()

@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
@@ -7,11 +7,11 @@ import logging
 import time
 
 # 导入各个模块的主函数
-from src.train_eval.deep_learning_module.train_eval_models.search_hyperparams import main_search
-from src.train_eval.deep_learning_module.train_eval_models.mlp import main as main_mlp
-from src.train_eval.deep_learning_module.train_eval_models.rnn import main as main_rnn
-from src.train_eval.deep_learning_module.train_eval_models.lstm import main as main_lstm
-from src.train_eval.deep_learning_module.train_eval_models.cnn import main as main_cnn
+from src.training.deep_learning.scripts.search_hyperparams import main_search
+from src.training.deep_learning.scripts.mlp import main as main_mlp
+from src.training.deep_learning.scripts.rnn import main as main_rnn
+from src.training.deep_learning.scripts.lstm import main as main_lstm
+from src.training.deep_learning.scripts.cnn import main as main_cnn
 
 logging.basicConfig(
     level=logging.INFO,
@@ -99,3 +99,4 @@ def run_all_pipelines():
 
 if __name__ == "__main__":
     run_all_pipelines()
+

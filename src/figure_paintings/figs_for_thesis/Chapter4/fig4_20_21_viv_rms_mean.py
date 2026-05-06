@@ -8,10 +8,18 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
 from src.figure_paintings.figs_for_thesis.config import (
     CN_FONT, FONT_SIZE, REC_FIG_SIZE,
     VIV_INPLANE_COLOR, VIV_OUTPLANE_COLOR,
+)
+
+_chapter4_dir = str(Path(__file__).parent)
+if _chapter4_dir not in sys.path:
+    sys.path.insert(0, _chapter4_dir)
+from _viv_pipeline import (
+    load_latest_result, get_viv_samples, compute_signal_stats, load_enriched_stats,
+    MECC_INPLANE_COLOR, MECC_OUTPLANE_COLOR,
 )
 
 
@@ -53,6 +61,10 @@ class Config:
     ENRICHED_STATS_DIR = (
         project_root / "results" / "enriched_stats" / "class_1_viv"
     )
+
+    DL_RESULT_GLOB   = project_root / "results" / "identification_result"        / "res_cnn_full_dataset_*.json"
+    MECC_RESULT_GLOB = project_root / "results" / "identification_result_mecc_viv" / "mecc_viv_only_*.json"
+    MAX_SAMPLES      = 5000
 
 
 # ==================== 数据加载 ====================
@@ -110,8 +122,15 @@ def _add_legend(ax):
         t.set_fontproperties(CN_FONT)
 
 
+def _step_hist(ax, data: np.ndarray, bins, color: str, label: str):
+    """绘制阶梯轮廓直方图（用于 MECC 叠加，不遮挡 DL 柱）。"""
+    counts, edges = np.histogram(data, bins=bins)
+    ax.step(edges[:-1], counts, where='post', color=color,
+            linewidth=1.6, alpha=0.85, label=label)
+
+
 # ==================== 图1a：主体分布直方图 ====================
-def plot_rms_histogram(stats: dict, x_split: float) -> plt.Figure:
+def plot_rms_histogram(stats: dict, x_split: float, mecc_stats: dict | None = None) -> plt.Figure:
     fig, ax = plt.subplots(figsize=Config.FIG_SIZE)
 
     in_rms  = stats["inplane_rms"]
@@ -126,6 +145,12 @@ def plot_rms_histogram(stats: dict, x_split: float) -> plt.Figure:
 
     _grouped_bars(ax, centers, counts_in, counts_out, width)
 
+    if mecc_stats is not None:
+        m_in  = mecc_stats["inplane_rms"]
+        m_out = mecc_stats["outplane_rms"]
+        _step_hist(ax, m_in[m_in   <= x_split], bins, MECC_INPLANE_COLOR,  'MECC 面内')
+        _step_hist(ax, m_out[m_out <= x_split], bins, MECC_OUTPLANE_COLOR, 'MECC 面外')
+
     if Config.HIST_LOG_SCALE:
         ax.set_yscale('log')
         ylabel = '样本数（个，对数坐标）'
@@ -135,7 +160,7 @@ def plot_rms_histogram(stats: dict, x_split: float) -> plt.Figure:
     ax.set_xlim(0, x_split)
     ax.set_xlabel(r'RMS ($m/s^2$)', labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
     ax.set_ylabel(ylabel, labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    ax.set_title('涡激共振加速度 RMS 主体分布', fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=14)
+    ax.set_title('涡激共振加速度 RMS 主体分布（DL vs MECC）', fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=14)
     ax.tick_params(axis='both', which='major', labelsize=FONT_SIZE - 2)
     _add_legend(ax)
     _apply_grid(ax)
@@ -144,7 +169,7 @@ def plot_rms_histogram(stats: dict, x_split: float) -> plt.Figure:
 
 
 # ==================== 图1b：尾部分布直方图 ====================
-def plot_rms_tail_histogram(stats: dict, x_split: float) -> plt.Figure:
+def plot_rms_tail_histogram(stats: dict, x_split: float, mecc_stats: dict | None = None) -> plt.Figure:
     fig, ax = plt.subplots(figsize=Config.FIG_SIZE)
 
     in_rms  = stats["inplane_rms"]
@@ -163,10 +188,16 @@ def plot_rms_tail_histogram(stats: dict, x_split: float) -> plt.Figure:
 
     _grouped_bars(ax, centers, counts_in, counts_out, width)
 
+    if mecc_stats is not None:
+        m_in  = mecc_stats["inplane_rms"]
+        m_out = mecc_stats["outplane_rms"]
+        _step_hist(ax, m_in[(m_in   > x_split) & (m_in   <= x_tail_max)], bins, MECC_INPLANE_COLOR,  'MECC 面内')
+        _step_hist(ax, m_out[(m_out > x_split) & (m_out  <= x_tail_max)], bins, MECC_OUTPLANE_COLOR, 'MECC 面外')
+
     ax.set_xlim(x_split, x_tail_max)
     ax.set_xlabel(r'RMS ($m/s^2$)', labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
     ax.set_ylabel('样本数（个）', labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    ax.set_title('涡激共振加速度 RMS 尾部分布', fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=14)
+    ax.set_title('涡激共振加速度 RMS 尾部分布（DL vs MECC）', fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=14)
     ax.tick_params(axis='both', which='major', labelsize=FONT_SIZE - 2)
     _add_legend(ax)
     _apply_grid(ax)
@@ -175,7 +206,7 @@ def plot_rms_tail_histogram(stats: dict, x_split: float) -> plt.Figure:
 
 
 # ==================== 图2：全量散点（面内 vs 面外 RMS） ====================
-def plot_rms_scatter(stats: dict) -> plt.Figure:
+def plot_rms_scatter(stats: dict, mecc_stats: dict | None = None) -> plt.Figure:
     fig, ax = plt.subplots(figsize=Config.FIG_SIZE)
 
     in_rms  = stats["inplane_rms"]
@@ -212,8 +243,21 @@ def plot_rms_scatter(stats: dict) -> plt.Figure:
         alpha=Config.OUTLIER_ALPHA,
         linewidths=0,
         zorder=2,
-        label='离群点',
+        label='DL 离群点',
     )
+
+    if mecc_stats is not None:
+        m_in  = mecc_stats["inplane_rms"]
+        m_out = mecc_stats["outplane_rms"]
+        n_m = len(m_in)
+        if n_m > Config.SCATTER_MAX_POINTS:
+            rng_m = np.random.default_rng(Config.SCATTER_SEED + 10)
+            idx_m = rng_m.choice(n_m, size=Config.SCATTER_MAX_POINTS, replace=False)
+            m_in  = m_in[idx_m]
+            m_out = m_out[idx_m]
+        ax.scatter(m_out, m_in, s=Config.SCATTER_SIZE,
+                   color=MECC_INPLANE_COLOR, alpha=Config.SCATTER_ALPHA,
+                   linewidths=0, marker='D', zorder=3, label='MECC')
 
     leg = ax.legend(fontsize=FONT_SIZE - 2, framealpha=0.9, prop=CN_FONT)
     for t in leg.get_texts():
@@ -221,7 +265,7 @@ def plot_rms_scatter(stats: dict) -> plt.Figure:
 
     ax.set_xlabel(r'面外 RMS ($m/s^2$)', labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
     ax.set_ylabel(r'面内 RMS ($m/s^2$)', labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    ax.set_title('涡激共振 RMS 面内-面外散点图', fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=14)
+    ax.set_title('涡激共振 RMS 面内-面外散点图（DL vs MECC）', fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=14)
     ax.tick_params(axis='both', which='major', labelsize=FONT_SIZE - 2)
     _apply_grid(ax)
     plt.tight_layout()
@@ -229,7 +273,7 @@ def plot_rms_scatter(stats: dict) -> plt.Figure:
 
 
 # ==================== 图3：放大散点（正方形） ====================
-def plot_rms_scatter_zoomed(stats: dict) -> plt.Figure:
+def plot_rms_scatter_zoomed(stats: dict, mecc_stats: dict | None = None) -> plt.Figure:
     fig, ax = plt.subplots(figsize=Config.SCATTER_ZOOM_FIGSIZE)
 
     in_rms  = stats["inplane_rms"]
@@ -257,7 +301,29 @@ def plot_rms_scatter_zoomed(stats: dict) -> plt.Figure:
         color=Config.INPLANE_COLOR,
         alpha=Config.SCATTER_ALPHA,
         linewidths=0,
+        label='DL',
     )
+
+    if mecc_stats is not None:
+        m_in  = mecc_stats["inplane_rms"]
+        m_out = mecc_stats["outplane_rms"]
+        m_mask = (
+            (m_out >= x_lo) & (m_out <= x_hi) &
+            (m_in  >= y_lo) & (m_in  <= y_hi)
+        )
+        mx_plot = m_out[m_mask]
+        my_plot = m_in[m_mask]
+        if len(mx_plot) > Config.SCATTER_MAX_POINTS:
+            rng_m = np.random.default_rng(Config.SCATTER_SEED + 10)
+            idx_m = rng_m.choice(len(mx_plot), size=Config.SCATTER_MAX_POINTS, replace=False)
+            mx_plot = mx_plot[idx_m]
+            my_plot = my_plot[idx_m]
+        ax.scatter(mx_plot, my_plot, s=Config.SCATTER_SIZE,
+                   color=MECC_INPLANE_COLOR, alpha=Config.SCATTER_ALPHA,
+                   linewidths=0, marker='D', label='MECC')
+        leg = ax.legend(fontsize=FONT_SIZE - 2, framealpha=0.9, prop=CN_FONT)
+        for t in leg.get_texts():
+            t.set_fontproperties(CN_FONT)
 
     ax.set_xlim(x_lo, x_hi)
     ax.set_ylim(y_lo, y_hi)
@@ -274,42 +340,40 @@ def plot_rms_scatter_zoomed(stats: dict) -> plt.Figure:
 # ==================== 主函数 ====================
 def main():
     print("=" * 80)
-    print("涡激共振 RMS 分布（主体 / 尾部 / 全量散点 / 放大散点）")
+    print("涡激共振 RMS 分布（DL vs MECC）")
     print("=" * 80)
 
-    print(f"\n[步骤1] 从 enriched_stats 加载 RMS 数据...")
-    print(f"  数据目录：{Config.ENRICHED_STATS_DIR}")
-    stats = load_rms_from_enriched_stats()
+    print(f"\n[步骤1] 从 enriched_stats 加载 DL RMS 数据...")
+    dl_stats = load_enriched_stats(Config.ENRICHED_STATS_DIR)
+    n = len(dl_stats["inplane_rms"])
+    print(f"✓ DL 配对样本：{n}")
 
-    n = len(stats["inplane_rms"])
-    combined = np.concatenate([stats["inplane_rms"], stats["outplane_rms"]])
+    print(f"\n[步骤2] 加载 MECC 识别结果并计算统计量...")
+    mecc_result  = load_latest_result(Config.MECC_RESULT_GLOB)
+    mecc_samples = get_viv_samples(mecc_result, max_n=Config.MAX_SAMPLES)
+    print(f"  MECC VIV 样本：{len(mecc_samples)} 个，开始计算原始统计量...")
+    mecc_stats = compute_signal_stats(mecc_samples, source='MECC')
+    print(f"✓ MECC 配对样本：{len(mecc_stats['inplane_rms'])}")
+
+    combined = np.concatenate([dl_stats["inplane_rms"], dl_stats["outplane_rms"]])
     x_split  = float(np.percentile(combined, Config.HIST_X_PERCENTILE))
+    print(f"\n  分界值（DL {Config.HIST_X_PERCENTILE}pct）：{x_split:.4f} m/s²")
 
-    print(f"✓ 共加载 {n} 个配对样本")
-    print(f"  {Config.HIST_X_PERCENTILE}pct 分界值：{x_split:.4f} m/s²")
-    print(f"  面内 RMS：min={stats['inplane_rms'].min():.4f}  "
-          f"max={stats['inplane_rms'].max():.4f}  "
-          f"mean={stats['inplane_rms'].mean():.4f}")
-    print(f"  面外 RMS：min={stats['outplane_rms'].min():.4f}  "
-          f"max={stats['outplane_rms'].max():.4f}  "
-          f"mean={stats['outplane_rms'].mean():.4f}")
-
-    in_tail_n  = int(np.sum(stats["inplane_rms"]  > x_split))
-    out_tail_n = int(np.sum(stats["outplane_rms"] > x_split))
-    print(f"  尾部（> {x_split:.4f}）：面内 {in_tail_n} 条，面外 {out_tail_n} 条")
-
-    print("\n[步骤2] 绘制图像...")
-    fig_body    = plot_rms_histogram(stats, x_split)
-    fig_tail    = plot_rms_tail_histogram(stats, x_split)
-    fig_scatter = plot_rms_scatter(stats)
-    fig_zoom    = plot_rms_scatter_zoomed(stats)
+    print("\n[步骤3] 绘制四幅图像...")
+    fig_body    = plot_rms_histogram(dl_stats, x_split, mecc_stats)
+    fig_tail    = plot_rms_tail_histogram(dl_stats, x_split, mecc_stats)
+    fig_scatter = plot_rms_scatter(dl_stats, mecc_stats)
+    fig_zoom    = plot_rms_scatter_zoomed(dl_stats, mecc_stats)
     print("✓ 四幅图像生成完成")
-    print("=" * 80)
 
-    ploter = PlotLib()
-    for fig in [fig_body, fig_tail, fig_scatter, fig_zoom]:
-        ploter.figs.append(fig)
-    ploter.show()
+    print("\n[步骤4] 推送到 WebUI...")
+    PAGE   = 'fig4_20-21 VIV RMS DL vs MECC'
+    TITLES = ['RMS 主体分布', 'RMS 尾部分布', 'RMS 面内-面外散点', 'RMS 放大散点']
+    for slot, (fig, title) in enumerate(zip([fig_body, fig_tail, fig_scatter, fig_zoom], TITLES)):
+        web_push(fig, page=PAGE, slot=slot, title=title,
+                 page_cols=2 if slot == 0 else None)
+    print("✓ 推送完成")
+    print("=" * 80)
 
 
 if __name__ == "__main__":
