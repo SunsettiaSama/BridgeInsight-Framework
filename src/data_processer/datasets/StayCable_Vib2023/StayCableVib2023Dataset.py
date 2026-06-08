@@ -208,8 +208,9 @@ class StayCableVib2023Dataset(Dataset):
         # ---- DL 预识别结果（可选）----
         self._sample_predictions: Dict[int, int] = {}
         self._is_dl_identified: bool = False
-        if config.predictions_cache_path and Path(config.predictions_cache_path).exists():
-            self._load_predictions_from_cache(config.predictions_cache_path)
+        predictions_cache_path = getattr(config, "predictions_cache_path", None)
+        if predictions_cache_path and Path(predictions_cache_path).exists():
+            self._load_predictions_from_cache(predictions_cache_path)
 
     # =====================================================================
     # 公开接口
@@ -569,7 +570,11 @@ class StayCableVib2023Dataset(Dataset):
             return None
 
         logger.info(f"发现缓存文件，校验指纹……：{cache_path}")
-        raw = _load_json(str(cache_path))
+        try:
+            raw = _load_json(str(cache_path))
+        except json.JSONDecodeError as exc:
+            logger.warning(f"缓存文件损坏，将重建：{cache_path} ({exc})")
+            return None
         cached_fp = raw.get("fingerprint", {})
 
         if cached_fp != fingerprint:
