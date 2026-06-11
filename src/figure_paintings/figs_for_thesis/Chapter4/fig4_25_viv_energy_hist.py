@@ -17,7 +17,7 @@ from src.figure_paintings.figs_for_thesis.config import (
 _chapter4_dir = str(Path(__file__).parent)
 if _chapter4_dir not in sys.path:
     sys.path.insert(0, _chapter4_dir)
-from _viv_pipeline import (
+from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import (
     load_latest_result, get_viv_samples, compute_signal_stats, load_enriched_stats,
     MECC_INPLANE_COLOR, MECC_OUTPLANE_COLOR,
 )

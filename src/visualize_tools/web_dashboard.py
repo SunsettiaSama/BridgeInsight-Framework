@@ -7,18 +7,18 @@ VibDash — 基于标准库 HTTPServer + SSE 的轻量 Web 可视化仪表盘。
 ----
 # 1. 独立服务器（推荐）：在一个终端启动，其他脚本任意时间注入
 #    python -m src.visualize_tools.web_dashboard
-#    python -m src.visualize_tools.web_dashboard --port 5679 --cols 2
+#    python -m src.visualize_tools.web_dashboard --port 15679 --cols 2
 
 # 2. 同进程启动 + 推送
 from src.visualize_tools.web_dashboard import WebDashboard
-dash = WebDashboard(port=5678, cols=3).start()
+dash = WebDashboard(cols=3).start()
 dash.push(fig_ts,   page="Sample_001", slot=0, title="时程",   page_cols=2)
 dash.push(fig_psd,  page="Sample_001", slot=1, title="PSD")
 dash.wait()   # 阻塞，Ctrl+C 退出
 
 # 3. 跨进程推送（服务须已在运行）
 from src.visualize_tools.web_dashboard import push
-push(fig, page="Sample_002", slot=0, title="时程", port=5678, page_cols=2)
+push(fig, page="Sample_002", slot=0, title="时程", page_cols=2)
 
 # 4. PlotLib 集成
 ploter.show_web(page="fig4_22", cols=2)
@@ -29,11 +29,13 @@ from __future__ import annotations
 import argparse
 import base64
 import datetime
+import errno
 import io
 import json
 import pathlib
 import queue
 import shutil
+import socket
 import socketserver
 import threading
 import time
@@ -553,6 +555,56 @@ fetch('/api/pages')
 
 
 # ---------------------------------------------------------------------------
+# 端口探测（Windows 常将 5678–5777 等范围留给 Hyper-V/WSL，绑定会报 10013）
+# ---------------------------------------------------------------------------
+
+DEFAULT_PORT = 15678
+_BIND_HOST = 'localhost'
+
+
+def _port_bind_error(exc: OSError) -> str:
+    winerr = getattr(exc, 'winerror', None)
+    if winerr == 10048 or exc.errno in (errno.EADDRINUSE, 48):
+        return '端口已被其他进程占用'
+    if winerr == 10013 or exc.errno in (errno.EACCES, 13):
+        return '端口被系统保留或无权限绑定（Windows 上 5678–5777 等范围常被 Hyper-V/WSL 占用）'
+    return str(exc)
+
+
+def _probe_port(host: str, port: int) -> Optional[str]:
+    """返回 None 表示可绑定，否则为不可用原因。"""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind((host, port))
+    except OSError as exc:
+        return _port_bind_error(exc)
+    finally:
+        sock.close()
+    return None
+
+
+def _resolve_listen_port(host: str, port: int) -> int:
+    reason = _probe_port(host, port)
+    if reason is None:
+        return port
+
+    print(f'[VibDash] 端口 {port} 不可用: {reason}')
+    candidates = list(range(port + 1, port + 21))
+    if DEFAULT_PORT not in candidates:
+        candidates.append(DEFAULT_PORT)
+    candidates.extend(
+        p for p in range(DEFAULT_PORT + 1, DEFAULT_PORT + 81)
+        if p not in candidates
+    )
+    for candidate in candidates:
+        if _probe_port(host, candidate) is None:
+            print(f'[VibDash] 自动改用端口 {candidate}')
+            return candidate
+    raise OSError(f'[VibDash] 未找到可用端口（已尝试 {port + 1}–{port + 20} 及 {DEFAULT_PORT} 起 80 个端口）')
+
+
+# ---------------------------------------------------------------------------
 # HTTP 服务器（标准库，线程化）
 # ---------------------------------------------------------------------------
 
@@ -699,7 +751,7 @@ class WebDashboard:
 
     参数
     ----
-    port       : 监听端口（默认 5678）
+    port       : 监听端口（默认 15678；不可用时自动寻找相邻可用端口）
     cols       : 默认格子列数（可被 per-page page_cols 覆盖，默认 3）
     auto_open  : 启动后是否自动打开浏览器（默认 True）
     cache_dir  : 本地图像缓存目录（默认 '.webui_img'）。
@@ -713,7 +765,7 @@ class WebDashboard:
 
     def __init__(
         self,
-        port: int = 5678,
+        port: int = DEFAULT_PORT,
         cols: int = 3,
         auto_open: bool = True,
         cache_dir: Optional[str] = '.webui_img',
@@ -742,7 +794,8 @@ class WebDashboard:
 
     def start(self) -> "WebDashboard":
         _Handler.dashboard = self
-        self._server = _ThreadedHTTPServer(('localhost', self._port), _Handler)
+        self._port = _resolve_listen_port(_BIND_HOST, self._port)
+        self._server = _ThreadedHTTPServer((_BIND_HOST, self._port), _Handler)
         t = threading.Thread(target=self._server.serve_forever, daemon=True)
         t.start()
         url = f'http://localhost:{self._port}'
@@ -959,7 +1012,7 @@ def push(
     page: str,
     slot: int,
     title: Optional[str] = None,
-    port: int = 5678,
+    port: int = DEFAULT_PORT,
     dpi: int = 150,
     page_cols: Optional[int] = None,
     compress_level: int = 1,
@@ -977,7 +1030,7 @@ def push(
     page           : 页面名称（同名多次 push 累积到同一页）
     slot           : 格子编号（0-based）
     title          : 格子标题（默认 "slot N"）
-    port           : VibDash 服务端口（默认 5678）
+    port           : VibDash 服务端口（默认 15678）
     dpi            : 渲染分辨率（默认 150）
     page_cols      : 该页面列数（仅首次创建页面时生效）
     compress_level : PNG 压缩级别 0-9，默认 1（快速）
@@ -1069,7 +1122,7 @@ if __name__ == '__main__':
         description='VibDash 独立服务器 — 启动后任意脚本可通过 push() 注入图像',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument('--port',       type=int,  default=5678,       help='监听端口')
+    parser.add_argument('--port',       type=int,  default=DEFAULT_PORT, help='监听端口')
     parser.add_argument('--cols',       type=int,  default=3,          help='默认网格列数')
     parser.add_argument('--no-browser', action='store_true',           help='不自动打开浏览器')
     parser.add_argument('--cache-dir',  type=str,  default='.webui_img', help='本地图像缓存目录（留空则禁用）')

@@ -21,7 +21,10 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from src.data_processer.io_unpacker import UNPACK
-from src.identifier.deeplearning_methods import FullDatasetRunner
+from src.chapter4_characteristics._bootstrap import ensure_paths
+
+ensure_paths()
+from src.chapter3_identifier.identifier.dl.runner import FullDatasetRunner
 
 
 # ==================== 颜色常量（供各脚本统一引用） ====================

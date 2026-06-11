@@ -9,7 +9,10 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from src.data_processer.io_unpacker import UNPACK
-from src.identifier.deeplearning_methods import FullDatasetRunner
+from src.chapter4_characteristics._bootstrap import ensure_paths
+
+ensure_paths()
+from src.chapter3_identifier.identifier.dl.runner import FullDatasetRunner
 from src.figure_paintings.figs_for_thesis.config import (
     CN_FONT, FONT_SIZE, REC_FIG_SIZE,
     VIV_INPLANE_COLOR, VIV_OUTPLANE_COLOR,

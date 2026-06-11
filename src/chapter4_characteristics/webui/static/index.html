@@ -1,0 +1,819 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chapter4 振动特性分析</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1c1e26;
+      --surface-2: #252833;
+      --border: #2a2d3a;
+      --text: #d0d4e0;
+      --muted: #7a8094;
+      --accent: #4f8ef7;
+      --accent-soft: rgba(79, 142, 247, 0.12);
+      --ok: #3dd68c;
+      --warn: #f7a94f;
+      --err: #f07178;
+      --sidebar-w: 220px;
+      --header-h: 52px;
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    /* ── shell ── */
+    .app { display: flex; flex-direction: column; height: 100%; }
+    .topbar {
+      height: var(--header-h);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 18px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .brand { display: flex; flex-direction: column; gap: 1px; min-width: 180px; }
+    .brand-title { font-size: 15px; font-weight: 700; letter-spacing: 0.3px; color: var(--accent); }
+    .brand-sub { font-size: 11px; color: var(--muted); }
+    .topbar-spacer { flex: 1; }
+    .topbar-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      border-left: 1px solid var(--border);
+    }
+    .topbar-group:first-of-type { border-left: none; }
+
+    .body { display: flex; flex: 1; min-height: 0; }
+
+    /* ── sidebar ── */
+    .sidebar {
+      width: var(--sidebar-w);
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+    .nav-section {
+      padding: 14px 12px 6px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: calc(100% - 16px);
+      margin: 2px 8px;
+      padding: 9px 12px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text);
+      font-size: 13px;
+      text-align: left;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .nav-item:hover { background: var(--surface-2); border-color: var(--border); }
+    .nav-item.active {
+      background: var(--accent-soft);
+      border-color: rgba(79, 142, 247, 0.35);
+      color: #fff;
+    }
+    .nav-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--muted); flex-shrink: 0;
+    }
+    .nav-item.active .nav-dot { background: var(--accent); }
+
+    /* ── main ── */
+    .content {
+      flex: 1;
+      min-width: 0;
+      overflow: auto;
+      padding: 16px 18px;
+      background: var(--bg);
+    }
+    .panel { display: none; height: 100%; }
+    .panel.active { display: block; }
+
+    .page-head { margin-bottom: 14px; }
+    .page-title { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+    .page-desc { font-size: 12px; color: var(--muted); }
+
+    /* ── cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .card + .card { margin-top: 12px; }
+    .card-head {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .card-body { padding: 14px; }
+
+    /* ── controls ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 13px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      font-size: 13px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      white-space: nowrap;
+    }
+    .btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; }
+    .btn.primary:hover { background: #3d7ae8; }
+    .btn.ghost { background: transparent; }
+    .btn.sm { padding: 5px 10px; font-size: 12px; }
+
+    select, input[type="number"] {
+      background: var(--surface-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+    label.inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    label.inline input[type="checkbox"] { accent-color: var(--accent); }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .toolbar-divider {
+      width: 1px; height: 24px;
+      background: var(--border);
+      margin: 0 4px;
+    }
+
+    /* ── badges ── */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      background: var(--surface-2);
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+    .badge.run { background: rgba(247, 169, 79, 0.15); color: var(--warn); border-color: rgba(247, 169, 79, 0.35); }
+    .badge.ok { background: rgba(61, 214, 140, 0.12); color: var(--ok); border-color: rgba(61, 214, 140, 0.3); }
+    .badge.err { background: rgba(240, 113, 120, 0.12); color: var(--err); border-color: rgba(240, 113, 120, 0.3); }
+
+    /* ── status cards ── */
+    .stat-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .stat-card {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .stat-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .stat-value { font-size: 15px; font-weight: 600; }
+    .stat-value.ok { color: var(--ok); }
+    .stat-value.no { color: var(--muted); }
+
+    .dist-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .dist-item {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      text-align: center;
+    }
+    .dist-item .name { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .dist-item .count { font-size: 20px; font-weight: 700; color: var(--accent); }
+
+    /* ── log terminal ── */
+    .log-wrap {
+      background: #0a0c10;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .log-head {
+      padding: 6px 12px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .log-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .log-dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+    pre.log {
+      margin: 0;
+      padding: 12px 14px;
+      max-height: 320px;
+      overflow: auto;
+      font-family: "Cascadia Code", "Consolas", monospace;
+      font-size: 11.5px;
+      line-height: 1.55;
+      color: #b8c0d0;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* ── stats layout ── */
+    .stats-layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 14px;
+      height: calc(100vh - var(--header-h) - 32px);
+      min-height: 480px;
+    }
+    .stats-sidebar { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+    .stats-sidebar .card { flex-shrink: 0; }
+    .stats-sidebar .card.scroll { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .stats-sidebar .card.scroll .card-body { flex: 1; overflow-y: auto; }
+
+    .plot-list label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      margin-bottom: 4px;
+      border-radius: 7px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background 0.12s;
+    }
+    .plot-list label:hover { background: var(--surface-2); }
+    .plot-list label:has(input:checked) {
+      background: var(--accent-soft);
+      border-color: rgba(79, 142, 247, 0.3);
+    }
+    .plot-list input { accent-color: var(--accent); }
+
+    .preview-wrap {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .preview-wrap .card-body {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 0;
+      background: #0a0c10;
+      padding: 8px;
+    }
+    img.preview {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      border-radius: 6px;
+    }
+    .copula-stack img.preview {
+      width: 100%;
+      max-height: 180px;
+      margin-top: 8px;
+      background: #0a0c10;
+      border: 1px solid var(--border);
+    }
+
+    /* ── others layout ── */
+    .others-layout {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      gap: 14px;
+      height: calc(100vh - var(--header-h) - 32px);
+      min-height: 480px;
+    }
+    .queue-card { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+    .queue-card .card-body { flex: 1; overflow: auto; padding: 0; }
+    .detail-card { height: 100%; overflow: auto; }
+    .detail-card .card-body { padding: 16px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th {
+      position: sticky; top: 0; z-index: 1;
+      background: var(--surface-2);
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 8px 10px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    td { padding: 8px 10px; border-bottom: 1px solid var(--border); }
+    tbody tr { cursor: pointer; transition: background 0.1s; }
+    tbody tr:hover { background: var(--surface-2); }
+    tbody tr.selected { background: var(--accent-soft); }
+    tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+
+    .pager { display: flex; gap: 6px; padding: 10px; border-top: 1px solid var(--border); }
+
+    .clue {
+      background: rgba(247, 169, 79, 0.08);
+      border: 1px solid rgba(247, 169, 79, 0.25);
+      border-left: 3px solid var(--warn);
+      border-radius: 0 8px 8px 0;
+      padding: 9px 12px;
+      margin: 8px 0;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .meta-line { font-size: 12px; color: var(--muted); margin: 8px 0 14px; }
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin: 16px 0 8px;
+    }
+    tr.row-highlight td { color: var(--warn); font-weight: 600; }
+
+    .fig-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin: 12px 0;
+    }
+    .fig-cell {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .fig-cell .fig-label {
+      padding: 5px 8px;
+      font-size: 10px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .fig-cell img {
+      width: 100%;
+      height: 150px;
+      object-fit: contain;
+      background: #0a0c10;
+      display: block;
+    }
+
+    .empty-state {
+      color: var(--muted);
+      text-align: center;
+      padding: 48px 24px;
+      font-size: 13px;
+    }
+    .empty-state strong { display: block; color: var(--text); margin-bottom: 6px; font-size: 15px; }
+
+    pre.neighbors {
+      background: #0a0c10;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 11px;
+      overflow: auto;
+      max-height: 120px;
+      color: #9aa4b8;
+    }
+
+    ::-webkit-scrollbar { width: 7px; height: 7px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-title">Chapter4</div>
+      <div class="brand-sub">振动特性分析</div>
+    </div>
+    <div class="topbar-spacer"></div>
+    <div class="topbar-group">
+      <label class="inline" style="color:var(--text)">
+        Round
+        <select id="roundSelect">
+          <option value="1">Round 01</option>
+          <option value="2">Round 02</option>
+        </select>
+      </label>
+    </div>
+    <div class="topbar-group">
+      <span id="jobBadge" class="badge">idle</span>
+      <button id="btnReset" class="btn sm ghost">释放后台</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <nav class="sidebar" id="sidebarNav"></nav>
+
+    <div class="content">
+      <section id="panel-infer" class="panel active">
+        <div class="page-head">
+          <div class="page-title">全量识别与特征归档</div>
+          <div class="page-desc">启动 augment 模型推理、特征归档，并监控后台任务日志</div>
+        </div>
+
+        <div class="stat-row" id="statusCards">
+          <div class="stat-card"><div class="stat-label">识别结果</div><div class="stat-value no" id="stInfer">—</div></div>
+          <div class="stat-card"><div class="stat-label">特征归档</div><div class="stat-value no" id="stEnrich">—</div></div>
+          <div class="stat-card"><div class="stat-label">当前 Round</div><div class="stat-value" id="stRound">—</div></div>
+        </div>
+        <p id="statusLine" hidden></p>
+
+        <div class="card">
+          <div class="card-head">任务控制</div>
+          <div class="card-body">
+            <div class="toolbar">
+              <button id="btnInfer" class="btn primary">启动全量识别</button>
+              <button id="btnEnrich" class="btn">特征归档</button>
+              <div class="toolbar-divider"></div>
+              <button id="btnPreflight" class="btn ghost sm">预检</button>
+              <button id="btnSetActive" class="btn ghost sm">设为当前 Round</button>
+              <label class="inline"><input type="checkbox" id="smokeMode" /> 冒烟 limit=500</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <div class="log-wrap">
+            <div class="log-head"><span class="log-dot" id="logDot"></span> 任务日志</div>
+            <pre class="log" id="inferLog">等待任务…</pre>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <div class="card-head">类别分布</div>
+          <div class="card-body">
+            <div class="dist-grid" id="distSummary">
+              <div class="empty-state" style="grid-column:1/-1;padding:20px"><span>暂无分布数据，请先完成识别</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="panel-stats-0" class="panel"></section>
+      <section id="panel-stats-1" class="panel"></section>
+      <section id="panel-stats-2" class="panel"></section>
+      <section id="panel-stats-3" class="panel"></section>
+
+      <section id="panel-others" class="panel">
+        <div class="page-head">
+          <div class="page-title">Others 调查台</div>
+          <div class="page-desc">浏览高不确定性样本，查看归因线索与多视角图像</div>
+        </div>
+        <div class="others-layout">
+          <div class="card queue-card">
+            <div class="card-head">样本队列</div>
+            <div class="card-body">
+              <table id="othersTable">
+                <thead><tr><th>#</th><th>时间</th><th>u</th><th>RMS</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="pager">
+              <button id="othersPrev" class="btn sm ghost">上一页</button>
+              <button id="othersNext" class="btn sm ghost">下一页</button>
+            </div>
+          </div>
+          <div class="card detail-card">
+            <div class="card-head">样本详情</div>
+            <div class="card-body" id="othersDetail">
+              <div class="empty-state">
+                <strong>未选择样本</strong>
+                从左侧队列点击一行，查看归因调查详情
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+const TABS = [
+  { id: 'infer', label: '全量识别', section: '流水线' },
+  { id: 'stats-0', label: '随机振动', section: '类别统计' },
+  { id: 'stats-1', label: 'VIV', section: '类别统计' },
+  { id: 'stats-2', label: 'RWIV', section: '类别统计' },
+  { id: 'stats-3', label: '其他', section: '类别统计' },
+  { id: 'others', label: 'Others 调查', section: '调查' },
+];
+const CLASS_NAMES = ['随机振动', 'VIV', 'RWIV', '其他'];
+let state = { round: 1, tab: 'infer', othersPage: 0, selectedOthers: null, jobPoll: null };
+
+function $(id) { return document.getElementById(id); }
+function round() { return parseInt($('roundSelect').value, 10); }
+
+function initTabs() {
+  const nav = $('sidebarNav');
+  let lastSection = '';
+  TABS.forEach(t => {
+    if (t.section !== lastSection) {
+      const sec = document.createElement('div');
+      sec.className = 'nav-section';
+      sec.textContent = t.section;
+      nav.appendChild(sec);
+      lastSection = t.section;
+    }
+    const b = document.createElement('button');
+    b.className = 'nav-item' + (t.id === state.tab ? ' active' : '');
+    b.innerHTML = `<span class="nav-dot"></span>${t.label}`;
+    b.onclick = () => switchTab(t.id);
+    b.dataset.tab = t.id;
+    nav.appendChild(b);
+  });
+  for (let c = 0; c < 4; c++) buildStatsPanel(c);
+}
+
+function switchTab(id) {
+  state.tab = id;
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.tab === id);
+  });
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  const panel = $('panel-' + id);
+  if (panel) panel.classList.add('active');
+  if (id.startsWith('stats-')) {
+    const cid = parseInt(id.split('-')[1], 10);
+    refreshPlot(cid);
+  }
+  if (id === 'others') loadOthersQueue();
+}
+
+function buildStatsPanel(classId) {
+  const sec = $('panel-stats-' + classId);
+  sec.innerHTML = `
+    <div class="page-head">
+      <div class="page-title">${CLASS_NAMES[classId]}</div>
+      <div class="page-desc">统计图浏览与 Copula 拟合</div>
+    </div>
+    <div class="stats-layout">
+      <div class="stats-sidebar">
+        <div class="card scroll">
+          <div class="card-head">统计图</div>
+          <div class="card-body">
+            <div class="plot-list" id="plotList-${classId}"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head">Copula</div>
+          <div class="card-body">
+            <button class="btn sm" onclick="runCopula(${classId})">拟合 Copula</button>
+            <div class="copula-stack">
+              <img class="preview" id="copulaCmp-${classId}" alt="comparison" />
+              <img class="preview" id="copulaMarg-${classId}" alt="marginals" />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card preview-wrap">
+        <div class="card-head">
+          <span>预览</span>
+          <button class="btn sm ghost" onclick="savePlot(${classId})">保存当前图</button>
+        </div>
+        <div class="card-body">
+          <img class="preview" id="plotPreview-${classId}" alt="plot preview" />
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderDist(dist) {
+  const el = $('distSummary');
+  if (!dist || typeof dist !== 'object') {
+    el.innerHTML = '<div class="empty-state" style="grid-column:1/-1;padding:20px"><span>暂无分布数据</span></div>';
+    return;
+  }
+  el.innerHTML = CLASS_NAMES.map((name, i) =>
+    `<div class="dist-item"><div class="name">${name}</div><div class="count">${dist[i] ?? dist[String(i)] ?? 0}</div></div>`
+  ).join('');
+}
+
+function setReady(el, ready) {
+  el.textContent = ready ? '就绪' : '未就绪';
+  el.className = 'stat-value ' + (ready ? 'ok' : 'no');
+}
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(t || r.statusText);
+  }
+  const ct = r.headers.get('content-type') || '';
+  if (ct.includes('application/json')) return r.json();
+  return r.blob();
+}
+
+async function refreshStatus() {
+  const st = await api(`/api/status?round_idx=${round()}`);
+  $('statusLine').textContent = `round ${st.round_idx} | inference: ${st.inference_ready} | enrich: ${st.enrich_ready}`;
+  $('stRound').textContent = `Round ${String(st.round_idx).padStart(2, '0')}`;
+  setReady($('stInfer'), st.inference_ready);
+  setReady($('stEnrich'), st.enrich_ready);
+  if (st.class_counts) renderDist(st.class_counts);
+}
+
+async function pollJob() {
+  const js = await api('/api/jobs/status');
+  const badge = $('jobBadge');
+  badge.textContent = js.status + (js.phase ? ` · ${js.phase}` : '');
+  badge.className = 'badge ' + (js.status === 'running' ? 'run' : js.status === 'done' ? 'ok' : js.status === 'error' ? 'err' : '');
+  $('logDot').classList.toggle('on', js.status === 'running');
+  if (js.status === 'running') {
+    const log = await api(`/api/jobs/log?round_idx=${round()}&phase=${js.phase || 'infer'}`);
+    $('inferLog').textContent = log.log || '';
+    setTimeout(pollJob, 2000);
+  } else {
+    refreshStatus();
+    pollInferMonitor();
+  }
+}
+
+async function pollInferMonitor() {
+  const m = await api(`/api/jobs/infer/monitor?round_idx=${round()}`);
+  $('inferLog').textContent = m.log_tail || '等待任务…';
+  if (m.class_distribution) renderDist(m.class_distribution);
+}
+
+async function loadPlotRegistry(classId) {
+  const reg = await api(`/api/plots/registry?class_id=${classId}`);
+  const list = $(`plotList-${classId}`);
+  list.innerHTML = '';
+  reg.forEach(p => {
+    const id = `pl-${classId}-${p.id}`;
+    list.innerHTML += `<label><input type="radio" name="plot-${classId}" id="${id}" value="${p.id}" /> ${p.title}</label>`;
+    setTimeout(() => {
+      const inp = $(id);
+      if (inp) inp.onchange = () => refreshPlot(classId);
+    }, 0);
+  });
+  const first = list.querySelector('input');
+  if (first) { first.checked = true; refreshPlot(classId); }
+}
+
+async function refreshPlot(classId) {
+  await loadPlotRegistry(classId);
+  const sel = document.querySelector(`input[name="plot-${classId}"]:checked`);
+  if (!sel) return;
+  const blob = await api(`/api/plots/${classId}/${sel.value}.png?round_idx=${round()}`);
+  $(`plotPreview-${classId}`).src = URL.createObjectURL(blob);
+  state.currentPlot = { classId, plotId: sel.value };
+}
+
+async function savePlot(classId) {
+  if (!state.currentPlot || state.currentPlot.classId !== classId) return;
+  const res = await api('/api/plots/save', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ class_id: classId, plot_id: state.currentPlot.plotId, round_idx: round() }),
+  });
+  alert('已保存: ' + res.path);
+}
+
+async function runCopula(classId) {
+  await api(`/api/jobs/copula?round_idx=${round()}&class_id=${classId}`, { method: 'POST' });
+  pollJob();
+  setTimeout(() => refreshCopulaImages(classId), 3000);
+}
+
+async function refreshCopulaImages(classId) {
+  $(`copulaCmp-${classId}`).src = `/api/copula/${classId}/comparison.png?round_idx=${round()}&t=${Date.now()}`;
+  $(`copulaMarg-${classId}`).src = `/api/copula/${classId}/marginals.png?round_idx=${round()}&t=${Date.now()}`;
+}
+
+async function loadOthersQueue() {
+  const data = await api(`/api/others/samples?page=${state.othersPage}&round_idx=${round()}`);
+  const tbody = $('othersTable').querySelector('tbody');
+  tbody.innerHTML = '';
+  data.samples.forEach(s => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${s.sample_idx}</td><td>${(s.timestamp||[]).join('/')}</td><td>${(s.uncertainty||0).toFixed(2)}</td><td>${(s.rms_in??'-').toFixed?.(3) ?? s.rms_in ?? '-'}</td>`;
+    tr.onclick = () => selectOthers(s.sample_idx, tr);
+    tbody.appendChild(tr);
+  });
+}
+
+async function selectOthers(idx, tr) {
+  state.selectedOthers = idx;
+  document.querySelectorAll('#othersTable tr').forEach(r => r.classList.remove('selected'));
+  if (tr) tr.classList.add('selected');
+  const d = await api(`/api/others/samples/${idx}?round_idx=${round()}`);
+  const neighbors = await api(`/api/others/samples/${idx}/neighbors?round_idx=${round()}`);
+  let html = `<div class="page-title" style="font-size:16px;margin-bottom:8px">样本 #${idx}</div>`;
+  (d.clues || []).forEach(c => html += `<div class="clue">${c}</div>`);
+  html += `<div class="meta-line">uncertainty = ${d.uncertainty} · 面内/面外预测 ${d.inplane_prediction} / ${d.outplane_prediction}</div>`;
+  html += '<div class="section-label">偏离特征</div>';
+  html += '<table><thead><tr><th>特征</th><th>值</th><th>z</th></tr></thead><tbody>';
+  (d.deviations || []).slice(0, 12).forEach(dev => {
+    html += `<tr class="${dev.highlight ? 'row-highlight' : ''}"><td>${dev.key}</td><td>${dev.value?.toFixed?.(4) ?? dev.value}</td><td>${dev.z_score?.toFixed(2) ?? '—'}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  html += '<div class="section-label">最近邻</div><pre class="neighbors">' + JSON.stringify(neighbors, null, 2) + '</pre>';
+  html += '<div class="section-label">多视角图像</div><div class="fig-grid">';
+  ['timeseries','spectrum','trajectory','context_timeseries','psd_class_overlay','wind_timeseries'].forEach(name => {
+    html += `<div class="fig-cell"><div class="fig-label">${name}</div><img src="/api/others/samples/${idx}/figures/${name}.png?round_idx=${round()}&t=${Date.now()}" alt="${name}" /></div>`;
+  });
+  html += '</div>';
+  html += `<button class="btn primary" onclick="exportOthers(${idx})">导出报告 ZIP</button>`;
+  $('othersDetail').innerHTML = html;
+}
+
+async function exportOthers(idx) {
+  window.open(`/api/others/samples/${idx}/export?round_idx=${round()}`, '_blank');
+}
+
+$('btnInfer').onclick = async () => {
+  const limit = $('smokeMode').checked ? 500 : null;
+  let url = `/api/jobs/infer?round_idx=${round()}`;
+  if (limit) url += `&limit=${limit}`;
+  await api(url, { method: 'POST' });
+  pollJob();
+};
+$('btnEnrich').onclick = async () => {
+  const limit = $('smokeMode').checked ? 500 : null;
+  let url = `/api/jobs/enrich?round_idx=${round()}`;
+  if (limit) url += `&limit=${limit}`;
+  await api(url, { method: 'POST' });
+  pollJob();
+};
+$('btnReset').onclick = () => api('/api/jobs/reset', { method: 'POST' }).then(refreshStatus);
+$('btnPreflight').onclick = async () => {
+  const r = await api(`/api/preflight?round_idx=${round()}`);
+  alert('预检通过:\n' + r.checks.join('\n'));
+};
+$('btnSetActive').onclick = async () => {
+  await api('/api/active-round', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round_idx: round() }) });
+  refreshStatus();
+};
+$('othersPrev').onclick = () => { if (state.othersPage > 0) { state.othersPage--; loadOthersQueue(); } };
+$('othersNext').onclick = () => { state.othersPage++; loadOthersQueue(); };
+$('roundSelect').onchange = () => { refreshStatus(); if (state.tab === 'others') loadOthersQueue(); };
+
+initTabs();
+refreshStatus();
+setInterval(refreshStatus, 8000);
+</script>
+</body>
+</html>

@@ -1124,7 +1124,7 @@ class PlotLib():
         self,
         page: str = "default",
         cols: int = 3,
-        port: int = 5678,
+        port: int = DEFAULT_PORT,
         dpi: int = 150,
         titles: list = None,
         blocking: bool = True,
@@ -1134,6 +1134,7 @@ class PlotLib():
         max_rounds: int = 20,
     ):
         from src.visualize_tools.web_dashboard import (
+            DEFAULT_PORT,
             _get_or_start_dashboard,
             _fig_to_data_uri,
         )

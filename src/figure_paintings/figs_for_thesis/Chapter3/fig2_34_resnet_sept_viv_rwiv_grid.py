@@ -24,8 +24,8 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.chapter1_identifier.augment._bootstrap import ensure_paths
-from src.chapter1_identifier.augment.infer.dataset_loader import load_staycable_dataset
+from src.chapter3_identifier.augment._bootstrap import ensure_paths
+from src.chapter3_identifier.augment.infer.dataset_loader import load_staycable_dataset
 from src.data_processer.io_unpacker import UNPACK
 from src.figure_paintings.figs_for_thesis.config import CN_FONT, FONT_SIZE
 from src.visualize_tools.web_dashboard import push as web_push

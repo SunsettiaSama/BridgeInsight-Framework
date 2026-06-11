@@ -1,0 +1,2122 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Augment 标注 WebUI</title>
+  <style>
+    :root {
+      --bg: #f4f6f9;
+      --surface: #ffffff;
+      --border: #d5dbe3;
+      --accent: #2563eb;
+      --accent-soft: #eff6ff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --warn: #d97706;
+      --slot-wide-ar: 2.2 / 1;
+      --slot-long-ar: 3.55 / 1;
+      --slot-square-ar: 1 / 1;
+      --context-grid-ratio: 31%;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
+    header {
+      padding: 6px 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+      flex-shrink: 0;
+      min-height: 44px;
+    }
+    main {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+    aside { border-right: 1px solid var(--border); padding: 8px; overflow: auto; background: var(--surface); min-height: 0; }
+    section {
+      padding: 6px 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .toolbar-group { display: flex; gap: 6px; align-items: center; padding-right: 10px; border-right: 1px solid var(--border); }
+    .toolbar-group:last-child { border-right: none; }
+    .btn {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 1.2;
+    }
+    .btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .btn.primary:hover { background: #1d4ed8; }
+    .btn.warn { background: #fff7ed; border-color: #fdba74; color: #9a3412; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-hint { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .btn-wrap { display: flex; flex-direction: column; align-items: center; }
+    .queue-filter-group { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; }
+    .queue-filter-label { font-size: 12px; color: var(--muted); }
+    .queue-filter-btn {
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--text);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .queue-filter-btn.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: #1d4ed8;
+      font-weight: 600;
+    }
+    select {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 6px 8px;
+      border-radius: 6px;
+    }
+    .round-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .sample-item {
+      padding: 8px 10px 8px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      background: var(--surface);
+      font-size: 13px;
+      border-left-width: 4px;
+    }
+    .sample-item:hover { filter: brightness(0.98); }
+    .sample-item.active {
+      outline: 2px solid var(--accent);
+      outline-offset: 0;
+      box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.15);
+    }
+    .sample-item.kind-manual {
+      background: #ecfdf5;
+      border-color: #86efac;
+      border-left-color: #16a34a;
+    }
+    .sample-item.kind-gold_agree {
+      background: #fffbeb;
+      border-color: #fde68a;
+      border-left-color: #d97706;
+    }
+    .sample-item.kind-gold_disagree {
+      background: #fff7ed;
+      border-color: #fdba74;
+      border-left-color: #ea580c;
+    }
+    .sample-item.kind-model {
+      background: #eff6ff;
+      border-color: #93c5fd;
+      border-left-color: #2563eb;
+    }
+    .sample-item.active.kind-manual { background: #dcfce7; }
+    .sample-item.active.kind-gold_agree { background: #fef3c7; }
+    .sample-item.active.kind-gold_disagree { background: #ffedd5; }
+    .sample-item.active.kind-model { background: #dbeafe; }
+    .queue-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 8px;
+      margin-top: 8px;
+      font-size: 10px;
+      color: var(--muted);
+    }
+    .legend-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #fff;
+    }
+    .legend-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      flex-shrink: 0;
+    }
+    .legend-dot.manual { background: #16a34a; }
+    .legend-dot.gold_agree { background: #d97706; }
+    .legend-dot.gold_disagree { background: #ea580c; }
+    .legend-dot.model { background: #2563eb; }
+    .queue-head { font-size: 12px; color: var(--muted); padding: 4px 2px 10px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 0.95fr;
+      grid-template-rows: 1fr 1fr;
+      grid-template-areas:
+        "inTs outTs traj"
+        "inSp outSp ctxSp";
+      gap: 6px;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .figure-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 6px;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .figure-card img {
+      width: 100%;
+      flex: 1 1 auto;
+      min-height: 0;
+      max-height: 100%;
+      object-fit: contain;
+      background: #fafafa;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      display: block;
+    }
+    .figure-card.shape-wide img { aspect-ratio: var(--slot-wide-ar); }
+    .figure-card.shape-long img { aspect-ratio: var(--slot-long-ar); }
+    .figure-card.shape-square img { aspect-ratio: var(--slot-square-ar); }
+    .card-in-ts { grid-area: inTs; }
+    .card-out-ts { grid-area: outTs; }
+    .card-in-sp { grid-area: inSp; }
+    .card-out-sp { grid-area: outSp; }
+    .card-traj { grid-area: traj; }
+    .card-ctx-sp-main { grid-area: ctxSp; }
+    .figure-card img.loading { opacity: 0.35; }
+    .figure-label { font-size: 12px; color: var(--muted); }
+    .figure-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .btn-mini { padding: 2px 8px; font-size: 11px; line-height: 1.3; }
+    .meta-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 8px;
+      margin-bottom: 4px;
+      font-size: 11px;
+      flex-shrink: 0;
+      line-height: 1.35;
+    }
+    .context-grid {
+      display: grid;
+      grid-template-columns: 1.75fr 0.9fr;
+      gap: 6px;
+      margin-top: 4px;
+      flex: 0 0 var(--context-grid-ratio);
+      min-height: 0;
+    }
+    .context-grid .figure-card { max-height: 100%; }
+    .card-ctx-ts img { aspect-ratio: 4.6 / 1; }
+    .badge { background: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid #fde68a; }
+    .origin-badge {
+      display: inline-block;
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      margin-left: 4px;
+      border: 1px solid transparent;
+      vertical-align: middle;
+    }
+    .origin-badge.gold { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+    .origin-badge.gold_agree { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+    .origin-badge.gold_disagree { background: #ffedd5; color: #9a3412; border-color: #fdba74; }
+    .origin-badge.model { background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+    .origin-badge.manual { background: #dcfce7; color: #166534; border-color: #86efac; }
+    .sample-item .sample-line2 { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .shortcut-tip { font-size: 12px; color: var(--muted); margin-left: auto; }
+    #inferMonitorBackdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.45);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    #inferMonitorBackdrop.open { display: flex; }
+    #inferMonitor {
+      width: min(1100px, 96vw);
+      max-height: 92vh;
+      overflow: auto;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+      padding: 16px 18px;
+    }
+    .dist-row { display: grid; grid-template-columns: 72px 1fr 72px 56px; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 12px; }
+    .dist-bar-wrap { height: 16px; background: #e5e7eb; border-radius: 4px; overflow: hidden; }
+    .dist-bar { height: 100%; background: var(--accent); }
+    .typical-section { margin-top: 12px; }
+    .typical-section h5 { margin: 0 0 8px; font-size: 13px; color: var(--text); }
+    .typical-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+    .typical-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      background: #fff;
+      font-size: 12px;
+    }
+    .typical-card img { width: 100%; min-height: 120px; object-fit: contain; border: 1px solid var(--border); border-radius: 4px; background: #fafafa; }
+    .typical-fig-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 6px; }
+    .typical-fig img { width: 100%; min-height: 88px; max-height: 120px; object-fit: contain; border: 1px solid var(--border); border-radius: 4px; background: #fafafa; }
+    .typical-fig img.loading { opacity: 0.35; }
+    .monitor-img-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+    h3 { margin: 2px 0 4px; font-size: 12px; flex-shrink: 0; }
+    .section-head { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    #annotateBar {
+      flex-shrink: 0;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      padding: 6px 12px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 -2px 8px rgba(15, 23, 42, 0.06);
+      min-height: 56px;
+      z-index: 50;
+    }
+    .annotate-info { font-size: 12px; color: var(--muted); min-width: 220px; max-width: 380px; line-height: 1.35; position: relative; }
+    .annotate-head { display: flex; align-items: center; gap: 8px; }
+    .help-btn {
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0;
+    }
+    .help-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .help-pop {
+      display: none;
+      position: absolute;
+      top: 22px;
+      right: 0;
+      width: min(560px, 70vw);
+      max-height: 220px;
+      overflow: auto;
+      white-space: pre-wrap;
+      z-index: 120;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 10px 28px rgba(15, 23, 42, 0.15);
+      padding: 8px 10px;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .help-pop.open { display: block; }
+    #annotateCurrent { font-size: 14px; color: var(--text); margin-bottom: 2px; }
+    #annotateCurrent .dirty { color: var(--warn); font-weight: 600; }
+    #annotateCurrent .saved { color: #166534; font-weight: 600; }
+    .label-buttons { display: flex; gap: 10px; flex: 1; flex-wrap: wrap; align-items: stretch; }
+    .label-group {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 8px;
+      min-width: 300px;
+      background: #fff;
+    }
+    .label-group.active-target {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
+      background: var(--accent-soft);
+    }
+    .label-group.active-target .label-group-title { color: #1d4ed8; }
+    .label-group-title {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 4px;
+      font-weight: 600;
+    }
+    .label-group .label-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .label-btn {
+      border: 2px solid var(--border);
+      background: #fff;
+      color: var(--text);
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+    }
+    .label-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .label-btn.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25);
+    }
+    .label-btn kbd { font-size: 10px; opacity: 0.75; margin-left: 4px; font-weight: 400; }
+    .plane-select {
+      min-width: 132px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    #annotateStatus { font-size: 12px; color: var(--muted); min-width: 120px; }
+    #annotateStatus.ok { color: #166534; }
+    #annotateStatus.err { color: #b91c1c; }
+    #annotateStatus.saving { color: #1d4ed8; font-weight: 600; }
+    #btnSave:disabled { opacity: 0.55; cursor: wait; }
+    #jobStatus { font-size: 12px; color: var(--muted); }
+    #jobStatus.error { color: #b91c1c; white-space: pre-wrap; max-width: 420px; }
+    #roundBadge { font-size: 12px; color: var(--muted); padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; }
+    .tab.active { background: var(--accent-soft); border-color: var(--accent); }
+    #monitorBackdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.45);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    #monitorBackdrop.open { display: flex; }
+    #trainMonitor {
+      width: min(1100px, 96vw);
+      max-height: 92vh;
+      overflow: auto;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+      padding: 16px 18px;
+    }
+    .monitor-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+    .monitor-header h2 { margin: 0; font-size: 18px; flex: 1; }
+    .status-pill {
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      border: 1px solid var(--border);
+      background: #f3f4f6;
+    }
+    .status-pill.running { background: #dbeafe; border-color: #93c5fd; color: #1d4ed8; }
+    .status-pill.done { background: #dcfce7; border-color: #86efac; color: #166534; }
+    .status-pill.error { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
+    .progress-wrap { flex: 1; min-width: 180px; }
+    .progress-bar {
+      height: 8px;
+      background: #e5e7eb;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .progress-bar > div { height: 100%; background: var(--accent); transition: width 0.3s; }
+    .monitor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .monitor-grid-stretch { align-items: stretch; }
+    .monitor-panel {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fafafa;
+    }
+    .monitor-panel-flex {
+      display: flex;
+      flex-direction: column;
+      height: var(--monitor-panel-height, 320px);
+      max-height: var(--monitor-panel-height, 320px);
+    }
+    .monitor-panel h4 { margin: 0 0 8px; font-size: 13px; color: var(--muted); flex-shrink: 0; }
+    .monitor-panel canvas { width: 100%; height: 180px; background: #fff; border: 1px solid var(--border); border-radius: 4px; }
+    .metrics-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .metrics-table th, .metrics-table td { border: 1px solid var(--border); padding: 4px 6px; text-align: center; }
+    .metrics-table th { background: #eef2ff; }
+    .epoch-table-wrap {
+      flex: 1 1 auto;
+      min-height: 0;
+      max-height: 100%;
+      overflow-y: auto;
+      overflow-x: hidden;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: #fff;
+    }
+    .epoch-table-wrap .metrics-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    #monitorLog {
+      max-height: 140px;
+      overflow: auto;
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      background: #111827;
+      color: #e5e7eb;
+      padding: 8px;
+      border-radius: 6px;
+      white-space: pre-wrap;
+    }
+    #inferMonitorLog {
+      max-height: 180px;
+      overflow: auto;
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      background: #111827;
+      color: #e5e7eb;
+      padding: 8px;
+      border-radius: 6px;
+      white-space: pre-wrap;
+    }
+    #monitorConfusion {
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+      max-width: 100%;
+      object-fit: contain;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: #fff;
+    }
+    @media (max-width: 900px) { .monitor-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Augment 标注</strong>
+
+    <div class="toolbar-group">
+      <div class="btn-wrap">
+        <button class="btn" id="btnPrev" title="上一条待标注样本">← 上一条</button>
+        <span class="btn-hint">快捷键 ← / K</span>
+      </div>
+      <div class="btn-wrap">
+        <button class="btn" id="btnNext" title="下一条待标注样本">下一条 →</button>
+        <span class="btn-hint">快捷键 → / J</span>
+      </div>
+    </div>
+
+    <div class="toolbar-group">
+      <div class="btn-wrap">
+        <button class="btn warn" id="btnTrain" title="round1且无人工标注时仅金标；round2+为金标+人工">启动训练</button>
+        <span class="btn-hint">自动打开监控台</span>
+      </div>
+      <div class="btn-wrap">
+        <button class="btn" id="btnMonitor" title="查看训练 loss / 指标曲线">训练监控台</button>
+      </div>
+      <div class="btn-wrap">
+        <button class="btn" id="btnInferMonitor" title="查看全量识别进度、类别比例与典型样本">识别监控台</button>
+      </div>
+      <div class="btn-wrap">
+        <button class="btn warn" id="btnInfer" title="对 202409 全量数据重新推理并刷新队列">全量重新识别</button>
+        <span class="btn-hint">后台任务</span>
+      </div>
+    </div>
+
+    <div class="round-switch">
+      <button class="btn" id="btnRoundPrev" title="切到上一轮">上一轮</button>
+      <span id="roundCurrent">当前：round 1</span>
+      <button class="btn" id="btnRoundNext" title="切到下一轮">下一轮</button>
+    </div>
+    <span id="roundBadge">标注 round 1</span>
+    <div class="queue-filter-group">
+      <span class="queue-filter-label">队列类别</span>
+      <button type="button" class="queue-filter-btn active" data-queue-filter="1,2,3">1/2/3</button>
+      <button type="button" class="queue-filter-btn" data-queue-filter="1">1</button>
+      <button type="button" class="queue-filter-btn" data-queue-filter="2">2</button>
+      <button type="button" class="queue-filter-btn" data-queue-filter="3">3</button>
+      <button type="button" class="queue-filter-btn" data-queue-filter="0,1,2,3">全量</button>
+    </div>
+    <span id="jobStatus"></span>
+    <span id="goldBadge"></span>
+    <span class="shortcut-tip">←/→ 翻页 · Enter/S 保存 · Tab 同步切换标注焦点+长窗口面内/面外 · 1-4 标注当前焦点</span>
+  </header>
+
+  <main>
+    <aside>
+      <div id="queueSummary" class="queue-head"></div>
+      <div class="queue-legend" id="queueLegend">
+        <span class="legend-chip"><span class="legend-dot manual"></span>已人工标注</span>
+        <span class="legend-chip"><span class="legend-dot gold_agree"></span>金标准·一致</span>
+        <span class="legend-chip"><span class="legend-dot gold_disagree"></span>金标准·分歧</span>
+        <span class="legend-chip"><span class="legend-dot model"></span>模型预测</span>
+      </div>
+      <div id="sampleList"></div>
+    </aside>
+    <section>
+      <div class="meta-box" id="meta"></div>
+      <div class="section-head">
+        <h3 style="margin:0">当前窗口（模型预测参考）</h3>
+      </div>
+      <div class="grid">
+        <div class="figure-card shape-long card-in-ts"><div class="figure-head"><span class="figure-label">面内时程</span><button type="button" class="btn btn-mini save-img-btn" data-img="imgInTs" data-name="in_timeseries">保存</button></div><img id="imgInTs" alt="面内时程" class="loading" /></div>
+        <div class="figure-card shape-long card-out-ts"><div class="figure-head"><span class="figure-label">面外时程</span><button type="button" class="btn btn-mini save-img-btn" data-img="imgOutTs" data-name="out_timeseries">保存</button></div><img id="imgOutTs" alt="面外时程" class="loading" /></div>
+        <div class="figure-card shape-wide card-in-sp"><div class="figure-head"><span class="figure-label">面内频谱</span><button type="button" class="btn btn-mini save-img-btn" data-img="imgInSp" data-name="in_spectrum">保存</button></div><img id="imgInSp" alt="面内频谱" class="loading" /></div>
+        <div class="figure-card shape-wide card-out-sp"><div class="figure-head"><span class="figure-label">面外频谱</span><button type="button" class="btn btn-mini save-img-btn" data-img="imgOutSp" data-name="out_spectrum">保存</button></div><img id="imgOutSp" alt="面外频谱" class="loading" /></div>
+        <div class="figure-card shape-square card-traj"><div class="figure-head"><span class="figure-label">面内-面外轨迹</span><button type="button" class="btn btn-mini save-img-btn" data-img="imgTraj" data-name="trajectory">保存</button></div><img id="imgTraj" alt="轨迹" class="loading" /></div>
+        <div class="figure-card shape-long card-ctx-sp-main"><div class="figure-head"><span class="figure-label">长时频谱</span><button type="button" class="btn btn-mini save-img-btn" data-img="imgCtxSp" data-name="context_spectrogram">保存</button></div><img id="imgCtxSp" alt="长时频谱" class="loading" /></div>
+      </div>
+      <div class="section-head">
+        <h3 style="margin:0">长窗口上下文</h3>
+        <button class="btn tab active" id="tabIn">面内</button>
+        <button class="btn tab" id="tabOut">面外</button>
+      </div>
+      <div class="context-grid">
+        <div class="figure-card shape-long card-ctx-ts"><div class="figure-head"><span class="figure-label">长时程（高亮当前窗口）</span><button type="button" class="btn btn-mini save-img-btn" data-img="imgCtxTs" data-name="context_timeseries">保存</button></div><img id="imgCtxTs" alt="长时程" class="loading" /></div>
+        <div class="figure-card shape-long"><div class="figure-head"><span class="figure-label">模型预测概率</span><button type="button" class="btn btn-mini save-img-btn" data-img="imgPred" data-name="prediction">保存</button></div><img id="imgPred" alt="模型预测" class="loading" /></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="annotateBar">
+    <div class="annotate-info">
+        <div class="annotate-head">
+          <div id="annotateCurrent"><strong>当前标注：面内 -- · 面外 --</strong></div>
+          <button type="button" class="help-btn" id="annotateHelpBtn" title="查看详细状态">?</button>
+        </div>
+      <div id="annotateHint">分别选择面内/面外类别，切换后立即生效</div>
+        <div class="help-pop" id="annotateHelpPopover"></div>
+    </div>
+    <div class="label-buttons" id="labelButtons"></div>
+    <button class="btn primary" id="btnSave" title="保存到 round_XX/manual_edits.json (Enter / S)">保存 (Enter)</button>
+    <span id="annotateStatus"></span>
+  </div>
+
+  <div id="monitorBackdrop">
+    <div id="trainMonitor">
+      <div class="monitor-header">
+        <h2 id="monitorTitle">Round 1 训练监控台</h2>
+        <span id="monitorStatusPill" class="status-pill">idle</span>
+        <div class="progress-wrap">
+          <div id="monitorProgressText" style="font-size:12px;color:var(--muted)">epoch 0 / 0</div>
+          <div class="progress-bar"><div id="monitorProgressBar" style="width:0%"></div></div>
+        </div>
+        <button class="btn" id="btnMonitorRefresh">刷新</button>
+        <button class="btn warn" id="btnTrainJobReset" title="Ctrl+C 中断后释放 stuck 的 running 状态">释放后台</button>
+        <button class="btn" id="btnMonitorClose">关闭</button>
+      </div>
+
+      <div class="monitor-grid">
+        <div class="monitor-panel">
+          <h4>Loss 曲线（train / val）</h4>
+          <canvas id="chartLoss" width="480" height="180"></canvas>
+        </div>
+        <div class="monitor-panel">
+          <h4>VIV / RWIV F1 与 viv_rwiv_mean_f1</h4>
+          <canvas id="chartF1" width="480" height="180"></canvas>
+        </div>
+      </div>
+
+      <div class="monitor-panel" style="margin-top:12px">
+        <h4>当前 Epoch 验证集指标（最新）</h4>
+        <table class="metrics-table" id="monitorMetricsTable">
+          <thead>
+            <tr>
+              <th>类别</th><th>Precision</th><th>Recall</th><th>F1</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div id="monitorSummary" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
+      </div>
+
+      <div class="monitor-grid monitor-grid-stretch" style="margin-top:12px">
+        <div class="monitor-panel monitor-panel-flex">
+          <h4>Epoch 历史</h4>
+          <div class="epoch-table-wrap">
+            <table class="metrics-table" id="monitorEpochTable">
+              <thead>
+                <tr>
+                  <th>Epoch</th><th>Train Loss</th><th>Val Loss</th><th>VIV F1</th><th>RWIV F1</th><th>Mean F1</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="monitor-panel monitor-panel-flex">
+          <div class="monitor-img-head">
+            <h4 style="margin:0">最新验证集混淆矩阵</h4>
+            <button type="button" class="btn btn-mini save-img-btn" data-img="monitorConfusion" data-name="confusion_matrix">保存</button>
+          </div>
+          <img id="monitorConfusion" alt="混淆矩阵" />
+        </div>
+      </div>
+
+      <div class="monitor-panel" style="margin-top:12px">
+        <h4>训练日志（尾部）</h4>
+        <pre id="monitorLog">等待训练启动…</pre>
+      </div>
+    </div>
+  </div>
+
+  <div id="inferMonitorBackdrop">
+    <div id="inferMonitor">
+      <div class="monitor-header">
+        <h2 id="inferMonitorTitle">Round 1 识别监控台</h2>
+        <span id="inferStatusPill" class="status-pill">idle</span>
+        <button class="btn" id="btnInferMonitorRefresh">刷新</button>
+        <button class="btn warn" id="btnJobReset" title="Ctrl+C 中断后释放 stuck 的 running 状态">释放后台</button>
+        <button class="btn" id="btnInferMonitorClose">关闭</button>
+      </div>
+      <div class="monitor-panel">
+        <h4>识别类别比例</h4>
+        <div id="inferDistribution"></div>
+        <div id="inferSummary" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
+      </div>
+      <div class="monitor-panel" style="margin-top:12px">
+        <h4>标注一致性 Kappa 检验（重复标注样本）</h4>
+        <div id="inferConsistencySummary" style="font-size:12px;color:var(--muted);line-height:1.6"></div>
+        <div id="inferConsistencyDetail" style="margin-top:8px;font-size:12px"></div>
+      </div>
+      <div class="monitor-panel" style="margin-top:12px">
+        <h4>各类典型样本（按预测置信度 Top-K）</h4>
+        <div id="inferTypicalSamples"></div>
+      </div>
+      <div class="monitor-panel" style="margin-top:12px">
+        <h4>识别日志（尾部）</h4>
+        <pre id="inferMonitorLog">等待识别启动…</pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const EPOCH_HISTORY_VISIBLE_ROWS = 12;
+    const PRELOAD_FORWARD = 20;
+    const PRELOAD_BACK = 5;
+    const FIGURE_CACHE_MAX = 200;
+    const SESSION_STORAGE_KEY = 'chapter3_augment_annotate_v1';
+    const SAVE_TIMEOUT_MS = 30000;
+    const LABEL_KEYS = { '1': 0, '2': 1, '3': 2, '4': 3 };
+    const LAYOUT_PROFILE = 'wide_fill_v1';
+
+    let items = [];
+    let currentIdx = 0;
+    let currentRound = 1;
+    let queueClassFilterCsv = '1,2,3';
+    let contextDirection = 'inplane';
+    let selectToken = 0;
+    let monitorOpen = false;
+    let monitorPollTimer = null;
+    let monitorRound = 1;
+    let inferMonitorOpen = false;
+    let inferMonitorPollTimer = null;
+    let inferMonitorRound = 1;
+
+    let CLASS_NAMES = ['Normal', 'VIV', 'RWIV', 'Others'];
+    let annotationContext = null;
+    let selectedInplaneLabel = 0;
+    let selectedOutplaneLabel = 0;
+    let activeAnnotDirection = 'inplane';
+    let savedInplaneLabel = null;
+    let savedOutplaneLabel = null;
+    let saveInFlight = false;
+    let pendingSaveOpts = null;
+    let inferQueueReloadPending = false;
+    let annotationState = null;
+    const figureSlots = [
+      ['imgInTs', 'in_timeseries'],
+      ['imgOutTs', 'out_timeseries'],
+      ['imgInSp', 'in_spectrum'],
+      ['imgOutSp', 'out_spectrum'],
+      ['imgTraj', 'trajectory'],
+      ['imgPred', 'prediction'],
+    ];
+    const ctxSlots = [
+      ['imgCtxTs', 'timeseries'],
+      ['imgCtxSp', 'spectrogram'],
+    ];
+
+    class FigureBuffer {
+      constructor() {
+        this.cache = new Map();
+        this.pending = new Map();
+      }
+
+      _key(sampleIdx, kind, name, direction) {
+        return `${currentRound}:${sampleIdx}:${kind}:${name}:${direction}:${LAYOUT_PROFILE}`;
+      }
+
+      figureUrl(sampleIdx, name, direction = '-') {
+        const dir = name === 'prediction'
+          ? (direction === 'outplane' ? 'outplane' : 'inplane')
+          : 'inplane';
+        return `/api/figures/${sampleIdx}/${name}?round_idx=${currentRound}&layout_profile=${encodeURIComponent(LAYOUT_PROFILE)}&direction=${dir}`;
+      }
+
+      contextUrl(sampleIdx, part, direction) {
+        return `/api/figures/${sampleIdx}/context/${part}?direction=${direction}&round_idx=${currentRound}&layout_profile=${encodeURIComponent(LAYOUT_PROFILE)}`;
+      }
+
+      clear() {
+        this.cache.forEach(url => URL.revokeObjectURL(url));
+        this.cache.clear();
+        this.pending.clear();
+      }
+
+      async fetchBlob(url, retries = 0) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 20000);
+        let res;
+        try {
+          res = await fetch(url, { signal: controller.signal });
+        } catch (err) {
+          clearTimeout(timer);
+          if (retries < 30) {
+            await new Promise(r => setTimeout(r, 500 + retries * 200));
+            return this.fetchBlob(url, retries + 1);
+          }
+          throw err;
+        }
+        clearTimeout(timer);
+        if ((res.status === 503 || res.status === 429) && retries < 30) {
+          const retryAfter = Number(res.headers.get('Retry-After') || 0);
+          await new Promise(r => setTimeout(r, retryAfter > 0 ? retryAfter * 1000 : 600 + retries * 150));
+          return this.fetchBlob(url, retries + 1);
+        }
+        if (!res.ok) throw new Error(`${res.status} ${url}`);
+        return res.blob();
+      }
+
+      async getFigure(sampleIdx, name, direction = '-') {
+        const figDirection = name === 'prediction'
+          ? (direction === 'outplane' ? 'outplane' : 'inplane')
+          : '-';
+        const key = this._key(sampleIdx, 'fig', name, figDirection);
+        if (this.cache.has(key)) return this.cache.get(key);
+        if (this.pending.has(key)) return this.pending.get(key);
+
+        const promise = this.fetchBlob(this.figureUrl(sampleIdx, name, figDirection))
+          .then(blob => {
+            const objUrl = URL.createObjectURL(blob);
+            this.cache.set(key, objUrl);
+            this.pending.delete(key);
+            this.trim();
+            return objUrl;
+          })
+          .catch(err => {
+            this.pending.delete(key);
+            throw err;
+          });
+        this.pending.set(key, promise);
+        return promise;
+      }
+
+      async getContext(sampleIdx, part, direction) {
+        const key = this._key(sampleIdx, 'ctx', part, direction);
+        if (this.cache.has(key)) return this.cache.get(key);
+        if (this.pending.has(key)) return this.pending.get(key);
+
+        const promise = this.fetchBlob(this.contextUrl(sampleIdx, part, direction))
+          .then(blob => {
+            const objUrl = URL.createObjectURL(blob);
+            this.cache.set(key, objUrl);
+            this.pending.delete(key);
+            this.trim();
+            return objUrl;
+          })
+          .catch(err => {
+            this.pending.delete(key);
+            throw err;
+          });
+        this.pending.set(key, promise);
+        return promise;
+      }
+
+      trim(maxEntries = FIGURE_CACHE_MAX) {
+        while (this.cache.size > maxEntries) {
+          const first = this.cache.keys().next().value;
+          URL.revokeObjectURL(this.cache.get(first));
+          this.cache.delete(first);
+        }
+      }
+
+      evictExcept(keepKeys) {
+        const keep = new Set(keepKeys);
+        for (const key of [...this.cache.keys()]) {
+          if (!keep.has(key)) {
+            URL.revokeObjectURL(this.cache.get(key));
+            this.cache.delete(key);
+          }
+        }
+      }
+
+    }
+
+    const buffer = new FigureBuffer();
+
+    function labelName(classId) {
+      return CLASS_NAMES[classId] || String(classId);
+    }
+
+    function parseQueueClasses(csv) {
+      return String(csv || '')
+        .split(',')
+        .map(v => Number(v.trim()))
+        .filter(v => Number.isFinite(v) && v >= 0 && v <= 3);
+    }
+
+    function queueClassFilterText() {
+      const classes = parseQueueClasses(queueClassFilterCsv);
+      if (!classes.length) return '1/2/3';
+      if (classes.length === 4) return '全量(0/1/2/3)';
+      return classes.map(c => `${c}:${labelName(c)}`).join(' / ');
+    }
+
+    function setQueueClassFilter(csv) {
+      queueClassFilterCsv = csv || '1,2,3';
+      document.querySelectorAll('.queue-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.queueFilter === queueClassFilterCsv);
+      });
+      loadQueue();
+    }
+
+    function syncLabelSelectOptions() {
+      const options = CLASS_NAMES.map((name, i) => `<option value="${i}">${name}</option>`).join('');
+      document.getElementById('inplaneLabelSelect').innerHTML = options;
+      document.getElementById('outplaneLabelSelect').innerHTML = options;
+    }
+
+    async function loadAppConfig() {
+      const res = await fetch('/api/config');
+      if (!res.ok) {
+        renderLabelButtons();
+        return;
+      }
+      const cfg = await res.json();
+      CLASS_NAMES = cfg.label_names || CLASS_NAMES;
+      renderLabelButtons();
+    }
+
+    function renderLabelButtons() {
+      const wrap = document.getElementById('labelButtons');
+      const buttonHtml = CLASS_NAMES.map((name, i) =>
+        `<button type="button" class="label-btn" data-class="${i}">${name}<kbd>${i + 1}</kbd></button>`
+      ).join('');
+      wrap.innerHTML = `
+        <div class="label-group" id="inplaneLabelGroup">
+          <div class="label-group-title">面内振动类型</div>
+          <div class="label-row">
+            <select id="inplaneLabelSelect" class="plane-select" aria-label="面内人工标注类别"></select>
+            <div id="inplaneLabelButtons">${buttonHtml}</div>
+          </div>
+        </div>
+        <div class="label-group" id="outplaneLabelGroup">
+          <div class="label-group-title">面外振动类型</div>
+          <div class="label-row">
+            <select id="outplaneLabelSelect" class="plane-select" aria-label="面外人工标注类别"></select>
+            <div id="outplaneLabelButtons">${buttonHtml}</div>
+          </div>
+        </div>`;
+      syncLabelSelectOptions();
+      wrap.querySelectorAll('#inplaneLabelButtons .label-btn').forEach(btn => {
+        btn.onclick = () => applyLabelSelection('inplane', Number(btn.dataset.class), 'button');
+      });
+      wrap.querySelectorAll('#outplaneLabelButtons .label-btn').forEach(btn => {
+        btn.onclick = () => applyLabelSelection('outplane', Number(btn.dataset.class), 'button');
+      });
+      bindAnnotationControls();
+      setActiveAnnotDirection(activeAnnotDirection);
+      refreshAnnotationPanel();
+    }
+
+    function setActiveAnnotDirection(direction) {
+      activeAnnotDirection = direction === 'outplane' ? 'outplane' : 'inplane';
+      document.getElementById('inplaneLabelGroup')?.classList.toggle('active-target', activeAnnotDirection === 'inplane');
+      document.getElementById('outplaneLabelGroup')?.classList.toggle('active-target', activeAnnotDirection === 'outplane');
+      refreshAnnotationPanel();
+    }
+
+    function applyLabelSelection(direction, classId, source = 'button') {
+      if (!Number.isFinite(classId) || classId < 0 || classId >= CLASS_NAMES.length) return;
+      if (source !== 'init') {
+        setActiveAnnotDirection(direction);
+      }
+      const isInplane = direction === 'inplane';
+      const current = isInplane ? selectedInplaneLabel : selectedOutplaneLabel;
+      if (current === classId && source !== 'init') {
+        return;
+      }
+      if (isInplane) {
+        selectedInplaneLabel = classId;
+      } else {
+        selectedOutplaneLabel = classId;
+      }
+      document.getElementById(`${direction}LabelSelect`).value = String(classId);
+      document.querySelectorAll(`#${direction}LabelButtons .label-btn`).forEach(btn => {
+        btn.classList.toggle('active', Number(btn.dataset.class) === classId);
+      });
+      refreshAnnotationPanel();
+      if (source !== 'init' && items.length) {
+        scheduleAutoSave();
+      }
+    }
+
+    function readSessionSnapshot() {
+      const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    }
+
+    function persistSession() {
+      if (!items.length) return;
+      const row = items[currentIdx];
+      if (!row) return;
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+        v: 1,
+        round: currentRound,
+        sample_idx: row.sample_idx,
+        saved_at: new Date().toISOString(),
+      }));
+    }
+
+    function resolveSessionIndex(snapshot) {
+      if (!snapshot || snapshot.round !== currentRound || snapshot.sample_idx == null) return 0;
+      const idx = items.findIndex(r => r.sample_idx === snapshot.sample_idx);
+      if (idx >= 0) return idx;
+      const summary = document.getElementById('queueSummary');
+      if (summary) {
+        summary.textContent += ` · 会话样本 #${snapshot.sample_idx} 已不在当前队列，已从首条开始`;
+      }
+      return 0;
+    }
+
+    function setCurrentRound(round) {
+      const next = Math.max(1, Number(round) || 1);
+      if (next === currentRound) return;
+      currentRound = next;
+      selectToken += 1;
+      currentIdx = 0;
+      items = [];
+      annotationContext = null;
+      savedInplaneLabel = null;
+      savedOutplaneLabel = null;
+      selectedInplaneLabel = 0;
+      selectedOutplaneLabel = 0;
+      buffer.clear();
+      document.getElementById('sampleList').innerHTML = '';
+      document.getElementById('meta').innerHTML = '';
+      document.getElementById('goldBadge').innerHTML = '';
+      refreshAnnotationPanel();
+      monitorRound = currentRound;
+      inferMonitorRound = currentRound;
+      setSaveUiState('', '');
+      updateRoundUi();
+      loadQueue();
+    }
+
+    function updateRoundUi() {
+      document.getElementById('roundCurrent').textContent = `当前：round ${currentRound}`;
+      document.getElementById('roundBadge').textContent = `标注 round ${currentRound}`;
+      document.getElementById('btnRoundPrev').disabled = currentRound <= 1;
+      document.getElementById('monitorTitle').textContent = `Round ${currentRound} 训练监控台`;
+      document.getElementById('inferMonitorTitle').textContent = `Round ${currentRound} 识别监控台`;
+    }
+
+    function resolveCardKind(row) {
+      if (row.manual_inplane_annotation != null || row.manual_outplane_annotation != null || row.label_origin === 'manual') {
+        return { kind: 'manual', name: '已人工标注' };
+      }
+      if (row.is_gold && row.gold_label != null) {
+        if (Number(row.prediction) === Number(row.gold_label)) {
+          return { kind: 'gold_agree', name: '金标准·模型一致' };
+        }
+        return { kind: 'gold_disagree', name: '金标准·模型分歧' };
+      }
+      return { kind: 'model', name: '模型预测' };
+    }
+
+    function syncCardKind(row) {
+      const card = resolveCardKind(row);
+      row.card_kind = card.kind;
+      row.card_kind_name = card.name;
+      row.prediction_matches_gold = row.is_gold && row.gold_label != null
+        && Number(row.prediction) === Number(row.gold_label);
+      return row;
+    }
+    function applyManualSnapshot(entries) {
+      if (!entries?.length || !items.length) return;
+      const bySample = new Map();
+      entries.forEach(entry => {
+        if (entry.sample_idx != null) bySample.set(Number(entry.sample_idx), entry);
+      });
+      items.forEach(row => {
+        const snap = bySample.get(Number(row.sample_idx));
+        if (!snap) return;
+        row.manual_inplane_annotation = snap.inplane_annotation;
+        row.manual_inplane_annotation_name = snap.inplane_annotation_name || labelName(snap.inplane_annotation);
+        row.manual_outplane_annotation = snap.outplane_annotation;
+        row.manual_outplane_annotation_name = snap.outplane_annotation_name || labelName(snap.outplane_annotation);
+        row.manual_annotation = snap.inplane_annotation;
+        row.manual_annotation_name = row.manual_inplane_annotation_name;
+        row.suggested_inplane_label = snap.inplane_annotation;
+        row.suggested_inplane_label_name = row.manual_inplane_annotation_name;
+        row.suggested_outplane_label = snap.outplane_annotation;
+        row.suggested_outplane_label_name = row.manual_outplane_annotation_name;
+        row.suggested_label = snap.inplane_annotation;
+        row.suggested_label_name = row.manual_inplane_annotation_name;
+        row.suggested_source = 'manual';
+        row.label_origin = 'manual';
+        row.label_origin_name = '人工标注';
+        row.already_annotated = true;
+        syncCardKind(row);
+      });
+    }
+
+    function setSaveUiState(kind, message) {
+      const statusEl = document.getElementById('annotateStatus');
+      const btnSave = document.getElementById('btnSave');
+      statusEl.textContent = message || '';
+      statusEl.className = kind || '';
+      btnSave.disabled = saveInFlight;
+    }
+
+    function formatSavedAt(savedAt) {
+      if (!savedAt) return '';
+      return String(savedAt).replace('T', ' ');
+    }
+
+    function originBadgeHtml(row) {
+      const origin = row.label_origin || (row.is_gold ? 'gold' : 'model');
+      const name = row.label_origin_name || (row.is_gold ? '金标准' : '模型预测');
+      return `<span class="origin-badge ${origin}">${name}</span>`;
+    }
+
+    function renderSampleMeta(row) {
+      syncCardKind(row);
+      const effectiveIn = row.suggested_inplane_label_name || labelName(row.suggested_inplane_label ?? row.inplane_prediction ?? row.prediction ?? 0);
+      const effectiveOut = row.suggested_outplane_label_name || labelName(row.suggested_outplane_label ?? row.outplane_prediction ?? row.prediction ?? 0);
+      const goldHint = row.is_gold && row.gold_label_name
+        ? ` · 金标=${row.gold_label_name}`
+        : '';
+      document.getElementById('meta').innerHTML =
+        `<div><strong>#${row.sample_idx}</strong> · win ${row.window_index} · ${originBadgeHtml(row)} · <span class="origin-badge ${row.card_kind}">${row.card_kind_name}</span></div>
+         <div style="font-size:11px;color:var(--muted)">${row.inplane_time_label || ''}</div>
+         <div style="font-size:11px;color:var(--muted)">${row.outplane_time_label || ''}</div>
+         <div>模型预测 面内=${labelName(row.inplane_prediction ?? row.prediction)} / 面外=${labelName(row.outplane_prediction ?? row.prediction)}${goldHint} · 当前标签 面内=${effectiveIn} / 面外=${effectiveOut} · u=${Number(row.uncertainty).toFixed(3)}</div>`;
+      document.getElementById('goldBadge').innerHTML = row.card_kind === 'manual'
+        ? '<span class="origin-badge manual">已人工标注</span>'
+        : row.is_gold
+          ? '<span class="badge">金标准样本</span>'
+          : '<span class="origin-badge model">模型预测样本</span>';
+    }
+
+    function refreshAnnotationPanel() {
+      const currentEl = document.getElementById('annotateCurrent');
+      const hintEl = document.getElementById('annotateHint');
+      if (!currentEl || !hintEl) return;
+      const inName = labelName(selectedInplaneLabel);
+      const outName = labelName(selectedOutplaneLabel);
+      const dirty = savedInplaneLabel === null
+        || savedOutplaneLabel === null
+        || selectedInplaneLabel !== savedInplaneLabel
+        || selectedOutplaneLabel !== savedOutplaneLabel;
+      const dirtyHtml = dirty
+        ? '<span class="dirty">· 待保存</span>'
+        : '<span class="saved">· 已保存</span>';
+      const activeName = activeAnnotDirection === 'inplane' ? '面内' : '面外';
+      currentEl.innerHTML = `<strong>当前标注：面内 ${inName} · 面外 ${outName}</strong> <span style="font-size:12px;color:#1d4ed8">· 焦点=${activeName}</span> ${dirtyHtml}`;
+
+      if (!annotationContext) {
+        hintEl.textContent = 'Tab 切换焦点和长窗口方向 · 1-4 标注当前焦点';
+        setAnnotateHelpText('快捷键:\n- Tab: 同步切换标注焦点与长窗口方向\n- 1~4: 给当前焦点方向打标签\n- Enter / S: 保存');
+        return;
+      }
+      const srcMap = { manual: '已有人工标注', gold: '金标', prediction: '模型预测' };
+      const parts = [
+        `模型预测 面内=${labelName(annotationContext.inplane_prediction ?? annotationContext.prediction ?? 0)}`,
+        `模型预测 面外=${labelName(annotationContext.outplane_prediction ?? annotationContext.prediction ?? 0)}`,
+      ];
+      if (annotationContext.gold_label_name) parts.push(`金标=${annotationContext.gold_label_name}`);
+      if (annotationContext.manual_inplane_annotation_name || annotationContext.manual_outplane_annotation_name) {
+        parts.push(
+          `已保存 面内=${annotationContext.manual_inplane_annotation_name || '-'} / 面外=${annotationContext.manual_outplane_annotation_name || '-'}`
+        );
+      }
+      parts.push(`预填来源=${srcMap[annotationContext.suggested_source] || annotationContext.suggested_source || '-'}`);
+      parts.push(`当前焦点=${activeAnnotDirection === 'inplane' ? '面内' : '面外'}`);
+      hintEl.textContent = `预测 面内=${labelName(annotationContext.inplane_prediction ?? annotationContext.prediction ?? 0)} / 面外=${labelName(annotationContext.outplane_prediction ?? annotationContext.prediction ?? 0)} · 预填=${srcMap[annotationContext.suggested_source] || '-'} · 焦点=${activeAnnotDirection === 'inplane' ? '面内' : '面外'}`;
+      setAnnotateHelpText(parts.join('\n'));
+    }
+
+    function setAnnotateHelpText(text) {
+      const pop = document.getElementById('annotateHelpPopover');
+      if (pop) pop.textContent = text || '';
+    }
+
+    let autoSaveTimer = null;
+    function scheduleAutoSave() {
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = setTimeout(() => saveAnnotation({ auto: true }), 450);
+    }
+
+    function bindAnnotationControls() {
+      document.getElementById('inplaneLabelSelect').onchange = (e) => {
+        applyLabelSelection('inplane', Number(e.target.value), 'select');
+      };
+      document.getElementById('outplaneLabelSelect').onchange = (e) => {
+        applyLabelSelection('outplane', Number(e.target.value), 'select');
+      };
+    }
+
+    function saveImageElement(imgEl, filename) {
+      if (!imgEl || !imgEl.src) return;
+      const a = document.createElement('a');
+      a.href = imgEl.src;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+
+    function bindSaveImageButtons() {
+      document.querySelectorAll('.save-img-btn').forEach(btn => {
+        btn.onclick = () => {
+          const img = document.getElementById(btn.dataset.img);
+          const name = btn.dataset.name || 'figure';
+          const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+          saveImageElement(img, `${name}_${stamp}.png`);
+        };
+      });
+    }
+
+    async function loadQueue() {
+      buffer.clear();
+      const summary = document.getElementById('queueSummary');
+      summary.textContent = '队列加载中…';
+      let queueRes;
+      try {
+        queueRes = await fetch(
+          `/api/queue/abnormal?round_idx=${currentRound}&pred_classes=${encodeURIComponent(queueClassFilterCsv)}`
+        );
+      } catch (_) {
+        summary.textContent = '队列加载失败：网络错误';
+        return;
+      }
+      if (!queueRes.ok) {
+        summary.textContent = '队列加载失败，请确认全量识别已完成';
+        return;
+      }
+      const data = await queueRes.json();
+      items = data.items || [];
+      const total = Number(data.total ?? items.length);
+      const statePromise = fetch(`/api/annotations/state?round_idx=${currentRound}`)
+        .then(r => (r.ok ? r.json() : null))
+        .catch(() => null);
+
+      renderList();
+      if (items.length) {
+        selectSample(resolveSessionIndex(readSessionSnapshot()));
+      } else {
+        currentIdx = 0;
+        document.getElementById('meta').innerHTML = '<div style="color:var(--muted)">暂无待标注样本</div>';
+        document.getElementById('sampleList').innerHTML = '';
+      }
+
+      annotationState = await statePromise;
+      applyManualSnapshot(annotationState?.entries || []);
+      const manualCount = Number(
+        annotationState?.manual_count
+          ?? items.filter(r => r.manual_inplane_annotation != null || r.manual_outplane_annotation != null).length
+      );
+      if (!total) {
+        summary.textContent = `队列为空（筛选=${queueClassFilterText()}）：请先完成全量识别或切换类别筛选`;
+      } else {
+        const preloaded = Number(data.preload_count ?? 0);
+        const session = readSessionSnapshot();
+        const resumeHint = session && session.round === currentRound && session.sample_idx != null
+          ? ` · 将恢复 #${session.sample_idx}`
+          : '';
+        summary.textContent = `待标注样本 ${total} 条（筛选=${queueClassFilterText()}） · 已人工标注 ${manualCount} 条（支持面内/面外独立标签，按不确定性排序${preloaded ? ` · 预渲染 ${preloaded} 条` : ''}${resumeHint}）`;
+      }
+    }
+
+    function renderList() {
+      const el = document.getElementById('sampleList');
+      el.innerHTML = items.map((r, i) => {
+        syncCardKind(r);
+        const ann = (r.manual_inplane_annotation_name || r.manual_outplane_annotation_name)
+          ? ` · 已标=面内${r.manual_inplane_annotation_name || '-'}|面外${r.manual_outplane_annotation_name || '-'}`
+          : '';
+        const effectiveIn = r.suggested_inplane_label_name || labelName(r.suggested_inplane_label ?? r.inplane_prediction ?? r.prediction ?? 0);
+        const effectiveOut = r.suggested_outplane_label_name || labelName(r.suggested_outplane_label ?? r.outplane_prediction ?? r.prediction ?? 0);
+        const goldHint = r.is_gold && r.gold_label_name && r.card_kind !== 'manual'
+          ? ` · 金标=${r.gold_label_name}`
+          : '';
+        const active = i === currentIdx ? 'active' : '';
+        return `<div class="sample-item kind-${r.card_kind} ${active}" data-i="${i}" title="${r.card_kind_name}">
+          <div>#${r.sample_idx} ${r.inplane_sensor_id || ''} · pred=面内${labelName(r.inplane_prediction ?? r.prediction)}/面外${labelName(r.outplane_prediction ?? r.prediction)} · u=${Number(r.uncertainty).toFixed(2)}${ann}</div>
+          <div class="sample-line2">标签=面内${effectiveIn} / 面外${effectiveOut}${goldHint}</div>
+        </div>`;
+      }).join('');
+      el.querySelectorAll('.sample-item').forEach(node => {
+        node.onclick = () => selectSample(Number(node.dataset.i));
+      });
+      document.getElementById('btnPrev').disabled = currentIdx <= 0;
+      document.getElementById('btnNext').disabled = currentIdx >= items.length - 1;
+    }
+
+    function setImgLoading(ids, loading) {
+      ids.forEach(id => {
+        const img = document.getElementById(id);
+        img.classList.toggle('loading', loading);
+      });
+    }
+
+    async function bindFigure(imgId, promise) {
+      const img = document.getElementById(imgId);
+      const token = selectToken;
+      img.classList.add('loading');
+      try {
+        const url = await promise;
+        if (token !== selectToken) return;
+        img.src = url;
+        img.classList.remove('loading');
+      } catch (_) {
+        if (token !== selectToken) return;
+        img.alt = '图像加载失败';
+        img.classList.remove('loading');
+      }
+    }
+
+    async function selectSample(i) {
+      if (i < 0 || i >= items.length) return;
+      clearTimeout(autoSaveTimer);
+      currentIdx = i;
+      selectToken += 1;
+      const myToken = selectToken;
+      contextDirection = 'inplane';
+      document.getElementById('tabIn').classList.add('active');
+      document.getElementById('tabOut').classList.remove('active');
+      setActiveAnnotDirection('inplane');
+      renderList();
+
+      const r = items[i];
+      const sid = r.sample_idx;
+
+      renderSampleMeta(r);
+      setImgLoading(figureSlots.map(([id]) => id).concat(ctxSlots.map(([id]) => id)), true);
+      notifyFocusedSample(sid);
+      schedulePreload(i);
+      figureSlots.forEach(([imgId, name]) => {
+        const dir = name === 'prediction' ? contextDirection : '-';
+        bindFigure(imgId, buffer.getFigure(sid, name, dir));
+      });
+      ctxSlots.forEach(([imgId, part]) => {
+        bindFigure(imgId, buffer.getContext(sid, part, contextDirection));
+      });
+      const otherDirection = contextDirection === 'inplane' ? 'outplane' : 'inplane';
+      prefetchContextDirection(sid, otherDirection);
+
+      const detailRes = await fetch(`/api/samples/${sid}?round_idx=${currentRound}`);
+      if (myToken !== selectToken) return;
+      const detail = detailRes.ok ? await detailRes.json() : { ...r };
+      items[i] = { ...items[i], ...detail };
+
+      annotationContext = detail;
+      savedInplaneLabel = detail.manual_inplane_annotation ?? null;
+      savedOutplaneLabel = detail.manual_outplane_annotation ?? null;
+      const initialIn = savedInplaneLabel ?? detail.suggested_inplane_label ?? detail.inplane_prediction ?? detail.prediction ?? 0;
+      const initialOut = savedOutplaneLabel ?? detail.suggested_outplane_label ?? detail.outplane_prediction ?? detail.prediction ?? 0;
+      renderSampleMeta(detail);
+      applyLabelSelection('inplane', Number(initialIn), 'init');
+      applyLabelSelection('outplane', Number(initialOut), 'init');
+      // Force-reset visual/control state to default inplane on each sample init.
+      contextDirection = 'inplane';
+      document.getElementById('tabIn').classList.add('active');
+      document.getElementById('tabOut').classList.remove('active');
+      setActiveAnnotDirection('inplane');
+      setSaveUiState('', '');
+      persistSession();
+    }
+
+    function preloadIndices(centerIdx) {
+      const indices = [];
+      for (let k = -PRELOAD_BACK; k <= PRELOAD_FORWARD; k += 1) {
+        const j = centerIdx + k;
+        if (j >= 0 && j < items.length) indices.push(j);
+      }
+      return indices;
+    }
+
+    function schedulePreload(centerIdx) {
+      const center = items[centerIdx];
+      const neighborIndices = preloadIndices(centerIdx).filter(j => j !== centerIdx);
+      const neighborIds = [...new Set(neighborIndices.map(j => items[j].sample_idx))];
+      const centerIds = center ? [center.sample_idx] : [];
+      const preloadIds = center ? [center.sample_idx, ...neighborIds] : neighborIds;
+
+      const postPreload = (sampleIndices, priority) => {
+        if (!sampleIndices.length) return;
+        fetch('/api/preload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sample_indices: sampleIndices,
+            round_idx: currentRound,
+            layout_profile: LAYOUT_PROFILE,
+            both_directions: true,
+            priority,
+          }),
+        }).catch(() => {});
+      };
+      // Keep focused sample always hot, then backfill neighbors.
+      postPreload(centerIds, true);
+      postPreload(neighborIds, false);
+
+      const keepIds = preloadIds;
+      const keepKeys = [];
+      keepIds.forEach(sampleIdx => {
+        figureSlots.forEach(([, name]) => {
+          if (name === 'prediction') {
+            keepKeys.push(buffer._key(sampleIdx, 'fig', name, 'inplane'));
+            keepKeys.push(buffer._key(sampleIdx, 'fig', name, 'outplane'));
+          } else {
+            keepKeys.push(buffer._key(sampleIdx, 'fig', name, '-'));
+          }
+        });
+        ['inplane', 'outplane'].forEach(direction => {
+          ctxSlots.forEach(([, part]) => keepKeys.push(buffer._key(sampleIdx, 'ctx', part, direction)));
+        });
+      });
+      buffer.evictExcept(keepKeys);
+    }
+
+    function notifyFocusedSample(sampleIdx) {
+      fetch('/api/preload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sample_indices: [sampleIdx],
+          round_idx: currentRound,
+          layout_profile: LAYOUT_PROFILE,
+          both_directions: true,
+          priority: true,
+        }),
+      }).catch(() => {});
+    }
+
+    function prefetchContextDirection(sampleIdx, direction) {
+      ctxSlots.forEach(([, part]) => {
+        buffer.getContext(sampleIdx, part, direction).catch(() => {});
+      });
+    }
+
+    function switchContext(direction) {
+      contextDirection = direction;
+      document.getElementById('tabIn').classList.toggle('active', direction === 'inplane');
+      document.getElementById('tabOut').classList.toggle('active', direction === 'outplane');
+      if (!items.length) return;
+      const sid = items[currentIdx].sample_idx;
+      ctxSlots.forEach(([imgId, part]) => {
+        bindFigure(imgId, buffer.getContext(sid, part, contextDirection));
+      });
+      bindFigure('imgPred', buffer.getFigure(sid, 'prediction', contextDirection));
+      const otherDirection = contextDirection === 'inplane' ? 'outplane' : 'inplane';
+      prefetchContextDirection(sid, otherDirection);
+      schedulePreload(currentIdx);
+    }
+
+    function toggleFocusAndContextDirection() {
+      const nextDir = activeAnnotDirection === 'inplane' ? 'outplane' : 'inplane';
+      setActiveAnnotDirection(nextDir);
+      switchContext(nextDir);
+    }
+
+    document.getElementById('btnPrev').onclick = () => selectSample(currentIdx - 1);
+    document.getElementById('btnNext').onclick = () => selectSample(currentIdx + 1);
+    document.getElementById('tabIn').onclick = () => switchContext('inplane');
+    document.getElementById('tabOut').onclick = () => switchContext('outplane');
+
+    document.getElementById('btnSave').onclick = () => saveAnnotation({ auto: false });
+
+    async function saveAnnotation(opts = {}) {
+      const auto = Boolean(opts.auto);
+      const advanceNext = Boolean(opts.advanceNext);
+      if (!items.length) return;
+      const r = items[currentIdx];
+      const inplaneAnnotation = selectedInplaneLabel;
+      const outplaneAnnotation = selectedOutplaneLabel;
+      if (savedInplaneLabel === inplaneAnnotation && savedOutplaneLabel === outplaneAnnotation && auto) return;
+      if (saveInFlight) {
+        pendingSaveOpts = { auto, advanceNext, inplaneAnnotation, outplaneAnnotation };
+        return;
+      }
+
+      clearTimeout(autoSaveTimer);
+      saveInFlight = true;
+      setSaveUiState('saving', auto ? '自动保存中…' : '保存中…');
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), SAVE_TIMEOUT_MS);
+      const result = await fetch('/api/annotate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sample_idx: r.sample_idx,
+          inplane_annotation: inplaneAnnotation,
+          outplane_annotation: outplaneAnnotation,
+          round_idx: currentRound,
+        }),
+        signal: controller.signal,
+      }).then(async (res) => {
+        clearTimeout(timeoutId);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          return { ok: false, message: err.detail || `保存失败 (${res.status})` };
+        }
+        const data = await res.json();
+        return { ok: true, data };
+      }).catch(() => {
+        clearTimeout(timeoutId);
+        return { ok: false, message: '保存超时或网络错误' };
+      });
+
+      saveInFlight = false;
+      setSaveUiState('', '');
+
+      if (!result.ok) {
+        setSaveUiState('err', result.message);
+        return;
+      }
+
+      const data = result.data;
+      savedInplaneLabel = inplaneAnnotation;
+      savedOutplaneLabel = outplaneAnnotation;
+      r.already_annotated = true;
+      r.manual_inplane_annotation = inplaneAnnotation;
+      r.manual_inplane_annotation_name = labelName(inplaneAnnotation);
+      r.manual_outplane_annotation = outplaneAnnotation;
+      r.manual_outplane_annotation_name = labelName(outplaneAnnotation);
+      r.manual_annotation = inplaneAnnotation;
+      r.manual_annotation_name = labelName(inplaneAnnotation);
+      r.suggested_inplane_label = inplaneAnnotation;
+      r.suggested_inplane_label_name = labelName(inplaneAnnotation);
+      r.suggested_outplane_label = outplaneAnnotation;
+      r.suggested_outplane_label_name = labelName(outplaneAnnotation);
+      r.suggested_label = inplaneAnnotation;
+      r.suggested_label_name = labelName(inplaneAnnotation);
+      r.suggested_source = 'manual';
+      r.label_origin = 'manual';
+      r.label_origin_name = '人工标注';
+      syncCardKind(r);
+      annotationContext = {
+        ...(annotationContext || {}),
+        manual_inplane_annotation: inplaneAnnotation,
+        manual_inplane_annotation_name: labelName(inplaneAnnotation),
+        manual_outplane_annotation: outplaneAnnotation,
+        manual_outplane_annotation_name: labelName(outplaneAnnotation),
+        manual_annotation: inplaneAnnotation,
+        manual_annotation_name: labelName(inplaneAnnotation),
+        suggested_inplane_label: inplaneAnnotation,
+        suggested_inplane_label_name: labelName(inplaneAnnotation),
+        suggested_outplane_label: outplaneAnnotation,
+        suggested_outplane_label_name: labelName(outplaneAnnotation),
+        suggested_label: inplaneAnnotation,
+        suggested_label_name: labelName(inplaneAnnotation),
+        suggested_source: 'manual',
+      };
+      if (annotationState) {
+        annotationState.manual_count = Number(data.manual_count ?? annotationState.manual_count ?? 0);
+      }
+      refreshAnnotationPanel();
+      renderList();
+      persistSession();
+      const savedAt = formatSavedAt(data.saved_at);
+      const mergeHint = data.merge_scheduled ? ' · 混合集后台更新中' : '';
+      setSaveUiState('ok', auto
+        ? `已自动保存 面内=${labelName(inplaneAnnotation)} / 面外=${labelName(outplaneAnnotation)}${savedAt ? ` @ ${savedAt}` : ''}${mergeHint}`
+        : `已保存 round ${data.round_idx} · 本 round ${data.manual_count} 条${savedAt ? ` @ ${savedAt}` : ''}${mergeHint}`);
+
+      if (advanceNext && currentIdx < items.length - 1) {
+        selectSample(currentIdx + 1);
+      }
+
+      if (pendingSaveOpts) {
+        const next = pendingSaveOpts;
+        pendingSaveOpts = null;
+        if (
+          next.inplaneAnnotation !== savedInplaneLabel
+          || next.outplaneAnnotation !== savedOutplaneLabel
+          || selectedInplaneLabel !== savedInplaneLabel
+          || selectedOutplaneLabel !== savedOutplaneLabel
+        ) {
+          saveAnnotation({ auto: next.auto, advanceNext: next.advanceNext });
+        }
+      }
+    }
+
+    document.getElementById('btnTrain').onclick = async () => {
+      if (!confirm(`启动 round ${currentRound} 训练？\nround1 默认仅金标；round2+ 使用金标+各轮人工标注混合集。`)) return;
+      const res = await fetch(`/api/jobs/train?round_idx=${currentRound}`, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.detail || '启动训练失败');
+        return;
+      }
+      openTrainMonitor(currentRound);
+      pollJob();
+    };
+
+    document.getElementById('btnMonitor').onclick = () => openTrainMonitor(currentRound);
+    document.getElementById('btnMonitorClose').onclick = closeTrainMonitor;
+    document.getElementById('btnMonitorRefresh').onclick = () => refreshTrainMonitor(true);
+    document.getElementById('btnTrainJobReset').onclick = async () => {
+      if (!confirm('释放后台任务占用？若任务仍在运行，请先确认已中断。')) return;
+      await fetch('/api/jobs/reset', { method: 'POST' });
+      await refreshJobState();
+      if (inferMonitorOpen) refreshInferMonitor(false);
+      if (monitorOpen) refreshTrainMonitor(false);
+    };
+    document.getElementById('monitorBackdrop').onclick = (e) => {
+      if (e.target.id === 'monitorBackdrop') closeTrainMonitor();
+    };
+
+    function openTrainMonitor(roundIdx) {
+      monitorRound = roundIdx;
+      monitorOpen = true;
+      document.getElementById('monitorTitle').textContent = `Round ${roundIdx} 训练监控台`;
+      document.getElementById('monitorBackdrop').classList.add('open');
+      refreshTrainMonitor(true);
+      if (monitorPollTimer) clearInterval(monitorPollTimer);
+      monitorPollTimer = setInterval(() => refreshTrainMonitor(false), 1500);
+    }
+
+    function closeTrainMonitor() {
+      monitorOpen = false;
+      document.getElementById('monitorBackdrop').classList.remove('open');
+      if (monitorPollTimer) {
+        clearInterval(monitorPollTimer);
+        monitorPollTimer = null;
+      }
+    }
+
+    function fmt(v) {
+      return (v === undefined || v === null || Number.isNaN(v)) ? '-' : Number(v).toFixed(4);
+    }
+
+    function syncEpochTableViewport() {
+      const table = document.getElementById('monitorEpochTable');
+      const wrap = table?.closest('.epoch-table-wrap');
+      if (!table || !wrap) return;
+      const headRow = table.querySelector('thead tr');
+      const sampleRow = table.querySelector('tbody tr');
+      const headH = headRow ? headRow.getBoundingClientRect().height : 28;
+      const rowH = sampleRow ? sampleRow.getBoundingClientRect().height : 26;
+      const maxRows = EPOCH_HISTORY_VISIBLE_ROWS;
+      wrap.style.maxHeight = `${Math.ceil(headH + rowH * maxRows)}px`;
+    }
+
+    function drawLineChart(canvas, history, series, yLabel) {
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, w, h);
+      if (!history.length) {
+        ctx.fillStyle = '#9ca3af';
+        ctx.fillText('暂无数据', 12, 24);
+        return;
+      }
+      const pad = { l: 44, r: 12, t: 12, b: 28 };
+      let yMax = 0.001;
+      series.forEach(s => history.forEach(r => {
+        const v = s.get(r);
+        if (v > yMax) yMax = v;
+      }));
+      yMax *= 1.1;
+      const plotW = w - pad.l - pad.r;
+      const plotH = h - pad.t - pad.b;
+      ctx.strokeStyle = '#e5e7eb';
+      ctx.beginPath();
+      ctx.moveTo(pad.l, pad.t);
+      ctx.lineTo(pad.l, h - pad.b);
+      ctx.lineTo(w - pad.r, h - pad.b);
+      ctx.stroke();
+      ctx.fillStyle = '#6b7280';
+      ctx.font = '11px sans-serif';
+      ctx.fillText(yLabel, 6, pad.t + 10);
+      const colors = ['#2563eb', '#dc2626', '#059669'];
+      series.forEach((s, si) => {
+        ctx.strokeStyle = colors[si % colors.length];
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        history.forEach((r, i) => {
+          const x = pad.l + (history.length === 1 ? plotW / 2 : (i / (history.length - 1)) * plotW);
+          const y = pad.t + plotH - (s.get(r) / yMax) * plotH;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        ctx.fillStyle = colors[si % colors.length];
+        ctx.fillText(s.label, pad.l + 8 + si * 90, h - 8);
+      });
+    }
+
+    function renderMonitor(data) {
+      const job = data.job || {};
+      const status = job.status || 'idle';
+      const pill = document.getElementById('monitorStatusPill');
+      pill.textContent = status + (job.phase ? ` · ${job.phase}` : '');
+      pill.className = 'status-pill ' + (status === 'running' ? 'running' : (status === 'error' ? 'error' : (status === 'done' ? 'done' : '')));
+
+      const cur = data.current_epoch || 0;
+      const total = data.epochs_total || 0;
+      document.getElementById('monitorProgressText').textContent =
+        `epoch ${cur} / ${total}` + (data.best ? ` · best epoch ${data.best.epoch} (mean F1 ${fmt(data.best.val_metrics?.viv_rwiv_mean_f1)})` : '');
+      document.getElementById('monitorProgressBar').style.width =
+        total > 0 ? `${Math.min(100, (cur / total) * 100)}%` : '0%';
+
+      const history = data.history || [];
+      drawLineChart(document.getElementById('chartLoss'), history, [
+        { label: 'train', get: r => r.train_loss },
+        { label: 'val', get: r => r.val_loss },
+      ], 'loss');
+      drawLineChart(document.getElementById('chartF1'), history, [
+        { label: 'VIV F1', get: r => r.val_metrics?.VIV_f1 || 0 },
+        { label: 'RWIV F1', get: r => r.val_metrics?.RWIV_f1 || 0 },
+        { label: 'mean F1', get: r => r.val_metrics?.viv_rwiv_mean_f1 || 0 },
+      ], 'f1');
+
+      const latest = data.latest;
+      const tbody = document.querySelector('#monitorMetricsTable tbody');
+      tbody.innerHTML = CLASS_NAMES.map(name => {
+        const m = latest?.val_metrics || {};
+        return `<tr>
+          <td>${name}</td>
+          <td>${fmt(m[`${name}_precision`])}</td>
+          <td>${fmt(m[`${name}_recall`])}</td>
+          <td>${fmt(m[`${name}_f1`])}</td>
+        </tr>`;
+      }).join('');
+      document.getElementById('monitorSummary').textContent = latest
+        ? `Epoch ${latest.epoch} · val_loss=${fmt(latest.val_loss)} · train_loss=${fmt(latest.train_loss)} · teacher_reg(val)=${fmt(latest.val_teacher_reg)} · accuracy=${fmt(latest.val_metrics?.accuracy)}`
+        : '尚无 epoch 完成';
+
+      const epochBody = document.querySelector('#monitorEpochTable tbody');
+      epochBody.innerHTML = history.slice().reverse().map(r => {
+        const vm = r.val_metrics || {};
+        return `<tr>
+          <td>${r.epoch}</td>
+          <td>${fmt(r.train_loss)}</td>
+          <td>${fmt(r.val_loss)}</td>
+          <td>${fmt(vm.VIV_f1)}</td>
+          <td>${fmt(vm.RWIV_f1)}</td>
+          <td>${fmt(vm.viv_rwiv_mean_f1)}</td>
+        </tr>`;
+      }).join('');
+      syncEpochTableViewport();
+
+      document.getElementById('monitorLog').textContent = data.log_tail || '(日志为空，训练可能尚未输出)';
+
+      const img = document.getElementById('monitorConfusion');
+      const confusionEpoch = data.confusion_epoch ?? data.current_epoch;
+      if (data.has_confusion && confusionEpoch > 0) {
+        img.src = `/api/training/${monitorRound}/confusion?epoch=${confusionEpoch}&t=${Date.now()}`;
+        img.style.display = 'block';
+      } else {
+        img.style.display = 'none';
+      }
+
+      if (monitorOpen && (status === 'done' || status === 'error') && monitorPollTimer) {
+        clearInterval(monitorPollTimer);
+        monitorPollTimer = null;
+      }
+    }
+
+    async function refreshTrainMonitor(forceStatus) {
+      if (forceStatus) await refreshJobState();
+      const res = await fetch(`/api/jobs/monitor?round_idx=${monitorRound}`);
+      if (!res.ok) return;
+      renderMonitor(await res.json());
+    }
+
+    document.getElementById('btnInferMonitor').onclick = () => openInferMonitor(currentRound);
+    document.getElementById('btnInferMonitorClose').onclick = closeInferMonitor;
+    document.getElementById('btnInferMonitorRefresh').onclick = () => refreshInferMonitor(true);
+    document.getElementById('btnJobReset').onclick = async () => {
+      if (!confirm('释放后台任务占用？若任务仍在运行，请先确认已中断。')) return;
+      await fetch('/api/jobs/reset', { method: 'POST' });
+      await refreshJobState();
+      if (inferMonitorOpen) refreshInferMonitor(false);
+      if (monitorOpen) refreshTrainMonitor(false);
+    };
+    document.getElementById('inferMonitorBackdrop').onclick = (e) => {
+      if (e.target.id === 'inferMonitorBackdrop') closeInferMonitor();
+    };
+
+    function openInferMonitor(roundIdx) {
+      inferMonitorRound = roundIdx;
+      inferMonitorOpen = true;
+      document.getElementById('inferMonitorTitle').textContent = `Round ${roundIdx} 识别监控台`;
+      document.getElementById('inferMonitorBackdrop').classList.add('open');
+      refreshInferMonitor(true);
+      if (inferMonitorPollTimer) clearInterval(inferMonitorPollTimer);
+      inferMonitorPollTimer = setInterval(() => refreshInferMonitor(false), 2000);
+    }
+
+    function closeInferMonitor() {
+      inferMonitorOpen = false;
+      document.getElementById('inferMonitorBackdrop').classList.remove('open');
+      if (inferMonitorPollTimer) {
+        clearInterval(inferMonitorPollTimer);
+        inferMonitorPollTimer = null;
+      }
+    }
+
+    function renderInferDistribution(distribution, total) {
+      const el = document.getElementById('inferDistribution');
+      if (!distribution.length) {
+        el.innerHTML = '<div style="color:var(--muted);font-size:12px">尚无识别结果，请先完成全量识别</div>';
+        document.getElementById('inferSummary').textContent = '';
+        return;
+      }
+      el.innerHTML = distribution.map(row => {
+        const pct = (row.ratio * 100).toFixed(1);
+        return `<div class="dist-row">
+          <span>${row.name}</span>
+          <div class="dist-bar-wrap"><div class="dist-bar" style="width:${pct}%"></div></div>
+          <span>${row.count}</span>
+          <span>${pct}%</span>
+        </div>`;
+      }).join('');
+      document.getElementById('inferSummary').textContent = `总样本 ${total} 条`;
+    }
+
+    function renderAnnotationConsistency(consistency) {
+      const summaryEl = document.getElementById('inferConsistencySummary');
+      const detailEl = document.getElementById('inferConsistencyDetail');
+      if (!consistency) {
+        summaryEl.textContent = '暂无一致性统计数据';
+        detailEl.innerHTML = '';
+        return;
+      }
+      const inKappa = consistency.inplane_kappa || {};
+      const outKappa = consistency.outplane_kappa || {};
+      const roundChange = consistency.per_round_change_counts || {};
+      const roundTrend = Object.keys(roundChange)
+        .sort((a, b) => Number(a) - Number(b))
+        .map(k => `R${k}:${roundChange[k]}`)
+        .join(' · ');
+      summaryEl.innerHTML = [
+        `累计样本 ${consistency.total_distinct_samples || 0}，重复标注样本 ${consistency.reannotated_sample_count || 0}，可比对对数 ${consistency.compared_pairs || 0}。`,
+        `累计改标事件 ${consistency.change_events_total || 0}${roundTrend ? `（${roundTrend}）` : ''}。`,
+        `双方向完全一致率 ${(Number(consistency.both_direction_agreement_rate || 0) * 100).toFixed(1)}%。`,
+        `面内Kappa: ${inKappa.available ? `κ=${fmt(inKappa.kappa)}, 一致率=${(Number(inKappa.agreement_rate || 0) * 100).toFixed(1)}%, n=${inKappa.sample_count}` : (inKappa.reason || '不可计算')}`,
+        `面外Kappa: ${outKappa.available ? `κ=${fmt(outKappa.kappa)}, 一致率=${(Number(outKappa.agreement_rate || 0) * 100).toFixed(1)}%, n=${outKappa.sample_count}` : (outKappa.reason || '不可计算')}`,
+      ].join('<br/>');
+
+      const rows = consistency.recent_changes || [];
+      if (!rows.length) {
+        detailEl.innerHTML = '<div style="color:var(--muted)">暂无可追溯改标记录</div>';
+        return;
+      }
+      detailEl.innerHTML = `<table class="metrics-table">
+        <thead>
+          <tr>
+            <th>时间</th><th>Round</th><th>窗口</th><th>面内变更</th><th>面外变更</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.slice(0, 10).map(row => `<tr>
+            <td>${row.event_time || '-'}</td>
+            <td>R${row.round_idx}</td>
+            <td>#${row.window_index}</td>
+            <td>${row.before_inplane_name} → ${row.after_inplane_name}</td>
+            <td>${row.before_outplane_name} → ${row.after_outplane_name}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+    }
+
+    function typicalFigureBlock(sampleIdx, figName, label, saveName, roundIdx) {
+      const imgId = `typ_${figName}_${sampleIdx}`;
+      return `<div class="typical-fig">
+        <div class="figure-head">
+          <span class="figure-label">${label}</span>
+          <button type="button" class="btn btn-mini save-typical-fig" data-img="${imgId}" data-name="${saveName}">保存</button>
+        </div>
+        <img id="${imgId}" class="typical-fig-img loading" data-round="${roundIdx}" data-fig="${figName}" data-sample="${sampleIdx}" alt="${label}" />
+      </div>`;
+    }
+
+    let typicalRenderKey = '';
+    let typicalFigureInflight = 0;
+    const TYPICAL_FIGURE_MAX = 2;
+    const typicalFigureWaiters = [];
+
+    function acquireTypicalFigureSlot() {
+      if (typicalFigureInflight < TYPICAL_FIGURE_MAX) {
+        typicalFigureInflight += 1;
+        return Promise.resolve();
+      }
+      return new Promise(resolve => typicalFigureWaiters.push(resolve));
+    }
+
+    function releaseTypicalFigureSlot() {
+      typicalFigureInflight = Math.max(0, typicalFigureInflight - 1);
+      const next = typicalFigureWaiters.shift();
+      if (next) {
+        typicalFigureInflight += 1;
+        next();
+      }
+    }
+
+    async function bindTypicalFigure(img, roundIdx) {
+      const sampleIdx = Number(img.dataset.sample);
+      const figName = img.dataset.fig;
+      if (img.dataset.loaded === '1' || img.dataset.loading === '1') return;
+      img.dataset.loading = '1';
+      img.classList.add('loading');
+      const url = `/api/figures/${sampleIdx}/${figName}?round_idx=${roundIdx}`;
+      await acquireTypicalFigureSlot();
+      try {
+        const blob = await buffer.fetchBlob(url);
+        img.src = URL.createObjectURL(blob);
+        img.dataset.loaded = '1';
+        img.classList.remove('loading');
+      } catch (_) {
+        img.alt = '图像加载失败';
+        img.classList.remove('loading');
+      } finally {
+        delete img.dataset.loading;
+        releaseTypicalFigureSlot();
+      }
+    }
+
+    function preloadTypicalSamples(typical, roundIdx) {
+      const ids = [];
+      Object.values(typical || {}).forEach(rows => {
+        (rows || []).forEach(row => ids.push(Number(row.sample_idx)));
+      });
+      const unique = [...new Set(ids.filter(n => Number.isFinite(n)))];
+      if (!unique.length) return;
+      fetch('/api/preload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sample_indices: unique,
+          round_idx: roundIdx,
+          layout_profile: LAYOUT_PROFILE,
+          both_directions: false,
+        }),
+      }).catch(() => {});
+    }
+
+    function renderTypicalSamples(typical, labelNames, roundIdx) {
+      const el = document.getElementById('inferTypicalSamples');
+      const renderKey = JSON.stringify({ typical, roundIdx });
+      if (renderKey !== typicalRenderKey) {
+        typicalRenderKey = renderKey;
+        el.innerHTML = labelNames.map((name, classId) => {
+          const rows = typical[classId] || typical[String(classId)] || [];
+          if (!rows.length) {
+            return `<div class="typical-section"><h5>${name}</h5><div style="color:var(--muted);font-size:12px">暂无样本</div></div>`;
+          }
+          const cards = rows.map(row => {
+            const sid = row.sample_idx;
+            const base = `${name}_${sid}`;
+            return `<div class="typical-card">
+              <div class="figure-head">
+                <span>#${sid} · ${name} · conf=${row.confidence.toFixed(3)} · u=${row.uncertainty.toFixed(3)}</span>
+              </div>
+              <div>窗口 ${row.window_index} · ${row.inplane_sensor_id || '-'}</div>
+              <div class="typical-fig-grid">
+                ${typicalFigureBlock(sid, 'in_timeseries', '面内时程', `${base}_in_ts`, roundIdx)}
+                ${typicalFigureBlock(sid, 'in_spectrum', '面内频谱', `${base}_in_sp`, roundIdx)}
+                ${typicalFigureBlock(sid, 'trajectory', '面内外轨迹', `${base}_traj`, roundIdx)}
+              </div>
+            </div>`;
+          }).join('');
+          return `<div class="typical-section"><h5>${name}（${rows.length}）</h5><div class="typical-grid">${cards}</div></div>`;
+        }).join('');
+        el.querySelectorAll('.save-typical-fig').forEach(btn => {
+          btn.onclick = () => {
+            const img = document.getElementById(btn.dataset.img);
+            saveImageElement(img, `${btn.dataset.name}.png`);
+          };
+        });
+      }
+      preloadTypicalSamples(typical, roundIdx);
+      el.querySelectorAll('.typical-fig-img').forEach(img => bindTypicalFigure(img, roundIdx));
+    }
+
+    let inferMonitorBusy = false;
+
+    async function refreshInferMonitor(forceStatus) {
+      if (inferMonitorBusy) return;
+      inferMonitorBusy = true;
+      try {
+        if (forceStatus) await refreshJobState();
+        const res = await fetch(`/api/jobs/infer/monitor?round_idx=${inferMonitorRound}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const job = data.job || {};
+        const status = job.status || 'idle';
+        const pill = document.getElementById('inferStatusPill');
+        let pillText = status + (job.phase ? ` · ${job.phase}` : '');
+        if (data.infer_progress && status === 'running') {
+          const p = data.infer_progress;
+          pillText += ` · ${p.direction} ${p.percent}% (${p.current}/${p.total})`;
+        }
+        pill.textContent = pillText;
+        pill.className = 'status-pill ' + (status === 'running' ? 'running' : (status === 'error' ? 'error' : (status === 'done' ? 'done' : '')));
+        if (!data.inference_ready && data.infer_progress && status === 'running') {
+          document.getElementById('inferSummary').textContent =
+            `推理进行中：${data.infer_progress.direction} ${data.infer_progress.percent}%`;
+        }
+        renderInferDistribution(data.distribution || [], data.total_records || 0);
+        renderAnnotationConsistency(data.annotation_consistency || null);
+        renderTypicalSamples(data.typical_samples || {}, data.label_names || CLASS_NAMES, inferMonitorRound);
+        document.getElementById('inferMonitorLog').textContent = data.log_tail || '(日志为空，识别可能尚未输出)';
+        const stopPoll = status === 'error' || ((status === 'done' || status === 'idle') && data.inference_ready);
+        if (inferMonitorOpen && stopPoll && inferMonitorPollTimer) {
+          clearInterval(inferMonitorPollTimer);
+          inferMonitorPollTimer = null;
+        }
+        if (data.inference_ready && inferQueueReloadPending) {
+          inferQueueReloadPending = false;
+          loadQueue();
+        }
+      } finally {
+        inferMonitorBusy = false;
+      }
+    }
+
+    document.getElementById('btnInfer').onclick = async () => {
+      if (!confirm(`对 round ${currentRound} 执行全量重新识别？完成后队列会刷新。`)) return;
+      inferQueueReloadPending = true;
+      let res = await fetch(`/api/jobs/infer?round_idx=${currentRound}`, { method: 'POST' });
+      if (res.status === 409) {
+        await refreshJobState();
+        res = await fetch(`/api/jobs/infer?round_idx=${currentRound}`, { method: 'POST' });
+      }
+      if (!res.ok) {
+        const err = await res.json();
+        alert((err.detail || '启动推理失败') + '。若已 Ctrl+C 中断，请点击识别监控台「释放后台」。');
+        return;
+      }
+      openInferMonitor(currentRound);
+      pollJob();
+    };
+
+    async function refreshJobState() {
+      const res = await fetch('/api/jobs/status');
+      const s = await res.json();
+      updateRoundUi();
+      const statusEl = document.getElementById('jobStatus');
+      statusEl.classList.remove('error');
+      let text = `后台任务: ${s.status || 'idle'}`;
+      if (s.phase) text += ` · ${s.phase}`;
+      if (s.round) text += ` · job round ${s.round}`;
+      if (s.status === 'error' && s.error) {
+        statusEl.classList.add('error');
+        text += ` · ${s.error}`;
+      }
+      statusEl.textContent = text;
+      return s;
+    }
+
+    async function pollJob() {
+      const s = await refreshJobState();
+      if (monitorOpen) refreshTrainMonitor(false);
+      if (inferMonitorOpen && !inferMonitorPollTimer) refreshInferMonitor(false);
+      if (s.status === 'running') setTimeout(pollJob, 2000);
+      if (s.status === 'done' && inferQueueReloadPending) loadQueue();
+    }
+
+    document.getElementById('btnRoundPrev').addEventListener('click', () => {
+      setCurrentRound(currentRound - 1);
+    });
+    document.getElementById('btnRoundNext').addEventListener('click', () => {
+      setCurrentRound(currentRound + 1);
+    });
+
+    document.addEventListener('keydown', (e) => {
+      const tag = e.target.tagName;
+      if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+      if (e.key === 'ArrowLeft' || e.key === 'k' || e.key === 'K') {
+        e.preventDefault();
+        selectSample(currentIdx - 1);
+      } else if (e.key === 'ArrowRight' || e.key === 'j' || e.key === 'J') {
+        e.preventDefault();
+        selectSample(currentIdx + 1);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        saveAnnotation({ auto: false, advanceNext: true });
+      } else if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        saveAnnotation({ auto: false });
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        toggleFocusAndContextDirection();
+      } else if (Object.prototype.hasOwnProperty.call(LABEL_KEYS, e.key)) {
+        e.preventDefault();
+        applyLabelSelection(activeAnnotDirection, LABEL_KEYS[e.key], 'hotkey');
+      }
+    });
+
+    const annotateHelpBtn = document.getElementById('annotateHelpBtn');
+    const annotateHelpPopover = document.getElementById('annotateHelpPopover');
+    annotateHelpBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      annotateHelpPopover?.classList.toggle('open');
+    });
+    document.addEventListener('click', (e) => {
+      if (!annotateHelpPopover || !annotateHelpBtn) return;
+      if (e.target === annotateHelpBtn || annotateHelpBtn.contains(e.target)) return;
+      if (annotateHelpPopover.contains(e.target)) return;
+      annotateHelpPopover.classList.remove('open');
+    });
+    document.querySelectorAll('.queue-filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => setQueueClassFilter(btn.dataset.queueFilter || '1,2,3'));
+    });
+
+    bindSaveImageButtons();
+    renderLabelButtons();
+    updateRoundUi();
+    loadAppConfig().then(loadQueue);
+    refreshJobState();
+    setInterval(refreshJobState, 5000);
+  </script>
+</body>
+</html>

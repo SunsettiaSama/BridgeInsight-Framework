@@ -1,0 +1,11 @@
+﻿vib_metadata_path: F:/Research/Vibration Characteristics In Cable Vibration/src/chapter4_characteristics/smoke_fixtures/data/vib_metadata.json
+wind_metadata_path: F:/Research/Vibration Characteristics In Cable Vibration/src/chapter4_characteristics/smoke_fixtures/data/wind_metadata.json
+cable_pairs:
+  - [MOCK-IN-01, MOCK-OUT-01]
+wind_sensor_ids:
+  - WIND-01
+window_size: 3000
+require_wind_alignment: false
+use_cache: false
+time_ordered: true
+missing_rate_threshold: 0.05

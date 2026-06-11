@@ -10,7 +10,10 @@ if str(project_root) not in sys.path:
 from src.data_processer.io_unpacker import UNPACK
 from src.data_processer.signals.wavelets import denoise
 from src.visualize_tools.utils import PlotLib
-from src.identifier.deeplearning_methods import FullDatasetRunner
+from src.chapter4_characteristics._bootstrap import ensure_paths
+
+ensure_paths()
+from src.chapter3_identifier.identifier.dl.runner import FullDatasetRunner
 from src.figure_paintings.figs_for_thesis.config import (
     ENG_FONT, CN_FONT, SQUARE_FIG_SIZE, SQUARE_FONT_SIZE,
     NORMAL_VIB_COLOR, NORMAL_EDGE_COLOR, DEFAULT_COLOR,

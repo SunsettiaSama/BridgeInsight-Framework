@@ -23,7 +23,10 @@ from collections import defaultdict
 from typing import Dict, List, Tuple, Optional
 
 from src.visualize_tools.utils import PlotLib
-from src.identifier.deeplearning_methods import FullDatasetRunner
+from src.chapter4_characteristics._bootstrap import ensure_paths
+
+ensure_paths()
+from src.chapter3_identifier.identifier.dl.runner import FullDatasetRunner
 
 # 从统一配置模块导入图像配置（字体、尺寸、配色）
 from src.figure_paintings.figs_for_thesis.config import ENG_FONT, CN_FONT, FONT_SIZE, REC_FIG_SIZE, get_blue_color_map

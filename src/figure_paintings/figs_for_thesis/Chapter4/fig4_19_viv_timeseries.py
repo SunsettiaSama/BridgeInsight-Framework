@@ -10,7 +10,10 @@ if str(project_root) not in sys.path:
 
 from src.data_processer.io_unpacker import UNPACK
 from src.data_processer.signals.wavelets import denoise
-from src.identifier.deeplearning_methods import FullDatasetRunner
+from src.chapter4_characteristics._bootstrap import ensure_paths
+
+ensure_paths()
+from src.chapter3_identifier.identifier.dl.runner import FullDatasetRunner
 from src.visualize_tools.web_dashboard import push as web_push
 from src.figure_paintings.figs_for_thesis.config import (
     ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE, VIV_VIB_COLOR,
@@ -20,7 +23,10 @@ from src.figure_paintings.figs_for_thesis.config import (
 _chapter4_dir = str(Path(__file__).parent)
 if _chapter4_dir not in sys.path:
     sys.path.insert(0, _chapter4_dir)
-from _viv_pipeline import load_latest_result, get_viv_samples as _pipeline_get_viv_samples
+from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import (
+    load_latest_result,
+    get_viv_samples as _pipeline_get_viv_samples,
+)
 
 
 # ==================== 常量配置 ====================
