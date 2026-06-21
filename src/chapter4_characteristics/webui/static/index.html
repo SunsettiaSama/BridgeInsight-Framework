@@ -6,22 +6,22 @@
   <title>Chapter4 振动特性分析</title>
   <style>
     :root {
-      --bg: #0f1117;
-      --surface: #1c1e26;
-      --surface-2: #252833;
-      --border: #2a2d3a;
-      --text: #d0d4e0;
-      --muted: #7a8094;
-      --accent: #4f8ef7;
-      --accent-soft: rgba(79, 142, 247, 0.12);
-      --ok: #3dd68c;
-      --warn: #f7a94f;
-      --err: #f07178;
-      --sidebar-w: 220px;
-      --header-h: 52px;
+      --bg: #f4f6f9;
+      --surface: #ffffff;
+      --surface-2: #f8fafc;
+      --border: #d5dbe3;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --accent-soft: #eff6ff;
+      --ok: #16a34a;
+      --warn: #d97706;
+      --err: #dc2626;
+      --sidebar-w: 240px;
+      --header-h: 44px;
       --radius: 10px;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; }
     html, body { height: 100%; overflow: hidden; }
     body {
       font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -29,6 +29,7 @@
       color: var(--text);
       font-size: 13px;
       line-height: 1.45;
+      margin: 0;
     }
 
     /* ── shell ── */
@@ -38,13 +39,15 @@
       flex-shrink: 0;
       display: flex;
       align-items: center;
-      gap: 16px;
-      padding: 0 18px;
+      gap: 8px;
+      padding: 6px 12px;
       background: var(--surface);
       border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+      overflow: hidden;
     }
     .brand { display: flex; flex-direction: column; gap: 1px; min-width: 180px; }
-    .brand-title { font-size: 15px; font-weight: 700; letter-spacing: 0.3px; color: var(--accent); }
+    .brand-title { font-size: 15px; font-weight: 700; letter-spacing: 0.3px; color: var(--text); }
     .brand-sub { font-size: 11px; color: var(--muted); }
     .topbar-spacer { flex: 1; }
     .topbar-group {
@@ -95,8 +98,9 @@
     .nav-item:hover { background: var(--surface-2); border-color: var(--border); }
     .nav-item.active {
       background: var(--accent-soft);
-      border-color: rgba(79, 142, 247, 0.35);
-      color: #fff;
+      border-color: var(--accent);
+      color: #1d4ed8;
+      font-weight: 600;
     }
     .nav-dot {
       width: 7px; height: 7px; border-radius: 50%;
@@ -125,6 +129,7 @@
       border: 1px solid var(--border);
       border-radius: var(--radius);
       overflow: hidden;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
     }
     .card + .card { margin-top: 12px; }
     .card-head {
@@ -156,7 +161,7 @@
     }
     .btn:hover { border-color: var(--accent); background: var(--accent-soft); }
     .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; }
-    .btn.primary:hover { background: #3d7ae8; }
+    .btn.primary:hover { background: #1d4ed8; }
     .btn.ghost { background: transparent; }
     .btn.sm { padding: 5px 10px; font-size: 12px; }
 
@@ -203,9 +208,9 @@
       color: var(--muted);
       border: 1px solid var(--border);
     }
-    .badge.run { background: rgba(247, 169, 79, 0.15); color: var(--warn); border-color: rgba(247, 169, 79, 0.35); }
-    .badge.ok { background: rgba(61, 214, 140, 0.12); color: var(--ok); border-color: rgba(61, 214, 140, 0.3); }
-    .badge.err { background: rgba(240, 113, 120, 0.12); color: var(--err); border-color: rgba(240, 113, 120, 0.3); }
+    .badge.run { background: #fff7ed; color: var(--warn); border-color: #fdba74; }
+    .badge.ok { background: #ecfdf5; color: var(--ok); border-color: #86efac; }
+    .badge.err { background: #fef2f2; color: var(--err); border-color: #fecaca; }
 
     /* ── status cards ── */
     .stat-row {
@@ -243,7 +248,7 @@
 
     /* ── log terminal ── */
     .log-wrap {
-      background: #0a0c10;
+      background: #0f172a;
       border: 1px solid var(--border);
       border-radius: 8px;
       overflow: hidden;
@@ -268,7 +273,7 @@
       font-family: "Cascadia Code", "Consolas", monospace;
       font-size: 11.5px;
       line-height: 1.55;
-      color: #b8c0d0;
+      color: #dbeafe;
       white-space: pre-wrap;
       word-break: break-all;
     }
@@ -301,7 +306,7 @@
     .plot-list label:hover { background: var(--surface-2); }
     .plot-list label:has(input:checked) {
       background: var(--accent-soft);
-      border-color: rgba(79, 142, 247, 0.3);
+      border-color: #bfdbfe;
     }
     .plot-list input { accent-color: var(--accent); }
 
@@ -317,7 +322,7 @@
       align-items: center;
       justify-content: center;
       min-height: 0;
-      background: #0a0c10;
+      background: #f8fafc;
       padding: 8px;
     }
     img.preview {
@@ -330,7 +335,7 @@
       width: 100%;
       max-height: 180px;
       margin-top: 8px;
-      background: #0a0c10;
+      background: #f8fafc;
       border: 1px solid var(--border);
     }
 
@@ -412,7 +417,7 @@
       width: 100%;
       height: 150px;
       object-fit: contain;
-      background: #0a0c10;
+      background: #f8fafc;
       display: block;
     }
 
@@ -425,14 +430,14 @@
     .empty-state strong { display: block; color: var(--text); margin-bottom: 6px; font-size: 15px; }
 
     pre.neighbors {
-      background: #0a0c10;
+      background: #0f172a;
       border: 1px solid var(--border);
       border-radius: 8px;
       padding: 10px 12px;
       font-size: 11px;
       overflow: auto;
       max-height: 120px;
-      color: #9aa4b8;
+      color: #dbeafe;
     }
 
     ::-webkit-scrollbar { width: 7px; height: 7px; }
@@ -451,11 +456,8 @@
     <div class="topbar-spacer"></div>
     <div class="topbar-group">
       <label class="inline" style="color:var(--text)">
-        Round
-        <select id="roundSelect">
-          <option value="1">Round 01</option>
-          <option value="2">Round 02</option>
-        </select>
+        <input type="checkbox" id="useDemo" />
+        使用 Demo
       </label>
     </div>
     <div class="topbar-group">
@@ -464,10 +466,10 @@
     </div>
   </header>
 
-  <div class="body">
-    <nav class="sidebar" id="sidebarNav"></nav>
+  <main class="body">
+    <aside class="sidebar" id="sidebarNav"></aside>
 
-    <div class="content">
+    <section class="content">
       <section id="panel-infer" class="panel active">
         <div class="page-head">
           <div class="page-title">全量识别与特征归档</div>
@@ -477,7 +479,6 @@
         <div class="stat-row" id="statusCards">
           <div class="stat-card"><div class="stat-label">识别结果</div><div class="stat-value no" id="stInfer">—</div></div>
           <div class="stat-card"><div class="stat-label">特征归档</div><div class="stat-value no" id="stEnrich">—</div></div>
-          <div class="stat-card"><div class="stat-label">当前 Round</div><div class="stat-value" id="stRound">—</div></div>
         </div>
         <p id="statusLine" hidden></p>
 
@@ -489,7 +490,6 @@
               <button id="btnEnrich" class="btn">特征归档</button>
               <div class="toolbar-divider"></div>
               <button id="btnPreflight" class="btn ghost sm">预检</button>
-              <button id="btnSetActive" class="btn ghost sm">设为当前 Round</button>
               <label class="inline"><input type="checkbox" id="smokeMode" /> 冒烟 limit=500</label>
             </div>
           </div>
@@ -547,8 +547,8 @@
           </div>
         </div>
       </section>
-    </div>
-  </div>
+    </section>
+  </main>
 </div>
 
 <script>
@@ -561,10 +561,13 @@ const TABS = [
   { id: 'others', label: 'Others 调查', section: '调查' },
 ];
 const CLASS_NAMES = ['随机振动', 'VIV', 'RWIV', '其他'];
-let state = { round: 1, tab: 'infer', othersPage: 0, selectedOthers: null, jobPoll: null };
+let state = { tab: 'infer', othersPage: 0, selectedOthers: null, jobPoll: null, useDemo: false };
 
 function $(id) { return document.getElementById(id); }
-function round() { return parseInt($('roundSelect').value, 10); }
+function withMode(path) {
+  if (!state.useDemo) return path;
+  return path + (path.includes('?') ? '&' : '?') + 'use_demo=1';
+}
 
 function initTabs() {
   const nav = $('sidebarNav');
@@ -657,7 +660,7 @@ function setReady(el, ready) {
 }
 
 async function api(path, opts) {
-  const r = await fetch(path, opts);
+  const r = await fetch(withMode(path), opts);
   if (!r.ok) {
     const t = await r.text();
     throw new Error(t || r.statusText);
@@ -668,9 +671,8 @@ async function api(path, opts) {
 }
 
 async function refreshStatus() {
-  const st = await api(`/api/status?round_idx=${round()}`);
-  $('statusLine').textContent = `round ${st.round_idx} | inference: ${st.inference_ready} | enrich: ${st.enrich_ready}`;
-  $('stRound').textContent = `Round ${String(st.round_idx).padStart(2, '0')}`;
+  const st = await api('/api/status');
+  $('statusLine').textContent = `mode: ${state.useDemo ? 'demo' : 'default'} | inference: ${st.inference_ready} | enrich: ${st.enrich_ready}`;
   setReady($('stInfer'), st.inference_ready);
   setReady($('stEnrich'), st.enrich_ready);
   if (st.class_counts) renderDist(st.class_counts);
@@ -683,7 +685,7 @@ async function pollJob() {
   badge.className = 'badge ' + (js.status === 'running' ? 'run' : js.status === 'done' ? 'ok' : js.status === 'error' ? 'err' : '');
   $('logDot').classList.toggle('on', js.status === 'running');
   if (js.status === 'running') {
-    const log = await api(`/api/jobs/log?round_idx=${round()}&phase=${js.phase || 'infer'}`);
+    const log = await api(`/api/jobs/log?phase=${js.phase || 'infer'}`);
     $('inferLog').textContent = log.log || '';
     setTimeout(pollJob, 2000);
   } else {
@@ -693,7 +695,7 @@ async function pollJob() {
 }
 
 async function pollInferMonitor() {
-  const m = await api(`/api/jobs/infer/monitor?round_idx=${round()}`);
+  const m = await api('/api/jobs/infer/monitor');
   $('inferLog').textContent = m.log_tail || '等待任务…';
   if (m.class_distribution) renderDist(m.class_distribution);
 }
@@ -701,6 +703,7 @@ async function pollInferMonitor() {
 async function loadPlotRegistry(classId) {
   const reg = await api(`/api/plots/registry?class_id=${classId}`);
   const list = $(`plotList-${classId}`);
+  if (list.dataset.loaded === '1') return;
   list.innerHTML = '';
   reg.forEach(p => {
     const id = `pl-${classId}-${p.id}`;
@@ -710,15 +713,16 @@ async function loadPlotRegistry(classId) {
       if (inp) inp.onchange = () => refreshPlot(classId);
     }, 0);
   });
+  list.dataset.loaded = '1';
   const first = list.querySelector('input');
-  if (first) { first.checked = true; refreshPlot(classId); }
+  if (first) first.checked = true;
 }
 
 async function refreshPlot(classId) {
   await loadPlotRegistry(classId);
   const sel = document.querySelector(`input[name="plot-${classId}"]:checked`);
   if (!sel) return;
-  const blob = await api(`/api/plots/${classId}/${sel.value}.png?round_idx=${round()}`);
+  const blob = await api(`/api/plots/${classId}/${sel.value}.png`);
   $(`plotPreview-${classId}`).src = URL.createObjectURL(blob);
   state.currentPlot = { classId, plotId: sel.value };
 }
@@ -727,24 +731,24 @@ async function savePlot(classId) {
   if (!state.currentPlot || state.currentPlot.classId !== classId) return;
   const res = await api('/api/plots/save', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ class_id: classId, plot_id: state.currentPlot.plotId, round_idx: round() }),
+    body: JSON.stringify({ class_id: classId, plot_id: state.currentPlot.plotId }),
   });
   alert('已保存: ' + res.path);
 }
 
 async function runCopula(classId) {
-  await api(`/api/jobs/copula?round_idx=${round()}&class_id=${classId}`, { method: 'POST' });
+  await api(`/api/jobs/copula?class_id=${classId}`, { method: 'POST' });
   pollJob();
   setTimeout(() => refreshCopulaImages(classId), 3000);
 }
 
 async function refreshCopulaImages(classId) {
-  $(`copulaCmp-${classId}`).src = `/api/copula/${classId}/comparison.png?round_idx=${round()}&t=${Date.now()}`;
-  $(`copulaMarg-${classId}`).src = `/api/copula/${classId}/marginals.png?round_idx=${round()}&t=${Date.now()}`;
+  $(`copulaCmp-${classId}`).src = withMode(`/api/copula/${classId}/comparison.png?t=${Date.now()}`);
+  $(`copulaMarg-${classId}`).src = withMode(`/api/copula/${classId}/marginals.png?t=${Date.now()}`);
 }
 
 async function loadOthersQueue() {
-  const data = await api(`/api/others/samples?page=${state.othersPage}&round_idx=${round()}`);
+  const data = await api(`/api/others/samples?page=${state.othersPage}`);
   const tbody = $('othersTable').querySelector('tbody');
   tbody.innerHTML = '';
   data.samples.forEach(s => {
@@ -759,8 +763,8 @@ async function selectOthers(idx, tr) {
   state.selectedOthers = idx;
   document.querySelectorAll('#othersTable tr').forEach(r => r.classList.remove('selected'));
   if (tr) tr.classList.add('selected');
-  const d = await api(`/api/others/samples/${idx}?round_idx=${round()}`);
-  const neighbors = await api(`/api/others/samples/${idx}/neighbors?round_idx=${round()}`);
+  const d = await api(`/api/others/samples/${idx}`);
+  const neighbors = await api(`/api/others/samples/${idx}/neighbors`);
   let html = `<div class="page-title" style="font-size:16px;margin-bottom:8px">样本 #${idx}</div>`;
   (d.clues || []).forEach(c => html += `<div class="clue">${c}</div>`);
   html += `<div class="meta-line">uncertainty = ${d.uncertainty} · 面内/面外预测 ${d.inplane_prediction} / ${d.outplane_prediction}</div>`;
@@ -773,7 +777,7 @@ async function selectOthers(idx, tr) {
   html += '<div class="section-label">最近邻</div><pre class="neighbors">' + JSON.stringify(neighbors, null, 2) + '</pre>';
   html += '<div class="section-label">多视角图像</div><div class="fig-grid">';
   ['timeseries','spectrum','trajectory','context_timeseries','psd_class_overlay','wind_timeseries'].forEach(name => {
-    html += `<div class="fig-cell"><div class="fig-label">${name}</div><img src="/api/others/samples/${idx}/figures/${name}.png?round_idx=${round()}&t=${Date.now()}" alt="${name}" /></div>`;
+    html += `<div class="fig-cell"><div class="fig-label">${name}</div><img src="${withMode(`/api/others/samples/${idx}/figures/${name}.png?t=${Date.now()}`)}" alt="${name}" /></div>`;
   });
   html += '</div>';
   html += `<button class="btn primary" onclick="exportOthers(${idx})">导出报告 ZIP</button>`;
@@ -781,37 +785,51 @@ async function selectOthers(idx, tr) {
 }
 
 async function exportOthers(idx) {
-  window.open(`/api/others/samples/${idx}/export?round_idx=${round()}`, '_blank');
+  window.open(withMode(`/api/others/samples/${idx}/export`), '_blank');
 }
 
 $('btnInfer').onclick = async () => {
   const limit = $('smokeMode').checked ? 500 : null;
-  let url = `/api/jobs/infer?round_idx=${round()}`;
-  if (limit) url += `&limit=${limit}`;
+  let url = '/api/jobs/infer';
+  if (limit) url += `?limit=${limit}`;
   await api(url, { method: 'POST' });
   pollJob();
 };
 $('btnEnrich').onclick = async () => {
   const limit = $('smokeMode').checked ? 500 : null;
-  let url = `/api/jobs/enrich?round_idx=${round()}`;
-  if (limit) url += `&limit=${limit}`;
+  let url = '/api/jobs/enrich';
+  if (limit) url += `?limit=${limit}`;
   await api(url, { method: 'POST' });
   pollJob();
 };
 $('btnReset').onclick = () => api('/api/jobs/reset', { method: 'POST' }).then(refreshStatus);
 $('btnPreflight').onclick = async () => {
-  const r = await api(`/api/preflight?round_idx=${round()}`);
+  const r = await api('/api/preflight');
   alert('预检通过:\n' + r.checks.join('\n'));
-};
-$('btnSetActive').onclick = async () => {
-  await api('/api/active-round', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round_idx: round() }) });
-  refreshStatus();
 };
 $('othersPrev').onclick = () => { if (state.othersPage > 0) { state.othersPage--; loadOthersQueue(); } };
 $('othersNext').onclick = () => { state.othersPage++; loadOthersQueue(); };
-$('roundSelect').onchange = () => { refreshStatus(); if (state.tab === 'others') loadOthersQueue(); };
+$('useDemo').onchange = async () => {
+  state.useDemo = !!$('useDemo').checked;
+  localStorage.setItem('chapter4_use_demo', state.useDemo ? '1' : '0');
+  if (state.useDemo) {
+    await api('/api/demo/setup', { method: 'POST' });
+  }
+  state.othersPage = 0;
+  state.selectedOthers = null;
+  refreshStatus();
+  pollInferMonitor();
+  if (state.tab.startsWith('stats-')) {
+    const cid = parseInt(state.tab.split('-')[1], 10);
+    refreshPlot(cid);
+    refreshCopulaImages(cid);
+  }
+  if (state.tab === 'others') loadOthersQueue();
+};
 
 initTabs();
+state.useDemo = localStorage.getItem('chapter4_use_demo') === '1';
+$('useDemo').checked = state.useDemo;
 refreshStatus();
 setInterval(refreshStatus, 8000);
 </script>

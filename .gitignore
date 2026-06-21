@@ -55,6 +55,7 @@ __pycache__/
 *.pt
 *.model
 *.txt
+!/requirements.txt
 
 # 只跟踪src目录
 # /src/

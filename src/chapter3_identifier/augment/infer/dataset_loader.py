@@ -28,8 +28,17 @@ _DATASET_DEFAULTS = {
 }
 
 
+def _assert_dataset_is_202409(cfg_path):
+    name = str(cfg_path).replace("\\", "/").lower()
+    if not name.endswith("total_staycable_vib_202409.yaml"):
+        raise ValueError(
+            f"chapter3_identifier 仅允许使用 2024-09 数据集配置，当前为: {cfg_path}"
+        )
+
+
 def load_staycable_dataset(config_path: str):
     cfg_path = resolve_path(config_path)
+    _assert_dataset_is_202409(cfg_path)
     raw = {**_DATASET_DEFAULTS, **load_yaml(cfg_path)}
 
     raw["vib_metadata_path"] = str(resolve_path(raw["vib_metadata_path"]))

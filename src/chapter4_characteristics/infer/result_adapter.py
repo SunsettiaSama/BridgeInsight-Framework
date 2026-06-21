@@ -25,7 +25,6 @@ def build_sample_metadata_mapping(dataset) -> Dict[int, Dict[str, Any]]:
 def records_to_enriched_json(
     records: List[dict],
     dataset,
-    round_idx: int,
     checkpoint_path: str,
     dataset_config: str,
 ) -> dict:
@@ -41,7 +40,6 @@ def records_to_enriched_json(
 
     return {
         "metadata": {
-            "round_idx": round_idx,
             "checkpoint": checkpoint_path,
             "dataset_config": dataset_config,
             "enriched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

@@ -2,15 +2,13 @@
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from src.chapter4_characteristics.settings import (
     CLASS_DIRS,
-    effective_round,
-    get_enriched_round_dir,
+    get_enriched_dir,
     get_inference_path,
     get_others_index_path,
-    load_config,
 )
 
 
@@ -41,10 +39,8 @@ def _iter_class_json_files(class_dir: Path, class_id: int) -> List[Path]:
     return sorted(class_dir.glob("*.json"))
 
 
-def load_class_samples(class_id: int, cfg: dict, round_idx: Optional[int] = None) -> List[dict]:
-    rid = effective_round(cfg, round_idx)
-    round_dir = get_enriched_round_dir(cfg, rid)
-    class_dir = round_dir / CLASS_DIRS[class_id]
+def load_class_samples(class_id: int, cfg: dict) -> List[dict]:
+    class_dir = get_enriched_dir(cfg) / CLASS_DIRS[class_id]
     samples: List[dict] = []
     for jf in _iter_class_json_files(class_dir, class_id):
         with open(jf, "r", encoding="utf-8") as f:
@@ -54,9 +50,8 @@ def load_class_samples(class_id: int, cfg: dict, round_idx: Optional[int] = None
     return samples
 
 
-def load_inference_records(cfg: dict, round_idx: Optional[int] = None) -> List[dict]:
-    rid = effective_round(cfg, round_idx)
-    path = get_inference_path(cfg, rid)
+def load_inference_records(cfg: dict) -> List[dict]:
+    path = get_inference_path(cfg)
     if not path.exists():
         return []
     with open(path, "r", encoding="utf-8") as f:
@@ -64,34 +59,31 @@ def load_inference_records(cfg: dict, round_idx: Optional[int] = None) -> List[d
     return data.get("records", [])
 
 
-def inference_by_idx(cfg: dict, round_idx: Optional[int] = None) -> Dict[int, dict]:
-    return {int(r["sample_idx"]): r for r in load_inference_records(cfg, round_idx)}
+def inference_by_idx(cfg: dict) -> Dict[int, dict]:
+    return {int(r["sample_idx"]): r for r in load_inference_records(cfg)}
 
 
-def load_others_index(cfg: dict, round_idx: Optional[int] = None) -> dict:
-    rid = effective_round(cfg, round_idx)
-    path = get_others_index_path(cfg, rid)
+def load_others_index(cfg: dict) -> dict:
+    path = get_others_index_path(cfg)
     if not path.exists():
-        return {"round_idx": rid, "count": 0, "samples": []}
+        return {"count": 0, "samples": []}
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def get_data_status(cfg: dict, round_idx: Optional[int] = None) -> dict:
-    rid = effective_round(cfg, round_idx)
+def get_data_status(cfg: dict) -> dict:
     counts = {}
     for cid, cdir in CLASS_DIRS.items():
         n = 0
-        for jf in _iter_class_json_files(get_enriched_round_dir(cfg, rid) / cdir, cid):
+        for jf in _iter_class_json_files(get_enriched_dir(cfg) / cdir, cid):
             with open(jf, "r", encoding="utf-8") as f:
                 n += len(json.load(f).get("samples", []))
         counts[cid] = n
-    infer_path = get_inference_path(cfg, rid)
+    infer_path = get_inference_path(cfg)
     return {
-        "round_idx": rid,
         "inference_ready": infer_path.exists(),
         "enrich_ready": any(counts.values()),
         "class_counts": counts,
         "inference_path": str(infer_path) if infer_path.exists() else None,
-        "enriched_dir": str(get_enriched_round_dir(cfg, rid)),
+        "enriched_dir": str(get_enriched_dir(cfg)),
     }

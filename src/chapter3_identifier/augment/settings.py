@@ -78,6 +78,10 @@ def get_round_manual_edits_path(cfg: dict, round_idx: int) -> Path:
     return get_round_dir(cfg, round_idx) / "manual_edits.json"
 
 
+def get_round_manual_delta_path(cfg: dict, round_idx: int) -> Path:
+    return get_round_dir(cfg, round_idx) / "manual_edits_delta.jsonl"
+
+
 def get_round_manual_history_path(cfg: dict, round_idx: int) -> Path:
     return get_round_dir(cfg, round_idx) / "manual_edits_history.jsonl"
 
@@ -90,8 +94,30 @@ def get_round_inference_path(cfg: dict, round_idx: int) -> Path:
     return get_round_dir(cfg, round_idx) / "inference.json"
 
 
+def get_round_manifest_path(cfg: dict, round_idx: int) -> Path:
+    return get_round_dir(cfg, round_idx) / "round_manifest.json"
+
+
+def get_round_inference_snapshot_path(cfg: dict, round_idx: int) -> Path:
+    round_dir = get_round_dir(cfg, round_idx)
+    manifest_path = get_round_manifest_path(cfg, round_idx)
+    if manifest_path.exists():
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f) or {}
+        archive_name = manifest.get("inference_archive")
+        if isinstance(archive_name, str) and archive_name.strip():
+            archive_path = round_dir / archive_name
+            if archive_path.exists():
+                return archive_path
+    return get_round_inference_path(cfg, round_idx)
+
+
 def get_round_checkpoint_path(cfg: dict, round_idx: int) -> Path:
     return get_round_dir(cfg, round_idx) / "best_checkpoint.pth"
+
+
+def get_round_train_profile_path(cfg: dict, round_idx: int) -> Path:
+    return get_round_dir(cfg, round_idx) / "train_profile.json"
 
 
 def check_inference_metadata(cfg: dict) -> Path:

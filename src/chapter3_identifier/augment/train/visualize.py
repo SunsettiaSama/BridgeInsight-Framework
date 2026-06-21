@@ -87,6 +87,12 @@ class TrainingVisualizer:
             y_true, y_pred, path, label_names=self.label_names, num_classes=self.num_classes
         )
 
+    def log_confusion_named(self, epoch: int, y_true: List[int], y_pred: List[int], name: str) -> None:
+        path = self.output_dir / f"confusion_matrix_{name}_epoch_{epoch:03d}.png"
+        save_confusion_matrix(
+            y_true, y_pred, path, label_names=self.label_names, num_classes=self.num_classes
+        )
+
     def append_history(self, record: Dict) -> None:
         self.history.append(record)
         self.flush_history()

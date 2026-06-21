@@ -53,13 +53,29 @@ def _record_to_json(
     proba_list = [float(x) for x in proba]
     in_proba_list = [float(x) for x in in_proba]
     out_proba_list = [float(x) for x in out_proba]
-    uncertainty = float(1.0 - max(proba_list))
+    in_conf = float(max(in_proba_list)) if in_proba_list else 0.0
+    out_conf = float(max(out_proba_list)) if out_proba_list else 0.0
+    in_uncertainty = float(1.0 - in_conf)
+    out_uncertainty = float(1.0 - out_conf)
+    uncertainty = float(max(in_uncertainty, out_uncertainty))
+    if in_pred == pred and out_pred == pred:
+        primary_source = "both"
+    elif in_pred == pred:
+        primary_source = "inplane"
+    elif out_pred == pred:
+        primary_source = "outplane"
+    else:
+        primary_source = "merged"
     lookup_key = annotation_key(in_fp, wi) if in_fp else None
     return {
         "sample_idx": sample_idx,
         "prediction": int(pred),
         "proba": proba_list,
         "uncertainty": uncertainty,
+        "inplane_uncertainty": in_uncertainty,
+        "outplane_uncertainty": out_uncertainty,
+        "primary_prediction_source": primary_source,
+        "projection_mode": "dual_head_confidence_projection",
         "inplane_prediction": int(in_pred),
         "outplane_prediction": int(out_pred),
         "inplane_proba": in_proba_list,
@@ -263,9 +279,10 @@ def run_inference(round_idx: int = 1, config_path: str | None = None) -> str:
 
     round_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    archive_path = round_dir / f"inference_{ts}.json"
+    round_tag = f"round_{int(round_idx):02d}"
+    archive_path = round_dir / f"inference_{round_tag}_{ts}.json"
     stable_path = get_round_inference_path(cfg, round_idx)
-    model_snapshot_path = round_dir / f"model_{ts}.pth"
+    model_snapshot_path = round_dir / f"model_{round_tag}_{ts}.pth"
 
     header = {
         "round_idx": round_idx,

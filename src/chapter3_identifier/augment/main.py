@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -30,6 +31,7 @@ def main(argv: list[str] | None = None) -> None:
     p_train.add_argument("--gold-only", action="store_true", help="强制仅金标")
     p_train.add_argument("--with-manual", action="store_true", help="强制金标+人工")
     p_train.add_argument("--config", type=str, default=None)
+    p_train.add_argument("--profile", type=str, default=None)
 
     p_infer = sub.add_parser("infer", help="2024-09 全量识别")
     p_infer.add_argument("--round", type=int, default=1)
@@ -59,7 +61,8 @@ def main(argv: list[str] | None = None) -> None:
         if args.gold_only and args.with_manual:
             parser.error("--gold-only 与 --with-manual 不能同时使用")
         gold_only = True if args.gold_only else (False if args.with_manual else None)
-        run_training(round_idx=args.round, gold_only=gold_only, config_path=args.config)
+        result = run_training(round_idx=args.round, gold_only=gold_only, config_path=args.config, profile_path=args.profile)
+        logging.getLogger(__name__).info("训练完成：%s", result)
     elif args.command == "infer":
         from src.chapter3_identifier.augment.infer.run import run_inference
 

@@ -16,7 +16,7 @@ class _PreloadJob:
     record: dict = field(compare=False)
     ctx: ContextParams = field(compare=False)
     generation: int = field(compare=False)
-    queue_key: Tuple[int, str, str] = field(compare=False)
+    queue_key: Tuple[int, int, str, str] = field(compare=False)
 
 
 class FigureScheduler:
@@ -30,7 +30,7 @@ class FigureScheduler:
         self._thread = threading.Thread(target=self._worker, name="aug-fig-scheduler", daemon=True)
         self._seq = 0
         self._generation = 0
-        self._queued: Dict[Tuple[int, str, str], int] = {}
+        self._queued: Dict[Tuple[int, int, str, str], int] = {}
         self._completed = 0
         self._started = False
 
@@ -56,6 +56,14 @@ class FigureScheduler:
                 "generation": self._generation,
             }
 
+    def reset_generation(self) -> int:
+        with self._cv:
+            self._generation += 1
+            self._heap.clear()
+            self._queued.clear()
+            self._cv.notify_all()
+            return self._generation
+
     def schedule_records(
         self,
         records: List[dict],
@@ -70,13 +78,14 @@ class FigureScheduler:
         for rank, record in enumerate(records):
             sample_idx = int(record["sample_idx"])
             if self._engine.bundle_ready(
+                int(ctx.round_idx),
                 sample_idx,
                 ctx.direction,
                 record,
                 layout_profile=ctx.layout_profile,
             ):
                 continue
-            queue_key = (sample_idx, ctx.direction, ctx.layout_profile)
+            queue_key = (int(ctx.round_idx), sample_idx, ctx.direction, ctx.layout_profile)
             uncertainty = float(record.get("uncertainty", 0.0))
             self._seq += 1
             sort_key = (

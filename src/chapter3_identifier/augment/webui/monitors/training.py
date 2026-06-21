@@ -60,21 +60,34 @@ def find_best_epoch(history: List[dict]) -> Optional[dict]:
     best_score = -1.0
     for row in history:
         val_metrics = row.get("val_metrics") or {}
-        score = float(val_metrics.get("viv_rwiv_mean_f1", -1.0))
+        score = float(
+            val_metrics.get(
+                "viv_rwiv_mean_f1",
+                val_metrics.get("joint_viv_rwiv_mean_f1", -1.0),
+            )
+        )
         if score > best_score:
             best_score = score
             best = row
     return best
 
 
-def latest_confusion_path(rounds_root_or_cfg, round_idx: int, epoch: Optional[int] = None) -> Optional[Path]:
+def latest_confusion_path(
+    rounds_root_or_cfg,
+    round_idx: int,
+    epoch: Optional[int] = None,
+    kind: str = "merged",
+) -> Optional[Path]:
     out_dir = _round_path(rounds_root_or_cfg, round_idx)
     if not out_dir.exists():
         return None
+    stem = "confusion_matrix"
+    if kind in ("inplane", "outplane"):
+        stem = f"confusion_matrix_{kind}"
     if epoch is not None:
-        path = out_dir / f"confusion_matrix_epoch_{epoch:03d}.png"
+        path = out_dir / f"{stem}_epoch_{epoch:03d}.png"
         return path if path.exists() else None
-    candidates = sorted(out_dir.glob("confusion_matrix_epoch_*.png"))
+    candidates = sorted(out_dir.glob(f"{stem}_epoch_*.png"))
     return candidates[-1] if candidates else None
 
 
@@ -88,8 +101,12 @@ def build_monitor_payload(
     history = load_metrics_history(cfg, round_idx)
     latest = load_latest_metrics(cfg, round_idx) or (history[-1] if history else None)
     best = find_best_epoch(history)
-    confusion = latest_confusion_path(cfg, round_idx)
+    confusion = latest_confusion_path(cfg, round_idx, kind="merged")
+    confusion_in = latest_confusion_path(cfg, round_idx, kind="inplane")
+    confusion_out = latest_confusion_path(cfg, round_idx, kind="outplane")
     current_epoch = int(latest["epoch"]) if latest else 0
+    latest_info = (latest or {}).get("dataset_info") or {}
+    training_profile = job_state.get("training_profile") or latest_info.get("training_profile")
 
     return {
         "round_idx": round_idx,
@@ -99,7 +116,10 @@ def build_monitor_payload(
         "history": history,
         "latest": latest,
         "best": best,
+        "training_profile": training_profile,
         "log_tail": log_tail,
         "confusion_epoch": best.get("epoch") if best else (latest.get("epoch") if latest else None),
         "has_confusion": confusion is not None,
+        "has_inplane_confusion": confusion_in is not None,
+        "has_outplane_confusion": confusion_out is not None,
     }

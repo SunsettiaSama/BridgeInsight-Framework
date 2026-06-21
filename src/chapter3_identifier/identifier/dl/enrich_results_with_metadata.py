@@ -206,7 +206,7 @@ def main():
     logger.info("步骤 1/3: 加载数据集")
     logger.info("=" * 80)
     
-    dataset_config_path = project_root / "config" / "train" / "datasets" / "total_staycable_vib.yaml"
+    dataset_config_path = project_root / "config" / "datasets" / "total_staycable_vib_202409.yaml"
     with open(dataset_config_path, "r", encoding="utf-8") as f:
         dataset_config_dict = yaml.safe_load(f)
     

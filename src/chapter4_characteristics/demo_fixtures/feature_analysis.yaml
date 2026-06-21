@@ -1,0 +1,14 @@
+fs: 50.0
+window_size: 3000
+enable_denoise: false
+psd_nperseg: 2048
+psd_n_modes: 6
+psd_min_peak_distance_hz: 0.1
+enable_psd_modes: true
+enable_spectral_features: true
+enable_time_stats: true
+enable_cross_coupling: true
+enable_wind_stats: true
+enable_reduced_velocity: false
+n_workers: 1
+split_by_sensor: false

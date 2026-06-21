@@ -1,4 +1,4 @@
-﻿vib_metadata_path: F:/Research/Vibration Characteristics In Cable Vibration/src/chapter4_characteristics/smoke_fixtures/data/vib_metadata.json
+vib_metadata_path: F:/Research/Vibration Characteristics In Cable Vibration/src/chapter4_characteristics/smoke_fixtures/data/vib_metadata.json
 wind_metadata_path: F:/Research/Vibration Characteristics In Cable Vibration/src/chapter4_characteristics/smoke_fixtures/data/wind_metadata.json
 cable_pairs:
   - [MOCK-IN-01, MOCK-OUT-01]

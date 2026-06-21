@@ -75,8 +75,8 @@ def plot_contour(u_matrix: np.ndarray, var_x: int = 0, var_y: int = 1, title: st
     return _fig_bytes(fig)
 
 
-def load_copula_result(cfg: dict, round_idx: int, class_id: int) -> Optional[dict]:
-    path = get_copula_dir(cfg, round_idx) / f"class_{class_id}_copula.json"
+def load_copula_result(cfg: dict, class_id: int) -> Optional[dict]:
+    path = get_copula_dir(cfg) / f"class_{class_id}_copula.json"
     if not path.exists():
         return None
     with open(path, "r", encoding="utf-8") as f:

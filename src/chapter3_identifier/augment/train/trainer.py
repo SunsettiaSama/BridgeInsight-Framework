@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 
 from src.chapter3_identifier.augment.models.dual_stream_res_cnn import DualStreamResCNN
 from src.chapter3_identifier.augment.models.quad_stream_dual_head_res_cnn import (
+    QuadStreamDualHeadContextResCNN,
     QuadStreamDualHeadResCNN,
 )
 from src.chapter3_identifier.augment.train.visualize import TrainingVisualizer, compute_class_metrics
@@ -63,6 +64,7 @@ class DualStreamTrainer:
         device: Optional[str] = None,
         label_names: Optional[List[str]] = None,
         num_classes: int = 4,
+        dataset_info: Optional[Dict] = None,
     ):
         self.model = model
         self.train_loader = train_loader
@@ -93,6 +95,9 @@ class DualStreamTrainer:
         )
         self.best_metric = -1.0
         self.best_epoch = 0
+        self.dataset_info = dict(dataset_info or {})
+        self.dataset_info.setdefault("train_size", int(len(self.train_loader.dataset)))
+        self.dataset_info.setdefault("val_size", int(len(self.val_loader.dataset)))
 
     def _compute_loss(self, logits: torch.Tensor, labels: torch.Tensor, time_x, psd_x) -> Tuple[torch.Tensor, float]:
         focal = self.criterion(logits, labels)
@@ -173,6 +178,7 @@ class DualStreamTrainer:
                     "val_teacher_reg": val_reg,
                     "train_metrics": train_metrics,
                     "val_metrics": val_metrics,
+                    "dataset_info": self.dataset_info,
                 }
             )
 
@@ -190,6 +196,8 @@ class DualStreamTrainer:
                         "num_classes": cfg.num_classes,
                         "dropout_prob": cfg.time_branch.dropout_prob,
                         "fc_hidden_dims": cfg.time_branch.fc_hidden_dims,
+                        "training_profile": self.dataset_info.get("training_profile"),
+                        "training_profile_source": self.dataset_info.get("training_profile_source"),
                     },
                     "round_idx": round_idx,
                     "epoch": epoch,
@@ -231,9 +239,13 @@ class QuadStreamDualHeadTrainer:
         legacy_teacher: Optional[DualStreamResCNN] = None,
         legacy_reg_lambda: float = 0.0,
         legacy_reg_temperature: float = 2.0,
+        same_structure_teacher: Optional[nn.Module] = None,
+        same_structure_reg_lambda: float = 0.0,
+        same_structure_reg_temperature: float = 2.0,
         device: Optional[str] = None,
         label_names: Optional[List[str]] = None,
         num_classes: int = 4,
+        dataset_info: Optional[Dict] = None,
     ):
         self.model = model
         self.train_loader = train_loader
@@ -249,10 +261,18 @@ class QuadStreamDualHeadTrainer:
         self.legacy_teacher = legacy_teacher
         self.legacy_reg_lambda = float(legacy_reg_lambda)
         self.legacy_reg_temperature = float(legacy_reg_temperature)
+        self.same_structure_teacher = same_structure_teacher
+        self.same_structure_reg_lambda = float(same_structure_reg_lambda)
+        self.same_structure_reg_temperature = float(same_structure_reg_temperature)
         if self.legacy_teacher is not None:
             self.legacy_teacher.to(self.device)
             self.legacy_teacher.eval()
             for param in self.legacy_teacher.parameters():
+                param.requires_grad = False
+        if self.same_structure_teacher is not None:
+            self.same_structure_teacher.to(self.device)
+            self.same_structure_teacher.eval()
+            for param in self.same_structure_teacher.parameters():
                 param.requires_grad = False
 
         weight = None
@@ -268,6 +288,11 @@ class QuadStreamDualHeadTrainer:
         )
         self.best_metric = -1.0
         self.best_epoch = 0
+        self.dataset_info = dict(dataset_info or {})
+        self.dataset_info.setdefault("train_size", int(len(self.train_loader.dataset)))
+        self.dataset_info.setdefault("val_size", int(len(self.val_loader.dataset)))
+        self.uses_long_context = isinstance(self.model, QuadStreamDualHeadContextResCNN)
+        self.use_context_input = self.uses_long_context and self.dataset_info.get("context_mode") != "short_only"
 
     def _run_epoch(self, loader: DataLoader, train: bool):
         if train:
@@ -287,7 +312,24 @@ class QuadStreamDualHeadTrainer:
 
         ctx = torch.enable_grad() if train else torch.no_grad()
         with ctx:
-            for in_time_x, in_psd_x, out_time_x, out_psd_x, in_labels, out_labels in loader:
+            for batch in loader:
+                in_context_x = None
+                out_context_x = None
+                if self.use_context_input:
+                    (
+                        in_time_x,
+                        in_psd_x,
+                        in_context_x,
+                        out_time_x,
+                        out_psd_x,
+                        out_context_x,
+                        in_labels,
+                        out_labels,
+                    ) = batch
+                    in_context_x = in_context_x.to(self.device)
+                    out_context_x = out_context_x.to(self.device)
+                else:
+                    in_time_x, in_psd_x, out_time_x, out_psd_x, in_labels, out_labels = batch
                 in_time_x = in_time_x.to(self.device)
                 in_psd_x = in_psd_x.to(self.device)
                 out_time_x = out_time_x.to(self.device)
@@ -297,7 +339,18 @@ class QuadStreamDualHeadTrainer:
 
                 if train:
                     self.optimizer.zero_grad()
-                in_logits, out_logits = self.model(in_time_x, in_psd_x, out_time_x, out_psd_x)
+                if self.uses_long_context:
+                    in_logits, out_logits = self.model(
+                        in_time_x,
+                        in_psd_x,
+                        in_context_x,
+                        out_time_x,
+                        out_psd_x,
+                        out_context_x,
+                        use_context=self.use_context_input,
+                    )
+                else:
+                    in_logits, out_logits = self.model(in_time_x, in_psd_x, out_time_x, out_psd_x)
                 in_loss = self.criterion(in_logits, in_labels)
                 out_loss = self.criterion(out_logits, out_labels)
                 reg_loss = torch.tensor(0.0, device=self.device)
@@ -311,12 +364,38 @@ class QuadStreamDualHeadTrainer:
                     reg_out = teacher_kl_loss(
                         out_logits, legacy_out_logits, self.legacy_reg_temperature
                     )
-                    reg_loss = 0.5 * (reg_in + reg_out)
+                    reg_loss = reg_loss + self.legacy_reg_lambda * 0.5 * (reg_in + reg_out)
+                if self.same_structure_teacher is not None and self.same_structure_reg_lambda > 0:
+                    with torch.no_grad():
+                        if self.uses_long_context:
+                            same_in_logits, same_out_logits = self.same_structure_teacher(
+                                in_time_x,
+                                in_psd_x,
+                                in_context_x,
+                                out_time_x,
+                                out_psd_x,
+                                out_context_x,
+                                use_context=self.use_context_input,
+                            )
+                        else:
+                            same_in_logits, same_out_logits = self.same_structure_teacher(
+                                in_time_x,
+                                in_psd_x,
+                                out_time_x,
+                                out_psd_x,
+                            )
+                    same_reg_in = teacher_kl_loss(
+                        in_logits, same_in_logits, self.same_structure_reg_temperature
+                    )
+                    same_reg_out = teacher_kl_loss(
+                        out_logits, same_out_logits, self.same_structure_reg_temperature
+                    )
+                    reg_loss = reg_loss + self.same_structure_reg_lambda * 0.5 * (same_reg_in + same_reg_out)
                 base_loss = (
                     self.inplane_loss_weight * in_loss
                     + self.outplane_loss_weight * out_loss
                 )
-                loss = base_loss + self.legacy_reg_lambda * reg_loss
+                loss = base_loss + reg_loss
                 if train:
                     loss.backward()
                     if self.gradient_clip_norm > 0:
@@ -352,7 +431,17 @@ class QuadStreamDualHeadTrainer:
         merged_metrics["joint_viv_rwiv_mean_f1"] = (
             in_metrics["viv_rwiv_mean_f1"] + out_metrics["viv_rwiv_mean_f1"]
         ) / 2.0
-        return avg_loss, avg_in_loss, avg_out_loss, avg_reg, merged_metrics, in_true, in_pred
+        return (
+            avg_loss,
+            avg_in_loss,
+            avg_out_loss,
+            avg_reg,
+            merged_metrics,
+            in_true,
+            in_pred,
+            out_true,
+            out_pred,
+        )
 
     def train(self, round_idx: int = 2) -> Dict:
         reg_note = (
@@ -360,9 +449,14 @@ class QuadStreamDualHeadTrainer:
             if self.legacy_teacher is not None and self.legacy_reg_lambda > 0
             else "legacy_reg=off"
         )
+        same_note = (
+            f"same_structure_reg λ={self.same_structure_reg_lambda}, T={self.same_structure_reg_temperature}"
+            if self.same_structure_teacher is not None and self.same_structure_reg_lambda > 0
+            else "same_structure_reg=off"
+        )
         logger.info(
-            f"开始 round2+ 联合训练，epochs={self.epochs}, device={self.device}, "
-            f"loss_w(in/out)=({self.inplane_loss_weight:.2f}/{self.outplane_loss_weight:.2f}), {reg_note}"
+            f"开始 round {round_idx} 配对双头联合训练，epochs={self.epochs}, device={self.device}, "
+            f"loss_w(in/out)=({self.inplane_loss_weight:.2f}/{self.outplane_loss_weight:.2f}), {reg_note}, {same_note}"
         )
         last_val_metrics = {}
         for epoch in range(1, self.epochs + 1):
@@ -374,6 +468,8 @@ class QuadStreamDualHeadTrainer:
                 train_metrics,
                 _,
                 _,
+                _,
+                _,
             ) = self._run_epoch(self.train_loader, train=True)
             (
                 val_loss,
@@ -381,14 +477,18 @@ class QuadStreamDualHeadTrainer:
                 val_out_loss,
                 val_reg,
                 val_metrics,
-                y_true,
-                y_pred,
+                in_true,
+                in_pred,
+                out_true,
+                out_pred,
             ) = self._run_epoch(self.val_loader, train=False)
             self.scheduler.step()
 
             self.visualizer.log_epoch(epoch, "train", train_metrics, train_loss)
             self.visualizer.log_epoch(epoch, "val", val_metrics, val_loss)
-            self.visualizer.log_confusion(epoch, y_true, y_pred)
+            self.visualizer.log_confusion(epoch, in_true + out_true, in_pred + out_pred)
+            self.visualizer.log_confusion_named(epoch, in_true, in_pred, "inplane")
+            self.visualizer.log_confusion_named(epoch, out_true, out_pred, "outplane")
             self.visualizer.append_history(
                 {
                     "epoch": epoch,
@@ -402,6 +502,7 @@ class QuadStreamDualHeadTrainer:
                     "val_legacy_reg": val_reg,
                     "train_metrics": train_metrics,
                     "val_metrics": val_metrics,
+                    "dataset_info": self.dataset_info,
                 }
             )
 
@@ -409,20 +510,38 @@ class QuadStreamDualHeadTrainer:
             if score > self.best_metric:
                 self.best_metric = score
                 self.best_epoch = epoch
+                config = {
+                    "model_type": "quad_stream_dual_head_context"
+                    if self.uses_long_context
+                    else "quad_stream_dual_head",
+                    "time_branch": vars(self.model.in_time_encoder.backbone.cfg),
+                    "spec_branch": vars(self.model.in_spec_encoder.backbone.cfg),
+                    "num_classes": self.model.num_classes,
+                    "fusion_hidden_dim": self.model.fusion_hidden_dim,
+                    "fusion_dropout": self.model.fusion_dropout,
+                    "cross_attn_heads": self.model.cross_attn_heads,
+                    "inplane_loss_weight": self.inplane_loss_weight,
+                    "outplane_loss_weight": self.outplane_loss_weight,
+                    "legacy_reg_lambda": self.legacy_reg_lambda,
+                    "legacy_reg_temperature": self.legacy_reg_temperature,
+                    "same_structure_reg_lambda": self.same_structure_reg_lambda,
+                    "same_structure_reg_temperature": self.same_structure_reg_temperature,
+                }
+                if self.uses_long_context:
+                    config["context_branch"] = vars(self.model.in_context_encoder.backbone.cfg)
+                    config["context_mode"] = self.dataset_info.get("context_mode", "short_long")
+                    for key in (
+                        "context_input_size",
+                        "context_total_seconds",
+                        "context_allow_cross_file",
+                    ):
+                        if key in self.dataset_info:
+                            config[key] = self.dataset_info[key]
+                config["training_profile"] = self.dataset_info.get("training_profile")
+                config["training_profile_source"] = self.dataset_info.get("training_profile_source")
                 ckpt = {
                     "model_state_dict": self.model.state_dict(),
-                    "config": {
-                        "model_type": "quad_stream_dual_head",
-                        "time_branch": vars(self.model.in_time_encoder.backbone.cfg),
-                        "spec_branch": vars(self.model.in_spec_encoder.backbone.cfg),
-                        "num_classes": self.model.num_classes,
-                        "fusion_hidden_dim": self.model.fusion_hidden_dim,
-                        "fusion_dropout": self.model.fusion_dropout,
-                        "inplane_loss_weight": self.inplane_loss_weight,
-                        "outplane_loss_weight": self.outplane_loss_weight,
-                        "legacy_reg_lambda": self.legacy_reg_lambda,
-                        "legacy_reg_temperature": self.legacy_reg_temperature,
-                    },
+                    "config": config,
                     "round_idx": round_idx,
                     "epoch": epoch,
                     "val_metrics": val_metrics,

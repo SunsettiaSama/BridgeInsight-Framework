@@ -10,6 +10,8 @@ SAMPLE_FIGURE_NAMES = (
     "out_spectrum",
     "trajectory",
     "prediction",
+    "wind_speed_rose",
+    "wind_turbulence_rose",
 )
 
 
@@ -20,7 +22,8 @@ class FigureNotReadyError(Exception):
 @dataclass(frozen=True)
 class ContextParams:
     direction: str = "inplane"
-    layout_profile: str = "wide_fill_v1"
+    round_idx: int = 1
+    layout_profile: str = "wide_fill_v3"
     windows_before: int = 3
     windows_after: int = 3
     spectrogram_segment_s: float = 2.0

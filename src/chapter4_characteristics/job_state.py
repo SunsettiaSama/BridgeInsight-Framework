@@ -9,7 +9,7 @@ from src.chapter4_characteristics._bootstrap import resolve_path
 def read_job_state(path: str) -> dict:
     p = resolve_path(path)
     if not p.exists():
-        return {"status": "idle", "phase": None, "round": 0, "pid": None, "log_path": None, "error": None}
+        return {"status": "idle", "phase": None, "pid": None, "log_path": None, "error": None}
     with open(p, "r", encoding="utf-8") as f:
         return json.load(f)
 

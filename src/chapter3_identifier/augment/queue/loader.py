@@ -45,6 +45,12 @@ def filter_records(
     only_unannotated: bool = False,
     only_abnormal: bool = False,
 ) -> List[dict]:
+    def _is_abnormal(record: dict) -> bool:
+        pred = int(record.get("prediction", 0))
+        in_pred = int(record.get("inplane_prediction", pred))
+        out_pred = int(record.get("outplane_prediction", pred))
+        return pred in (1, 2, 3) or in_pred in (1, 2, 3) or out_pred in (1, 2, 3)
+
     filtered = records
     if sensor_id:
         filtered = [
@@ -54,5 +60,5 @@ def filter_records(
     if only_unannotated:
         filtered = [r for r in filtered if not r.get("already_annotated")]
     if only_abnormal:
-        filtered = [r for r in filtered if r.get("prediction", 0) in (1, 2, 3)]
+        filtered = [r for r in filtered if _is_abnormal(r)]
     return filtered

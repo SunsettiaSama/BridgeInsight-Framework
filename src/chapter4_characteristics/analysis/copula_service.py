@@ -83,12 +83,12 @@ def load_mode_matrix(samples: List[dict], n_modes: int, max_samples: int) -> tup
     return mat, names
 
 
-def run_copula_analysis(class_id: int, cfg: dict, round_idx: int) -> dict:
+def run_copula_analysis(class_id: int, cfg: dict) -> dict:
     ccfg = CopulaAnalysisConfig(
         n_modes=int(cfg.get("copula_n_modes", 8)),
         max_samples=int(cfg.get("copula_max_samples", 5000)),
     )
-    samples = load_class_samples(class_id, cfg, round_idx)
+    samples = load_class_samples(class_id, cfg)
     matrix, var_names = load_mode_matrix(samples, ccfg.n_modes, ccfg.max_samples)
 
     u_matrix = _pit_matrix(matrix, var_names, ccfg)
@@ -102,7 +102,6 @@ def run_copula_analysis(class_id: int, cfg: dict, round_idx: int) -> dict:
     )
 
     payload = {
-        "round_idx": round_idx,
         "class_id": class_id,
         "class_label": CLASS_DIRS[class_id],
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -125,7 +124,7 @@ def run_copula_analysis(class_id: int, cfg: dict, round_idx: int) -> dict:
             for name, r in mv.marginals.items()
         },
     }
-    out_dir = get_copula_dir(cfg, round_idx)
+    out_dir = get_copula_dir(cfg)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"class_{class_id}_copula.json"
     with open(out_path, "w", encoding="utf-8") as f:
@@ -145,9 +144,9 @@ def _pit_matrix(matrix: np.ndarray, var_names: List[str], ccfg: CopulaAnalysisCo
     return pit_transform(matrix, marginals, var_names)
 
 
-def run_copula_job(round_idx: int = 1, class_id: int = 0, config_path: str | None = None) -> dict:
+def run_copula_job(class_id: int = 0, config_path: str | None = None) -> dict:
     cfg = load_config(config_path)
-    logger.info(f"Copula 拟合 round={round_idx} class={class_id}")
-    result = run_copula_analysis(class_id, cfg, round_idx)
+    logger.info(f"Copula 拟合 class={class_id}")
+    result = run_copula_analysis(class_id, cfg)
     logger.info(f"Copula 拟合完成：best={result['best_copula_type']}")
     return result

@@ -25,7 +25,10 @@ from src.chapter4_characteristics.settings import (
     get_reference_stats_path,
     load_config,
 )
-from src.chapter3_identifier.augment.webui import context_figures, figures
+from src.chapter3_identifier.augment.figures.render import (
+    context as context_figures,
+    sample as figures,
+)
 from src.data_processer.preprocess.get_data_wind import parse_single_metadata_to_wind_data
 from src.data_processer.preprocess.get_data_vib import VICWindowExtractor
 
@@ -42,24 +45,24 @@ FIGURE_NAMES = [
 ]
 
 
-def _load_reference_stats(cfg: dict, round_idx: int) -> dict:
-    path = get_reference_stats_path(cfg, round_idx)
+def _load_reference_stats(cfg: dict) -> dict:
+    path = get_reference_stats_path(cfg)
     if not path.exists():
         return {"classes": {}}
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def _load_reference_psd(cfg: dict, round_idx: int) -> dict:
-    path = get_reference_psd_path(cfg, round_idx)
+def _load_reference_psd(cfg: dict) -> dict:
+    path = get_reference_psd_path(cfg)
     if not path.exists():
         return {"classes": {}}
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def _find_enriched_sample(sample_idx: int, cfg: dict, round_idx: int) -> Optional[dict]:
-    for s in load_class_samples(3, cfg, round_idx):
+def _find_enriched_sample(sample_idx: int, cfg: dict) -> Optional[dict]:
+    for s in load_class_samples(3, cfg):
         if int(s.get("sample_idx", -1)) == sample_idx:
             return s
     return None
@@ -123,8 +126,8 @@ def _feature_vector(sample: dict, keys: List[str]) -> Optional[np.ndarray]:
     return np.asarray(vals, dtype=np.float64)
 
 
-def find_neighbors(sample_idx: int, cfg: dict, round_idx: int, topk: int = 3) -> List[dict]:
-    target = _find_enriched_sample(sample_idx, cfg, round_idx)
+def find_neighbors(sample_idx: int, cfg: dict, topk: int = 3) -> List[dict]:
+    target = _find_enriched_sample(sample_idx, cfg)
     if target is None:
         return []
     keys = list(cfg.get("reference_feature_keys", []))
@@ -134,7 +137,7 @@ def find_neighbors(sample_idx: int, cfg: dict, round_idx: int, topk: int = 3) ->
 
     candidates: List[tuple[float, dict]] = []
     for class_id in (0, 1, 2):
-        for s in load_class_samples(class_id, cfg, round_idx):
+        for s in load_class_samples(class_id, cfg):
             fv = _feature_vector(s, keys)
             if fv is None:
                 continue
@@ -150,8 +153,8 @@ def find_neighbors(sample_idx: int, cfg: dict, round_idx: int, topk: int = 3) ->
     return [c[1] for c in candidates[:topk]]
 
 
-def build_timeline(sample_idx: int, cfg: dict, round_idx: int, radius: int = 10) -> List[dict]:
-    infer = inference_by_idx(cfg, round_idx)
+def build_timeline(sample_idx: int, cfg: dict, radius: int = 10) -> List[dict]:
+    infer = inference_by_idx(cfg)
     rec = infer.get(sample_idx)
     if rec is None:
         return []
@@ -176,17 +179,15 @@ def build_timeline(sample_idx: int, cfg: dict, round_idx: int, radius: int = 10)
 
 def list_others_samples(
     cfg: dict,
-    round_idx: int,
     page: int = 0,
     page_size: Optional[int] = None,
 ) -> dict:
     page_size = page_size or int(cfg.get("others_queue_page_size", 30))
-    index = load_others_index(cfg, round_idx)
+    index = load_others_index(cfg)
     samples = index.get("samples", [])
     start = page * page_size
     end = start + page_size
     return {
-        "round_idx": round_idx,
         "total": len(samples),
         "page": page,
         "page_size": page_size,
@@ -194,12 +195,12 @@ def list_others_samples(
     }
 
 
-def build_sample_detail(sample_idx: int, cfg: dict, round_idx: int) -> dict:
-    features = _find_enriched_sample(sample_idx, cfg, round_idx)
+def build_sample_detail(sample_idx: int, cfg: dict) -> dict:
+    features = _find_enriched_sample(sample_idx, cfg)
     if features is None:
         raise FileNotFoundError(f"Others 样本不存在：{sample_idx}")
-    infer = inference_by_idx(cfg, round_idx).get(sample_idx, {})
-    ref_stats = _load_reference_stats(cfg, round_idx)
+    infer = inference_by_idx(cfg).get(sample_idx, {})
+    ref_stats = _load_reference_stats(cfg)
     keys = list(cfg.get("reference_feature_keys", []))
     proba = infer.get("proba") or [0, 0, 0, 0]
     ordered = sorted(enumerate(proba), key=lambda x: -x[1])
@@ -239,8 +240,8 @@ def _record_from_detail(detail: dict) -> dict:
     }
 
 
-def render_figure(sample_idx: int, name: str, cfg: dict, round_idx: int) -> Optional[bytes]:
-    detail = build_sample_detail(sample_idx, cfg, round_idx)
+def render_figure(sample_idx: int, name: str, cfg: dict) -> Optional[bytes]:
+    detail = build_sample_detail(sample_idx, cfg)
     rec = _record_from_detail(detail)
     m = detail["metadata"]
     before = int(cfg.get("context_windows_before", 5))
@@ -282,7 +283,7 @@ def render_figure(sample_idx: int, name: str, cfg: dict, round_idx: int) -> Opti
     if name == "vib_wind_joint":
         return _plot_vib_wind_joint(m, before, after, detail["features"], cfg)
     if name == "psd_class_overlay":
-        return _plot_psd_overlay(detail["features"], cfg, round_idx)
+        return _plot_psd_overlay(detail["features"], cfg)
     return None
 
 
@@ -359,8 +360,8 @@ def _plot_vib_wind_joint(m: dict, before: int, after: int, features: dict, cfg: 
     return buf.getvalue()
 
 
-def _plot_psd_overlay(features: dict, cfg: dict, round_idx: int) -> Optional[bytes]:
-    ref = _load_reference_psd(cfg, round_idx)
+def _plot_psd_overlay(features: dict, cfg: dict) -> Optional[bytes]:
+    ref = _load_reference_psd(cfg)
     psd = features.get("psd_inplane") or {}
     freqs = psd.get("frequencies") or []
     powers = psd.get("powers") or []
@@ -385,8 +386,8 @@ def _plot_psd_overlay(features: dict, cfg: dict, round_idx: int) -> Optional[byt
     return buf.getvalue()
 
 
-def export_report(sample_idx: int, cfg: dict, round_idx: int) -> str:
-    detail = build_sample_detail(sample_idx, cfg, round_idx)
+def export_report(sample_idx: int, cfg: dict) -> str:
+    detail = build_sample_detail(sample_idx, cfg)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = get_chapter4_root(cfg) / "others_reports" / f"{sample_idx}_{ts}"
     fig_dir = out_dir / "figures"
@@ -395,7 +396,7 @@ def export_report(sample_idx: int, cfg: dict, round_idx: int) -> str:
     with open(out_dir / "features.json", "w", encoding="utf-8") as f:
         json.dump(detail, f, ensure_ascii=False, indent=2)
 
-    neighbors = find_neighbors(sample_idx, cfg, round_idx, int(cfg.get("others_neighbor_topk", 3)))
+    neighbors = find_neighbors(sample_idx, cfg, int(cfg.get("others_neighbor_topk", 3)))
     with open(out_dir / "comparison.json", "w", encoding="utf-8") as f:
         json.dump({"deviations": detail["deviations"], "neighbors": neighbors}, f, ensure_ascii=False, indent=2)
 
@@ -410,7 +411,7 @@ def export_report(sample_idx: int, cfg: dict, round_idx: int) -> str:
     (out_dir / "summary.md").write_text("\n".join(lines), encoding="utf-8")
 
     for name in FIGURE_NAMES:
-        png = render_figure(sample_idx, name, cfg, round_idx)
+        png = render_figure(sample_idx, name, cfg)
         if png:
             (fig_dir / f"{name}.png").write_bytes(png)
 

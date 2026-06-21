@@ -7,9 +7,15 @@ import torch
 import torch.nn.functional as F
 
 from src.chapter3_identifier.augment._bootstrap import ensure_paths
+from src.chapter3_identifier.augment.datasets.dual_stream_dataset import (
+    DEFAULT_CONTEXT_ALLOW_CROSS_FILE,
+    DEFAULT_CONTEXT_INPUT_SIZE,
+    DEFAULT_CONTEXT_TOTAL_SECONDS,
+)
 from src.chapter3_identifier.augment.features.spectrum import compute_psd_vector
 from src.chapter3_identifier.augment.models.dual_stream_res_cnn import DualStreamResCNN
 from src.chapter3_identifier.augment.models.quad_stream_dual_head_res_cnn import (
+    QuadStreamDualHeadContextResCNN,
     QuadStreamDualHeadResCNN,
 )
 from src.chapter3_identifier.augment.labels import get_label_names
@@ -42,8 +48,14 @@ class DualStreamIdentifier:
         self.label_names = label_names or get_label_names()
         self.num_classes = len(self.label_names)
         self.model_type = "dual_stream_single_head"
-        if isinstance(self.model, QuadStreamDualHeadResCNN):
+        if isinstance(self.model, QuadStreamDualHeadContextResCNN):
+            self.model_type = "quad_stream_dual_head_context"
+        elif isinstance(self.model, QuadStreamDualHeadResCNN):
             self.model_type = "quad_stream_dual_head"
+        self.context_input_size = DEFAULT_CONTEXT_INPUT_SIZE
+        self.context_total_seconds = DEFAULT_CONTEXT_TOTAL_SECONDS
+        self.context_allow_cross_file = DEFAULT_CONTEXT_ALLOW_CROSS_FILE
+        self.context_mode = "short_only"
 
     @classmethod
     def from_checkpoint(
@@ -72,12 +84,26 @@ class DualStreamIdentifier:
                 num_classes=int(cfg_dict.get("num_classes", 4)),
                 fusion_hidden_dim=int(cfg_dict.get("fusion_hidden_dim", 128)),
                 fusion_dropout=float(cfg_dict.get("fusion_dropout", 0.1)),
+                cross_attn_heads=int(cfg_dict.get("cross_attn_heads", 4)),
+            )
+        elif model_type == "quad_stream_dual_head_context":
+            time_cfg = BranchConfig(**cfg_dict["time_branch"])
+            spec_cfg = BranchConfig(**cfg_dict["spec_branch"])
+            context_cfg = BranchConfig(**cfg_dict["context_branch"])
+            model = QuadStreamDualHeadContextResCNN(
+                time_branch_cfg=time_cfg,
+                spec_branch_cfg=spec_cfg,
+                context_branch_cfg=context_cfg,
+                num_classes=int(cfg_dict.get("num_classes", 4)),
+                fusion_hidden_dim=int(cfg_dict.get("fusion_hidden_dim", 128)),
+                fusion_dropout=float(cfg_dict.get("fusion_dropout", 0.1)),
+                cross_attn_heads=int(cfg_dict.get("cross_attn_heads", 4)),
             )
         else:
             model_cfg = DualStreamResCNNConfig.from_dict(cfg_dict)
             model = DualStreamResCNN(model_cfg)
         model.load_state_dict(ckpt["model_state_dict"])
-        return cls(
+        identifier = cls(
             model,
             device=device,
             fs=fs,
@@ -85,6 +111,13 @@ class DualStreamIdentifier:
             freq_max_hz=freq_max_hz,
             label_names=label_names,
         )
+        identifier.context_input_size = int(cfg_dict.get("context_input_size", DEFAULT_CONTEXT_INPUT_SIZE))
+        identifier.context_total_seconds = float(cfg_dict.get("context_total_seconds", DEFAULT_CONTEXT_TOTAL_SECONDS))
+        identifier.context_allow_cross_file = bool(
+            cfg_dict.get("context_allow_cross_file", DEFAULT_CONTEXT_ALLOW_CROSS_FILE)
+        )
+        identifier.context_mode = str(cfg_dict.get("context_mode", "short_long" if model_type == "quad_stream_dual_head_context" else "short_only"))
+        return identifier
 
     def _prepare_batch(self, time_np: np.ndarray) -> Tuple[torch.Tensor, torch.Tensor]:
         time_np = np.asarray(time_np, dtype=np.float32).reshape(-1)
@@ -127,14 +160,33 @@ class DualStreamIdentifier:
         in_psd: torch.Tensor,
         out_time: torch.Tensor,
         out_psd: torch.Tensor,
+        in_context: torch.Tensor | None = None,
+        out_context: torch.Tensor | None = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        if self.model_type != "quad_stream_dual_head":
+        if self.model_type not in {"quad_stream_dual_head", "quad_stream_dual_head_context"}:
             raise ValueError("当前 checkpoint 不是双头模型，不能做联合双向预测")
         in_time = in_time.to(self.device, non_blocking=True)
         in_psd = in_psd.to(self.device, non_blocking=True)
         out_time = out_time.to(self.device, non_blocking=True)
         out_psd = out_psd.to(self.device, non_blocking=True)
-        in_logits, out_logits = self.model(in_time, in_psd, out_time, out_psd)
+        if self.model_type == "quad_stream_dual_head_context":
+            use_context = self.context_mode == "short_long"
+            if use_context:
+                if in_context is None or out_context is None:
+                    raise ValueError("context_mode=short_long 需要 in_context/out_context")
+                in_context = in_context.to(self.device, non_blocking=True)
+                out_context = out_context.to(self.device, non_blocking=True)
+            in_logits, out_logits = self.model(
+                in_time,
+                in_psd,
+                in_context,
+                out_time,
+                out_psd,
+                out_context,
+                use_context=use_context,
+            )
+        else:
+            in_logits, out_logits = self.model(in_time, in_psd, out_time, out_psd)
         in_proba = F.softmax(in_logits, dim=1).cpu().numpy()
         out_proba = F.softmax(out_logits, dim=1).cpu().numpy()
         return in_proba, out_proba

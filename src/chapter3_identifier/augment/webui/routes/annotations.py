@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from src.chapter3_identifier.augment.annotation.dataset_summary import build_dataset_summary
 from src.chapter3_identifier.augment.annotation.gold_index import annotation_key
 from src.chapter3_identifier.augment.annotation.store import annotation_store_for_round
 from src.chapter3_identifier.augment.labels import get_label_names, label_name
@@ -22,6 +23,10 @@ def build_annotations_router(deps: AppDeps) -> APIRouter:
     @router.get("/api/annotations/state")
     def annotation_state(round_idx: int = 1):
         return deps.annotation_state_payload(round_idx)
+
+    @router.get("/api/dataset/summary")
+    def dataset_summary(round_idx: int = 1):
+        return build_dataset_summary(deps.cfg, round_idx)
 
     @router.post("/api/annotate")
     def annotate(req: AnnotateRequest):
@@ -45,7 +50,7 @@ def build_annotations_router(deps: AppDeps) -> APIRouter:
         round_store = annotation_store_for_round(deps.cfg, req.round_idx)
         in_fp = record.get("inplane_file_path")
         wi = int(record.get("window_index", 0))
-        gold_index = deps.annotation_lookup.gold_index(deps.gold_store.load_gold())
+        gold_index = deps.gold_index()
         key = annotation_key(in_fp, wi) if in_fp else None
         gold_entry = gold_index.get(key) if key else None
         is_gold = gold_entry is not None
@@ -59,7 +64,8 @@ def build_annotations_router(deps: AppDeps) -> APIRouter:
             sample_id=(gold_entry or {}).get("sample_id"),
             round_idx=req.round_idx,
         )
-        manual_count = len(round_store.load_manual_edits())
+        manual_count = int(row.get("_manual_count", 0))
+        row.pop("_manual_count", None)
         merge_scheduled = deps.schedule_merge_training(req.round_idx)
         deps.annotation_lookup.invalidate_manual()
         deps.abnormal_queue_cache.invalidate()

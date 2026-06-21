@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from src.chapter3_identifier.augment.features.spectrum import welch_psd
+from src.chapter3_identifier.augment.figures.layout import sample_fig_size
 from src.chapter3_identifier.augment.figures.render.titles import format_sample_title
 from src.chapter3_identifier.augment.labels import get_label_names
 from src.chapter3_identifier.augment.settings import load_config
@@ -23,31 +24,18 @@ _WINDOW_SIZE = 3000
 _FS = 50.0
 _NFFT = 2048
 _FREQ_MAX = 25.0
-_LABELS = get_label_names(load_config())
-_SAMPLE_LAYOUT_PRESETS = {
-    "wide_fill_v1": {
-        "timeseries": (6.8, 1.9),
-        "spectrum": (4.0, 2.0),
-        "trajectory": (4.0, 4.0),
-        "prediction": (8.2, 1.7),
-    },
-    "default": {
-        "timeseries": (4.0, 2.0),
-        "spectrum": (4.0, 2.0),
-        "trajectory": (4.0, 4.0),
-        "prediction": (4.0, 2.5),
-    },
-}
-
-
-def _sample_fig_size(layout_profile: str, kind: str) -> tuple[float, float]:
-    preset = _SAMPLE_LAYOUT_PRESETS.get(layout_profile, _SAMPLE_LAYOUT_PRESETS["wide_fill_v1"])
-    return preset[kind]
+_CFG = load_config()
+_LABELS = get_label_names(_CFG)
+_SAMPLE_FIG_DPI = int(_CFG.get("figure_sample_dpi", 96))
+_USE_TIGHT_BBOX = bool(_CFG.get("figure_export_tight_bbox", False))
 
 
 def _fig_to_bytes(fig) -> bytes:
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
+    if _USE_TIGHT_BBOX:
+        fig.savefig(buf, format="png", dpi=_SAMPLE_FIG_DPI, bbox_inches="tight")
+    else:
+        fig.savefig(buf, format="png", dpi=_SAMPLE_FIG_DPI)
     plt.close(fig)
     buf.seek(0)
     return buf.read()
@@ -61,9 +49,9 @@ def _load_window(file_path: str, window_index: int, extractor: VICWindowExtracto
     return np.asarray(sig, dtype=np.float32).reshape(-1)
 
 
-def plot_timeseries(data: np.ndarray, title: str, layout_profile: str = "wide_fill_v1") -> bytes:
+def plot_timeseries(data: np.ndarray, title: str, layout_profile: str = "wide_fill_v3") -> bytes:
     t = np.arange(len(data)) / _FS
-    fig, ax = plt.subplots(figsize=_sample_fig_size(layout_profile, "timeseries"))
+    fig, ax = plt.subplots(figsize=sample_fig_size(layout_profile, "timeseries"))
     ax.plot(t, data, color="#333333", linewidth=0.9)
     ax.set_title(title, fontsize=9)
     ax.set_xlabel("时间 (s)")
@@ -73,15 +61,16 @@ def plot_timeseries(data: np.ndarray, title: str, layout_profile: str = "wide_fi
     return _fig_to_bytes(fig)
 
 
-def plot_spectrum(data: np.ndarray, title: str, layout_profile: str = "wide_fill_v1") -> bytes:
+def plot_spectrum(data: np.ndarray, title: str, layout_profile: str = "wide_fill_v3") -> bytes:
     f, psd = welch_psd(data, fs=_FS, nfft=_NFFT, freq_max_hz=_FREQ_MAX)
-    fig, ax = plt.subplots(figsize=_sample_fig_size(layout_profile, "spectrum"))
+    fig, ax = plt.subplots(figsize=sample_fig_size(layout_profile, "spectrum"))
     ax.plot(f, psd, color="#333333", linewidth=0.9)
-    ax.set_title(title, fontsize=9)
-    ax.set_xlabel("频率 (Hz)")
-    ax.set_ylabel("PSD")
+    ax.set_title(title, fontsize=8, pad=2)
+    ax.set_xlabel("频率 (Hz)", labelpad=1)
+    ax.set_ylabel("PSD", labelpad=1)
+    ax.tick_params(axis="both", labelsize=7, pad=1)
     ax.grid(True, alpha=0.3, linestyle="--")
-    fig.tight_layout()
+    fig.subplots_adjust(left=0.075, right=0.985, bottom=0.24, top=0.86)
     return _fig_to_bytes(fig)
 
 
@@ -91,7 +80,7 @@ def plot_trajectory(
     title: str,
     in_id: str = "",
     out_id: str = "",
-    layout_profile: str = "wide_fill_v1",
+    layout_profile: str = "wide_fill_v3",
 ) -> bytes:
     if in_id or out_id:
         title = f"面内: {in_id or '-'}  |  面外: {out_id or '-'}\n{title}"
@@ -99,7 +88,7 @@ def plot_trajectory(
     g_min, g_max = float(all_vals.min()), float(all_vals.max())
     margin = (g_max - g_min) * 0.05 if g_max > g_min else 0.05
 
-    fig, ax = plt.subplots(figsize=_sample_fig_size(layout_profile, "trajectory"))
+    fig, ax = plt.subplots(figsize=sample_fig_size(layout_profile, "trajectory"))
     ax.scatter(out_data, in_data, s=8, alpha=0.35, linewidths=0, color="#4f8ef7")
     ax.set_xlim(g_min - margin, g_max + margin)
     ax.set_ylim(g_min - margin, g_max + margin)
@@ -116,9 +105,9 @@ def plot_prediction_bar(
     proba: List[float],
     prediction: int,
     title: str,
-    layout_profile: str = "wide_fill_v1",
+    layout_profile: str = "wide_fill_v3",
 ) -> bytes:
-    fig, ax = plt.subplots(figsize=_sample_fig_size(layout_profile, "prediction"))
+    fig, ax = plt.subplots(figsize=sample_fig_size(layout_profile, "prediction"))
     x = np.arange(len(proba))
     colors = ["#888888"] * len(proba)
     if 0 <= prediction < len(proba):
@@ -159,7 +148,7 @@ def _direction_prediction(record: dict, direction: str) -> tuple[list[float], in
 def render_prediction_figure(
     record: dict,
     prediction_direction: str = "inplane",
-    layout_profile: str = "wide_fill_v1",
+    layout_profile: str = "wide_fill_v3",
 ) -> bytes:
     proba, pred = _direction_prediction(record, prediction_direction)
     label = "面外" if prediction_direction == "outplane" else "面内"
@@ -196,7 +185,7 @@ def build_sample_render_data(record: dict) -> SampleRenderData:
 def render_sample_figure_from_data(
     sample_data: SampleRenderData,
     figure_name: str,
-    layout_profile: str = "wide_fill_v1",
+    layout_profile: str = "wide_fill_v3",
     prediction_direction: str = "inplane",
 ) -> bytes:
     if figure_name == "in_timeseries":
@@ -231,7 +220,7 @@ def render_sample_figure_from_data(
     raise ValueError(f"未知样本图类型: {figure_name}")
 
 
-def render_sample_figures(record: dict, layout_profile: str = "wide_fill_v1") -> dict:
+def render_sample_figures(record: dict, layout_profile: str = "wide_fill_v3") -> dict:
     sample_data = build_sample_render_data(record)
     return {
         name: render_sample_figure_from_data(

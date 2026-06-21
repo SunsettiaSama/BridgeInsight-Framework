@@ -10,7 +10,6 @@ from src.chapter4_characteristics.analysis.data_loader import get_nested, load_c
 from src.chapter4_characteristics.settings import (
     get_reference_psd_path,
     get_reference_stats_path,
-    write_active_round,
 )
 
 
@@ -24,11 +23,11 @@ def _collect_scalars(samples: List[dict], keys: List[str]) -> Dict[str, List[flo
     return out
 
 
-def build_reference_stats(cfg: dict, round_idx: int) -> dict:
+def build_reference_stats(cfg: dict) -> dict:
     keys = list(cfg.get("reference_feature_keys", []))
     ref: Dict[str, dict] = {}
     for class_id in (0, 1, 2):
-        samples = load_class_samples(class_id, cfg, round_idx)
+        samples = load_class_samples(class_id, cfg)
         scalars = _collect_scalars(samples, keys)
         class_ref = {}
         for k, vals in scalars.items():
@@ -45,12 +44,11 @@ def build_reference_stats(cfg: dict, round_idx: int) -> dict:
         ref[str(class_id)] = class_ref
 
     payload = {
-        "round_idx": round_idx,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "feature_keys": keys,
         "classes": ref,
     }
-    path = get_reference_stats_path(cfg, round_idx)
+    path = get_reference_stats_path(cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -85,23 +83,22 @@ def _mean_psd_curve(samples: List[dict], plane: str, max_n: int, freq_max: float
     return {"frequencies": grid0.tolist(), "powers": mean_curve.tolist()}
 
 
-def build_reference_psd(cfg: dict, round_idx: int) -> dict:
+def build_reference_psd(cfg: dict) -> dict:
     max_n = int(cfg.get("reference_psd_max_samples", 2000))
-    payload = {"round_idx": round_idx, "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "classes": {}}
+    payload = {"created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "classes": {}}
     for class_id in (0, 1, 2):
-        samples = load_class_samples(class_id, cfg, round_idx)
+        samples = load_class_samples(class_id, cfg)
         payload["classes"][str(class_id)] = {
             "inplane": _mean_psd_curve(samples, "inplane", max_n),
             "outplane": _mean_psd_curve(samples, "outplane", max_n),
             "n_samples": len(samples),
         }
-    path = get_reference_psd_path(cfg, round_idx)
+    path = get_reference_psd_path(cfg)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     return payload
 
 
-def post_enrich_artifacts(cfg: dict, round_idx: int) -> None:
-    build_reference_stats(cfg, round_idx)
-    build_reference_psd(cfg, round_idx)
-    write_active_round(cfg, round_idx)
+def post_enrich_artifacts(cfg: dict) -> None:
+    build_reference_stats(cfg)
+    build_reference_psd(cfg)

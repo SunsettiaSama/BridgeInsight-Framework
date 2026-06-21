@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
+from src.chapter3_identifier.augment.datasets.dual_stream_dataset import load_context_array
 from src.chapter3_identifier.augment.features.spectrum import compute_psd_vector
 from src.chapter3_identifier.augment.infer.batch_ops import AsyncPsdPipeline, normalize_time_batch
 from src.chapter3_identifier.augment.infer.identifier import DualStreamIdentifier
@@ -73,13 +74,23 @@ class _PairedWindowDataset(Dataset):
         self,
         records,
         window_size: int,
+        fs: float = 50.0,
         enable_denoise: bool = False,
         original_indices: Optional[List[int]] = None,
+        enable_long_context: bool = False,
+        context_input_size: int = 3000,
+        context_total_seconds: float = 1500.0,
+        context_allow_cross_file: bool = True,
     ):
         self._records = records
         self._window_size = window_size
+        self._fs = float(fs)
         self._enable_denoise = enable_denoise
         self._original_indices = original_indices or list(range(len(records)))
+        self._enable_long_context = bool(enable_long_context)
+        self._context_input_size = int(context_input_size)
+        self._context_total_seconds = float(context_total_seconds)
+        self._context_allow_cross_file = bool(context_allow_cross_file)
         self._extractor = None
         self._cache_path = None
         self._cache_data = None
@@ -103,6 +114,19 @@ class _PairedWindowDataset(Dataset):
         arr = np.asarray(signal, dtype=np.float32).reshape(-1)
         return torch.from_numpy(arr).float().unsqueeze(-1)
 
+    def _load_context(self, file_path: str, window_idx: int) -> torch.Tensor:
+        arr = load_context_array(
+            file_path=file_path,
+            window_index=window_idx,
+            window_size=self._window_size,
+            fs=self._fs,
+            context_input_size=self._context_input_size,
+            context_total_seconds=self._context_total_seconds,
+            allow_cross_file=self._context_allow_cross_file,
+            extractor=self._extractor,
+        )
+        return torch.from_numpy(arr).float().unsqueeze(-1)
+
     def __getitem__(self, idx: int):
         if self._extractor is None:
             from src.identifier.dl.runner import _make_extractor
@@ -112,8 +136,14 @@ class _PairedWindowDataset(Dataset):
         rec = self._records[idx]
         in_meta = rec.inplane_meta or {}
         out_meta = rec.outplane_meta or {}
-        in_time = self._load_signal(in_meta.get("file_path"), rec.window_idx, in_meta)
-        out_time = self._load_signal(out_meta.get("file_path"), rec.window_idx, out_meta)
+        in_fp = in_meta.get("file_path")
+        out_fp = out_meta.get("file_path")
+        in_time = self._load_signal(in_fp, rec.window_idx, in_meta)
+        out_time = self._load_signal(out_fp, rec.window_idx, out_meta)
+        if self._enable_long_context:
+            in_context = self._load_context(in_fp, rec.window_idx)
+            out_context = self._load_context(out_fp, rec.window_idx)
+            return in_time, in_context, out_time, out_context, self._original_indices[idx]
         return in_time, out_time, self._original_indices[idx]
 
 
@@ -194,7 +224,7 @@ class DualStreamInferenceRunner:
         return probas
 
     def run_with_proba(self, dataset) -> Tuple[Dict[int, np.ndarray], Dict[int, np.ndarray]]:
-        if self.identifier.model_type == "quad_stream_dual_head":
+        if self.identifier.model_type in {"quad_stream_dual_head", "quad_stream_dual_head_context"}:
             return self._run_joint_proba(dataset)
         inplane = self._run_direction_proba(dataset, "inplane")
         outplane = self._run_direction_proba(dataset, "outplane")
@@ -205,6 +235,10 @@ class DualStreamInferenceRunner:
 
         window_size = dataset.config.window_size
         enable_denoise = dataset.config.enable_denoise
+        enable_long_context = (
+            self.identifier.model_type == "quad_stream_dual_head_context"
+            and self.identifier.context_mode == "short_long"
+        )
         extractor = _make_extractor(enable_denoise=enable_denoise)
         _, in_idxs = FullDatasetRunner._validate_records(dataset._samples, window_size, extractor=extractor)
         _, out_idxs = FullDatasetRunner._validate_outplane_records(
@@ -215,8 +249,13 @@ class DualStreamInferenceRunner:
         ds = _PairedWindowDataset(
             records=valid_records,
             window_size=window_size,
+            fs=self.fs,
             enable_denoise=enable_denoise,
             original_indices=valid_idx,
+            enable_long_context=enable_long_context,
+            context_input_size=self.identifier.context_input_size,
+            context_total_seconds=self.identifier.context_total_seconds,
+            context_allow_cross_file=self.identifier.context_allow_cross_file,
         )
         loader = DataLoader(
             ds,
@@ -228,9 +267,13 @@ class DualStreamInferenceRunner:
 
         in_probas: Dict[int, np.ndarray] = {}
         out_probas: Dict[int, np.ndarray] = {}
-        for in_time_batch, out_time_batch, idx_batch in iter_progress(
-            loader, total=len(loader), desc="round2 联合双向推理"
+        for batch in iter_progress(
+            loader, total=len(loader), desc="配对双头联合推理"
         ):
+            if enable_long_context:
+                in_time_batch, in_context_batch, out_time_batch, out_context_batch, idx_batch = batch
+            else:
+                in_time_batch, out_time_batch, idx_batch = batch
             in_time_batch = normalize_time_batch(in_time_batch)
             out_time_batch = normalize_time_batch(out_time_batch)
 
@@ -258,12 +301,24 @@ class DualStreamInferenceRunner:
                 )
             in_psd_batch = torch.from_numpy(np.asarray(in_psd, dtype=np.float32)).unsqueeze(-1)
             out_psd_batch = torch.from_numpy(np.asarray(out_psd, dtype=np.float32)).unsqueeze(-1)
-            in_batch_proba, out_batch_proba = self.identifier.predict_dual_proba_batch(
-                in_time_batch,
-                in_psd_batch,
-                out_time_batch,
-                out_psd_batch,
-            )
+            if enable_long_context:
+                in_context_batch = normalize_time_batch(in_context_batch)
+                out_context_batch = normalize_time_batch(out_context_batch)
+                in_batch_proba, out_batch_proba = self.identifier.predict_dual_proba_batch(
+                    in_time_batch,
+                    in_psd_batch,
+                    out_time_batch,
+                    out_psd_batch,
+                    in_context=in_context_batch,
+                    out_context=out_context_batch,
+                )
+            else:
+                in_batch_proba, out_batch_proba = self.identifier.predict_dual_proba_batch(
+                    in_time_batch,
+                    in_psd_batch,
+                    out_time_batch,
+                    out_psd_batch,
+                )
             for idx, in_p, out_p in zip(idx_batch, in_batch_proba, out_batch_proba):
                 in_probas[int(idx)] = in_p
                 out_probas[int(idx)] = out_p
@@ -291,10 +346,20 @@ class DualStreamInferenceRunner:
                 continue
             in_pred = int(in_p.argmax())
             out_pred = int(out_p.argmax())
-            if in_pred != _NORMAL_LABEL:
-                merged[idx] = (in_pred, in_p)
-            elif out_pred != _NORMAL_LABEL:
-                merged[idx] = (out_pred, out_p)
-            else:
-                merged[idx] = (_NORMAL_LABEL, (in_p + out_p) / 2.0)
+            in_conf = float(np.max(in_p))
+            out_conf = float(np.max(out_p))
+            in_abnormal = in_pred != _NORMAL_LABEL
+            out_abnormal = out_pred != _NORMAL_LABEL
+
+            if in_abnormal or out_abnormal:
+                candidates = []
+                if in_abnormal:
+                    candidates.append((in_conf, in_pred, in_p))
+                if out_abnormal:
+                    candidates.append((out_conf, out_pred, out_p))
+                _, pred, proba = max(candidates, key=lambda x: x[0])
+                merged[idx] = (int(pred), proba)
+                continue
+
+            merged[idx] = (_NORMAL_LABEL, (in_p + out_p) / 2.0)
         return merged

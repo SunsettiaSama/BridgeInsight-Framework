@@ -14,6 +14,7 @@ if str(project_root) not in sys.path:
 from src.chapter4_characteristics.statistics.fitting import fit_distribution, fit_gmm, FitResult
 from src.chapter4_characteristics.statistics.multivariate import correlation_analysis, CorrelationResult
 from src.chapter4_characteristics.statistics.config import StatisticsConfig, load_config
+from src.chapter4_characteristics.settings import get_enriched_dir, load_config as load_chapter4_config
 
 
 # ==================== 固定内部常量 ====================
@@ -89,9 +90,8 @@ def _extract_row(sample: dict, n_modes: int) -> Optional[np.ndarray]:
 
 
 def load_mode_data(cfg: StatisticsConfig) -> tuple[np.ndarray, int]:
-    stats_dir = (
-        project_root / "results" / "enriched_stats" / cfg.class_label
-    )
+    chapter4_cfg = load_chapter4_config()
+    stats_dir = get_enriched_dir(chapter4_cfg) / cfg.class_label
     json_files = sorted(stats_dir.glob("*.json"))
     if not json_files:
         raise FileNotFoundError(f"无 JSON 文件：{stats_dir}")

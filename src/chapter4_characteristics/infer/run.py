@@ -3,16 +3,18 @@
 import argparse
 import json
 import logging
+from types import SimpleNamespace
 from datetime import datetime
 from pathlib import Path
 
 import torch
+import yaml
 
-from src.chapter4_characteristics._bootstrap import ensure_paths
+from src.chapter4_characteristics._bootstrap import ensure_paths, resolve_path
 from src.chapter4_characteristics.infer.preflight import run_preflight
 from src.chapter4_characteristics.infer.result_adapter import records_to_enriched_json
 from src.chapter4_characteristics.settings import (
-    get_augment_checkpoint,
+    get_identifier_checkpoint,
     get_inference_dir,
     get_inference_path,
     get_predictions_enriched_path,
@@ -21,13 +23,43 @@ from src.chapter4_characteristics.settings import (
 
 ensure_paths()
 
-from src.chapter3_identifier.augment.infer.dataset_loader import load_staycable_dataset
 from src.chapter3_identifier.augment.infer.identifier import DualStreamIdentifier
 from src.chapter3_identifier.augment.infer.runner import DualStreamInferenceRunner
 from src.chapter3_identifier.augment.settings import load_dual_stream_model_config
+from src.data_processer.datasets.StayCable_Vib2023.StayCableVib2023Dataset import StayCableVib2023Dataset
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+_DATASET_DEFAULTS = {
+    "wind_metadata_path": None,
+    "wind_sensor_ids": None,
+    "require_wind_alignment": False,
+    "enable_denoise": False,
+    "denoise_freq_threshold": None,
+    "missing_rate_threshold": 0.05,
+    "time_ordered": True,
+    "split_ratio": -1,
+    "split_by_time": False,
+    "split_seed": 42,
+    "use_cache": True,
+    "cache_path": None,
+    "predictions_cache_path": None,
+}
+
+
+def _load_inference_dataset(config_path: str):
+    cfg_path = resolve_path(config_path)
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        raw = {**_DATASET_DEFAULTS, **(yaml.safe_load(f) or {})}
+    raw["vib_metadata_path"] = str(resolve_path(raw["vib_metadata_path"]))
+    if raw.get("wind_metadata_path"):
+        raw["wind_metadata_path"] = str(resolve_path(raw["wind_metadata_path"]))
+    if raw.get("cache_path"):
+        raw["cache_path"] = str(resolve_path(raw["cache_path"]))
+    if raw.get("predictions_cache_path"):
+        raw["predictions_cache_path"] = str(resolve_path(raw["predictions_cache_path"]))
+    return StayCableVib2023Dataset(config=SimpleNamespace(**raw))
 
 
 def _record_to_json(rec, sample_idx: int, pred: int, proba, in_pred: int, out_pred: int) -> dict:
@@ -63,7 +95,6 @@ def _apply_limit(dataset, limit: int | None):
 
 
 def run_inference(
-    round_idx: int = 1,
     limit: int | None = None,
     config_path: str | None = None,
 ) -> str:
@@ -71,13 +102,13 @@ def run_inference(
     if limit is None and int(cfg.get("dev_limit_samples", 0)) > 0:
         limit = int(cfg["dev_limit_samples"])
 
-    run_preflight(round_idx=round_idx, config_path=config_path)
+    run_preflight(config_path=config_path)
 
-    out_dir = get_inference_dir(cfg, round_idx)
-    ckpt_path = get_augment_checkpoint(cfg, round_idx)
+    out_dir = get_inference_dir(cfg)
+    ckpt_path = get_identifier_checkpoint(cfg)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    dataset = load_staycable_dataset(cfg["inference_dataset_config"])
+    dataset = _load_inference_dataset(cfg["inference_dataset_config"])
     dataset = _apply_limit(dataset, limit)
 
     identifier = DualStreamIdentifier.from_checkpoint(
@@ -110,11 +141,10 @@ def run_inference(
         records.append(_record_to_json(rec, sample_idx, pred, proba, in_pred, out_pred))
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    stable_path = get_inference_path(cfg, round_idx)
-    enriched_path = get_predictions_enriched_path(cfg, round_idx)
+    stable_path = get_inference_path(cfg)
+    enriched_path = get_predictions_enriched_path(cfg)
 
     inference_payload = {
-        "round_idx": round_idx,
         "generated_at": ts,
         "checkpoint": str(ckpt_path),
         "record_count": len(records),
@@ -126,7 +156,6 @@ def run_inference(
     enriched_payload = records_to_enriched_json(
         records,
         dataset,
-        round_idx=round_idx,
         checkpoint_path=str(ckpt_path),
         dataset_config=str(cfg["inference_dataset_config"]),
     )
@@ -134,7 +163,6 @@ def run_inference(
         json.dump(enriched_payload, f, ensure_ascii=False, indent=2)
 
     manifest = {
-        "round_idx": round_idx,
         "generated_at": ts,
         "checkpoint": str(ckpt_path),
         "inference": stable_path.name,
@@ -149,17 +177,16 @@ def run_inference(
     for r in records:
         dist[int(r["prediction"])] = dist.get(int(r["prediction"]), 0) + 1
     logger.info(f"类别分布：{dist}")
-    logger.info(f"Round {round_idx} 推理完成：{len(records)} 条 → {stable_path}")
+    logger.info(f"推理完成：{len(records)} 条 → {stable_path}")
     return str(stable_path)
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Chapter4 2023 全量识别")
-    parser.add_argument("--round", type=int, default=1)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--config", type=str, default=None)
     args = parser.parse_args(argv)
-    run_inference(round_idx=args.round, limit=args.limit, config_path=args.config)
+    run_inference(limit=args.limit, config_path=args.config)
 
 
 if __name__ == "__main__":

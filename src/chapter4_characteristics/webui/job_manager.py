@@ -121,7 +121,6 @@ class JobManager:
         cleared = {
             "status": "idle",
             "phase": None,
-            "round": state.get("round", 0),
             "pid": None,
             "log_path": state.get("log_path"),
             "error": None,
@@ -129,7 +128,7 @@ class JobManager:
         write_job_state(str(self.job_state_path), cleared)
         return cleared
 
-    def _launch(self, phase: str, round_idx: int, config_path: Optional[str], extra_args: Optional[list] = None) -> dict:
+    def _launch(self, phase: str, config_path: Optional[str], extra_args: Optional[list] = None) -> dict:
         self.reconcile_running_job()
         state = read_job_state(str(self.job_state_path))
         if state.get("status") == "running":
@@ -140,15 +139,13 @@ class JobManager:
             "-m",
             "src.chapter4_characteristics",
             phase,
-            "--round",
-            str(round_idx),
         ]
         if config_path:
             cmd.extend(["--config", config_path])
         if extra_args:
             cmd.extend(extra_args)
 
-        log_path = self.log_dir / f"{phase}_round_{round_idx:02d}.log"
+        log_path = self.log_dir / f"{phase}.log"
         log_handle = open(log_path, "w", encoding="utf-8")
         import os
         env = os.environ.copy()
@@ -170,24 +167,23 @@ class JobManager:
             {
                 "status": "running",
                 "phase": phase,
-                "round": round_idx,
                 "pid": proc.pid,
                 "log_path": str(log_path),
                 "error": None,
             },
         )
-        return {"pid": proc.pid, "phase": phase, "round": round_idx, "log_path": str(log_path)}
+        return {"pid": proc.pid, "phase": phase, "log_path": str(log_path)}
 
-    def start_infer(self, round_idx: int, config_path: Optional[str] = None, limit: Optional[int] = None) -> dict:
+    def start_infer(self, config_path: Optional[str] = None, limit: Optional[int] = None) -> dict:
         extra = ["--limit", str(limit)] if limit else None
-        return self._launch("infer", round_idx, config_path, extra)
+        return self._launch("infer", config_path, extra)
 
-    def start_enrich(self, round_idx: int, config_path: Optional[str] = None, limit: Optional[int] = None) -> dict:
+    def start_enrich(self, config_path: Optional[str] = None, limit: Optional[int] = None) -> dict:
         extra = ["--limit", str(limit)] if limit else None
-        return self._launch("enrich", round_idx, config_path, extra)
+        return self._launch("enrich", config_path, extra)
 
-    def start_copula(self, round_idx: int, class_id: int, config_path: Optional[str] = None) -> dict:
-        return self._launch("copula", round_idx, config_path, ["--class-id", str(class_id)])
+    def start_copula(self, class_id: int, config_path: Optional[str] = None) -> dict:
+        return self._launch("copula", config_path, ["--class-id", str(class_id)])
 
     def _process_exit_code(self, pid: int) -> Optional[int]:
         proc = self._processes.get(int(pid))
@@ -236,6 +232,6 @@ class JobManager:
         _, err = self._detect_exit_from_log(state.get("log_path"))
         return self._finalize_job(state, pid, exit_code, err or f"进程异常退出，退出码 {exit_code}")
 
-    def read_log_tail(self, round_idx: int, phase: str = "infer", max_chars: int = 6000) -> str:
-        log_path = self.log_dir / f"{phase}_round_{round_idx:02d}.log"
+    def read_log_tail(self, phase: str = "infer", max_chars: int = 6000) -> str:
+        log_path = self.log_dir / f"{phase}.log"
         return self._read_log_tail(str(log_path), max_chars=max_chars)

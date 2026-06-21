@@ -1,4 +1,4 @@
-﻿"""
+﻿r"""
 Chapter4 启用示例 — 复制下方命令，或在项目根目录直接运行本脚本。
 
 所有命令均需在仓库根目录执行（F:\\Research\\Vibration Characteristics In Cable Vibration）。
@@ -28,13 +28,13 @@ Chapter4 启用示例 — 复制下方命令，或在项目根目录直接运行
 ────────────────────────────────────────────────────────────
 
   # 0) 编辑 src/chapter4_characteristics/config/default.yaml
-  #    确认 inference_dataset_config / augment_rounds_dir / wind_metadata_path 等路径
+  #    确认 inference_dataset_config / identifier_checkpoint_path / wind_metadata_path 等路径
 
   python -m src.chapter4_characteristics check-env
-  python -m src.chapter4_characteristics check-preflight --round 1
-  python -m src.chapter4_characteristics infer  --round 1          # 全量识别
-  python -m src.chapter4_characteristics enrich  --round 1          # 特征归档
-  python -m src.chapter4_characteristics copula  --round 1 --class-id 2   # 可选：Copula
+  python -m src.chapter4_characteristics check-preflight
+  python -m src.chapter4_characteristics infer                # 全量识别
+  python -m src.chapter4_characteristics enrich               # 特征归档
+  python -m src.chapter4_characteristics copula --class-id 2   # 可选：Copula
   python -m src.chapter4_characteristics webui                      # 特性分析 WebUI
 
   # 指定端口（Windows 上若 8766 不可用，可换端口）
@@ -45,7 +45,7 @@ Chapter4 启用示例 — 复制下方命令，或在项目根目录直接运行
 ────────────────────────────────────────────────────────────
 
   - Python 环境需安装 torch / fastapi / uvicorn 等（与 chapter3 augment 相同）
-  - infer 依赖 augment round_01 的 best_checkpoint.pth
+  - infer 依赖 identifier_checkpoint_path 指向的 chapter3 最终识别器
   - enrich 依赖 infer 产出的 predictions_enriched.json
   - WebUI 建议在 infer + enrich 完成后启动，以便浏览各类特性图与 Others 样本
 

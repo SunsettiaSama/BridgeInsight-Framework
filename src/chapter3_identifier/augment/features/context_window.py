@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -20,9 +21,11 @@ class ContextWindowResult:
     t0_offset_s: float
     current_start_s: float
     current_end_s: float
+    discontinuity_note: Optional[str] = None
 
 
 _SENSOR_FILE_CACHE: Dict[Tuple[str, str], List[Path]] = {}
+_FILE_DURATION_CACHE: Dict[str, float] = {}
 
 
 def _sensor_prefix(file_path: str) -> str:
@@ -38,6 +41,37 @@ def _sensor_search_root(file_path: str) -> Path:
     return p.parent
 
 
+def _parse_vic_start_datetime(file_path: str) -> datetime:
+    path = Path(file_path)
+    parts = path.parts
+    month = int(parts[-3]) if len(parts) >= 3 else 1
+    day = int(parts[-2]) if len(parts) >= 2 else 1
+    stem = path.stem
+    time_token = stem.rsplit("_", 1)[-1]
+    hour = int(time_token[0:2]) if len(time_token) >= 2 else 0
+    minute = int(time_token[2:4]) if len(time_token) >= 4 else 0
+    second = int(time_token[4:6]) if len(time_token) >= 6 else 0
+    return datetime(2024, month, day, hour, minute, second)
+
+
+def _file_duration_seconds(file_path: str, sample_count: int, fs: float) -> float:
+    return float(sample_count) / fs if fs > 0 else 0.0
+
+
+def _files_are_time_adjacent(
+    prev_path: str,
+    prev_sample_count: int,
+    next_path: str,
+    fs: float,
+    tolerance_s: float = 2.0,
+) -> bool:
+    prev_start = _parse_vic_start_datetime(prev_path)
+    prev_end = prev_start + timedelta(seconds=_file_duration_seconds(prev_path, prev_sample_count, fs))
+    next_start = _parse_vic_start_datetime(next_path)
+    gap_s = abs((next_start - prev_end).total_seconds())
+    return gap_s <= tolerance_s
+
+
 def _sensor_files(file_path: str) -> List[Path]:
     sensor = _sensor_prefix(file_path)
     root = _sensor_search_root(file_path)
@@ -45,7 +79,8 @@ def _sensor_files(file_path: str) -> List[Path]:
     cached = _SENSOR_FILE_CACHE.get(cache_key)
     if cached is not None:
         return cached
-    files = sorted(root.rglob(f"{sensor}_*.VIC"), key=lambda x: str(x).replace("\\", "/"))
+    files = list(root.rglob(f"{sensor}_*.VIC"))
+    files.sort(key=lambda p: _parse_vic_start_datetime(str(p)))
     _SENSOR_FILE_CACHE[cache_key] = files
     return files
 
@@ -72,6 +107,7 @@ def extract_context_window(
 
     center_start = max(0, center_win * window_size)
     center_end = min(total_len, center_start + window_size)
+    center_len = max(0, center_end - center_start)
     left_need = max(0, before * window_size)
     right_need = max(0, after * window_size)
 
@@ -85,35 +121,61 @@ def extract_context_window(
     right_missing = right_need - max(0, right_current_end - center_end)
     right_parts: List[np.ndarray] = [center_and_right]
 
+    discontinuity_notes: List[str] = []
+
     if allow_cross_file and (left_missing > 0 or right_missing > 0):
         files = _sensor_files(file_path)
         current = Path(file_path).resolve()
         if current in files:
             idx = files.index(current)
-            if left_missing > 0:
-                for prev_path in reversed(files[:idx]):
+            if left_missing > 0 and idx > 0:
+                prev_path = files[idx - 1]
+                try:
                     prev_data = np.asarray(extractor.load_file(str(prev_path)), dtype=np.float32)
-                    take = min(left_missing, int(len(prev_data)))
-                    if take <= 0:
-                        continue
-                    left_parts.insert(0, prev_data[-take:])
-                    left_missing -= take
-                    if left_missing <= 0:
-                        break
-            if right_missing > 0:
-                for next_path in files[idx + 1:]:
+                except RuntimeError as exc:
+                    discontinuity_notes.append(f"左侧跨文件读取失败，已停止拼接：{exc}")
+                else:
+                    if _files_are_time_adjacent(
+                        str(prev_path),
+                        int(len(prev_data)),
+                        str(current),
+                        fs,
+                    ):
+                        take = min(left_missing, int(len(prev_data)))
+                        if take > 0:
+                            left_parts.insert(0, prev_data[-take:])
+                            left_missing -= take
+                    else:
+                        discontinuity_notes.append("左侧跨文件时间不连续，已停止拼接")
+            elif left_missing > 0:
+                discontinuity_notes.append("左侧上下文不足")
+
+            if right_missing > 0 and idx + 1 < len(files):
+                next_path = files[idx + 1]
+                try:
                     next_data = np.asarray(extractor.load_file(str(next_path)), dtype=np.float32)
-                    take = min(right_missing, int(len(next_data)))
-                    if take <= 0:
-                        continue
-                    right_parts.append(next_data[:take])
-                    right_missing -= take
-                    if right_missing <= 0:
-                        break
+                except RuntimeError as exc:
+                    discontinuity_notes.append(f"右侧跨文件读取失败，已停止拼接：{exc}")
+                else:
+                    if _files_are_time_adjacent(
+                        str(current),
+                        total_len,
+                        str(next_path),
+                        fs,
+                    ):
+                        take = min(right_missing, int(len(next_data)))
+                        if take > 0:
+                            right_parts.append(next_data[:take])
+                            right_missing -= take
+                    else:
+                        discontinuity_notes.append("右侧跨文件时间不连续，已停止拼接")
+            elif right_missing > 0:
+                discontinuity_notes.append("右侧上下文不足")
 
     long_signal = np.concatenate(left_parts + right_parts).astype(np.float32, copy=False)
     current_start_s = sum(int(len(part)) for part in left_parts) / fs
-    current_end_s = current_start_s + window_size / fs
+    current_end_s = current_start_s + center_len / fs
+    note = "；".join(discontinuity_notes) if discontinuity_notes else None
 
     return ContextWindowResult(
         signal=long_signal,
@@ -125,4 +187,5 @@ def extract_context_window(
         t0_offset_s=-current_start_s,
         current_start_s=current_start_s,
         current_end_s=current_end_s,
+        discontinuity_note=note,
     )

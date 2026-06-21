@@ -27,6 +27,7 @@ def _resolve_direction_annotations(entry: dict) -> tuple[int | None, int | None]
 
 def annotation_store_for_round(cfg: dict, round_idx: int) -> "AnnotationStore":
     from src.chapter3_identifier.augment.settings import (
+        get_round_manual_delta_path,
         get_round_manual_history_path,
         get_round_manual_edits_path,
         get_round_merged_training_path,
@@ -35,28 +36,69 @@ def annotation_store_for_round(cfg: dict, round_idx: int) -> "AnnotationStore":
     return AnnotationStore(
         gold_path=cfg["gold_annotation_path"],
         manual_edits_path=str(get_round_manual_edits_path(cfg, round_idx)),
+        manual_delta_path=str(get_round_manual_delta_path(cfg, round_idx)),
         manual_history_path=str(get_round_manual_history_path(cfg, round_idx)),
         merged_output_path=str(get_round_merged_training_path(cfg, round_idx)),
     )
 
 
 def load_cumulative_manual_edits(cfg: dict, through_round: int) -> List[dict]:
-    from src.chapter3_identifier.augment.settings import get_round_manual_edits_path
+    from src.chapter3_identifier.augment.settings import (
+        get_round_manual_delta_path,
+        get_round_manual_edits_path,
+    )
 
     merged: Dict[Tuple[str, int], dict] = {}
     for round_idx in range(1, through_round + 1):
         path = get_round_manual_edits_path(cfg, round_idx)
         if not path.exists():
-            continue
-        with open(path, "r", encoding="utf-8") as f:
-            rows = json.load(f)
+            rows = []
+        else:
+            with open(path, "r", encoding="utf-8") as f:
+                rows = json.load(f)
         for entry in rows:
             fp = entry.get("file_path")
             if fp is None:
                 continue
             key = annotation_key(fp, entry.get("window_index", 0))
             merged[key] = dict(entry)
+
+        delta_path = get_round_manual_delta_path(cfg, round_idx)
+        if not delta_path.exists():
+            continue
+        with open(delta_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                entry = json.loads(line)
+                fp = entry.get("file_path")
+                if fp is None:
+                    continue
+                key = annotation_key(fp, entry.get("window_index", 0))
+                merged[key] = dict(entry)
     return list(merged.values())
+
+
+def load_cumulative_manual_change_events(cfg: dict, through_round: int) -> List[dict]:
+    from src.chapter3_identifier.augment.settings import get_round_manual_history_path
+
+    events: List[dict] = []
+    for round_idx in range(1, through_round + 1):
+        path = get_round_manual_history_path(cfg, round_idx)
+        if not path.exists():
+            continue
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                if row.get("round_idx") is None:
+                    row["round_idx"] = round_idx
+                events.append(row)
+    events.sort(key=lambda row: (int(row.get("round_idx", 0)), str(row.get("event_time", ""))))
+    return events
 
 
 def lookup_manual_annotation(
@@ -81,10 +123,15 @@ class AnnotationStore:
         gold_path: str,
         manual_edits_path: str,
         merged_output_path: str,
+        manual_delta_path: str | None = None,
         manual_history_path: str | None = None,
     ):
         self.gold_path = resolve_path(gold_path)
         self.manual_edits_path = resolve_path(manual_edits_path)
+        if manual_delta_path:
+            self.manual_delta_path = resolve_path(manual_delta_path)
+        else:
+            self.manual_delta_path = self.manual_edits_path.with_name("manual_edits_delta.jsonl")
         if manual_history_path:
             self.manual_history_path = resolve_path(manual_history_path)
         else:
@@ -92,6 +139,7 @@ class AnnotationStore:
         self.merged_output_path = resolve_path(merged_output_path)
         self._gold_keys: Optional[set] = None
         self._annotated_keys: Optional[set] = None
+        self._manual_map: Optional[Dict[Tuple[str, int], dict]] = None
 
     def _invalidate_lookup_cache(self) -> None:
         self._gold_keys = None
@@ -126,14 +174,52 @@ class AnnotationStore:
         return entries
 
     def load_manual_edits(self) -> List[dict]:
-        if not self.manual_edits_path.exists():
-            return []
-        with open(self.manual_edits_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        if self._manual_map is None:
+            manual_map: Dict[Tuple[str, int], dict] = {}
+            if self.manual_edits_path.exists():
+                with open(self.manual_edits_path, "r", encoding="utf-8") as f:
+                    rows = json.load(f)
+                for row in rows:
+                    fp = row.get("file_path")
+                    if fp is None:
+                        continue
+                    key = annotation_key(fp, row.get("window_index", 0))
+                    manual_map[key] = dict(row)
+            if self.manual_delta_path.exists():
+                with open(self.manual_delta_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        row = json.loads(line)
+                        fp = row.get("file_path")
+                        if fp is None:
+                            continue
+                        key = annotation_key(fp, row.get("window_index", 0))
+                        manual_map[key] = dict(row)
+            self._manual_map = manual_map
+        return [dict(row) for row in self._manual_map.values()]
 
     def save_manual_edits(self, entries: List[dict]) -> None:
         self._write_json(self.manual_edits_path, entries)
+        self.manual_delta_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.manual_delta_path, "w", encoding="utf-8") as f:
+            f.write("")
+        manual_map: Dict[Tuple[str, int], dict] = {}
+        for row in entries:
+            fp = row.get("file_path")
+            if fp is None:
+                continue
+            key = annotation_key(fp, row.get("window_index", 0))
+            manual_map[key] = dict(row)
+        self._manual_map = manual_map
         self._invalidate_lookup_cache()
+
+    def _append_manual_delta(self, row: dict) -> None:
+        self.manual_delta_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.manual_delta_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False))
+            f.write("\n")
 
     def _write_json(self, path: Path, payload) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -191,6 +277,8 @@ class AnnotationStore:
             rng = random.Random(shuffle_seed)
             rng.shuffle(result)
         self._write_json(self.merged_output_path, result)
+        # Compact incremental manual deltas after merge.
+        self.save_manual_edits(self.load_manual_edits())
         self._invalidate_lookup_cache()
         return result
 
@@ -205,7 +293,9 @@ class AnnotationStore:
         is_gold: bool = False,
         round_idx: Optional[int] = None,
     ) -> dict:
-        entries = self.load_manual_edits()
+        self.load_manual_edits()
+        if self._manual_map is None:
+            raise RuntimeError("manual map cache not initialized")
         key = annotation_key(file_path, window_index)
 
         row = {
@@ -225,17 +315,12 @@ class AnnotationStore:
         if round_idx is not None:
             row["round_idx"] = int(round_idx)
 
-        replaced = False
-        previous_row = None
-        for i, existing in enumerate(entries):
-            if annotation_key(existing["file_path"], existing.get("window_index", 0)) == key:
-                previous_row = dict(existing)
-                entries[i] = row
-                replaced = True
-                break
-        if not replaced:
-            entries.append(row)
-        self.save_manual_edits(entries)
+        previous_row = dict(self._manual_map[key]) if key in self._manual_map else None
+        replaced = previous_row is not None
+        self._manual_map[key] = dict(row)
+        self._append_manual_delta(row)
+        self._invalidate_lookup_cache()
+        row["_manual_count"] = len(self._manual_map)
 
         before_in = (
             int(previous_row.get("inplane_annotation", previous_row.get("annotation", 0)))

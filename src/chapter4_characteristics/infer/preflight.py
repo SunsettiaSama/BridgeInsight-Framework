@@ -7,13 +7,13 @@ import torch
 import yaml
 
 from src.chapter4_characteristics._bootstrap import ensure_paths, resolve_path
-from src.chapter4_characteristics.settings import get_augment_checkpoint, load_config
+from src.chapter4_characteristics.settings import get_identifier_checkpoint, load_config
 
 ensure_paths()
 logger = logging.getLogger(__name__)
 
 
-def run_preflight(round_idx: int = 1, config_path: str | None = None) -> dict:
+def run_preflight(config_path: str | None = None) -> dict:
     cfg = load_config(config_path)
     issues: list[str] = []
     ok_items: list[str] = []
@@ -31,7 +31,7 @@ def run_preflight(round_idx: int = 1, config_path: str | None = None) -> dict:
         else:
             ok_items.append(f"vib metadata: {vib_meta.name}")
 
-    ckpt = get_augment_checkpoint(cfg, round_idx)
+    ckpt = get_identifier_checkpoint(cfg)
     if not ckpt.exists():
         issues.append(f"checkpoint 不存在：{ckpt}")
     else:
@@ -47,7 +47,6 @@ def run_preflight(round_idx: int = 1, config_path: str | None = None) -> dict:
     ok_items.append(f"cuda: {cuda_ok}")
 
     result = {
-        "round_idx": round_idx,
         "ok": len(issues) == 0,
         "issues": issues,
         "checks": ok_items,

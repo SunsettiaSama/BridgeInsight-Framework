@@ -1,0 +1,26 @@
+name: vib
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: vibration-mysql
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - vibration_mysql_data:/var/lib/mysql
+      - ../sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u${MYSQL_USER:-vibration}", "-p${MYSQL_PASSWORD:-vibration}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+
+volumes:
+  vibration_mysql_data:

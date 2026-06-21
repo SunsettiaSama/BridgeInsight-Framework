@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Dict, List
 
 from src.chapter4_characteristics.analysis.data_loader import get_nested, inference_by_idx, load_class_samples
-from src.chapter4_characteristics.settings import CLASS_DIRS, get_enriched_round_dir, get_others_index_path
+from src.chapter4_characteristics.settings import CLASS_DIRS, get_enriched_dir, get_others_index_path
 
 
 def _scalar_features(sample: dict) -> dict:
@@ -33,10 +33,10 @@ def _sort_key(row: dict) -> tuple:
     )
 
 
-def build_others_index(cfg: dict, round_idx: int) -> dict:
-    samples = load_class_samples(3, cfg, round_idx)
-    infer_map = inference_by_idx(cfg, round_idx)
-    class_dir = get_enriched_round_dir(cfg, round_idx) / CLASS_DIRS[3]
+def build_others_index(cfg: dict) -> dict:
+    samples = load_class_samples(3, cfg)
+    infer_map = inference_by_idx(cfg)
+    class_dir = get_enriched_dir(cfg) / CLASS_DIRS[3]
 
     rows: List[dict] = []
     for s in samples:
@@ -63,12 +63,11 @@ def build_others_index(cfg: dict, round_idx: int) -> dict:
     rows.sort(key=_sort_key)
 
     payload = {
-        "round_idx": round_idx,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "count": len(rows),
         "samples": rows,
     }
-    path = get_others_index_path(cfg, round_idx)
+    path = get_others_index_path(cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)

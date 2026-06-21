@@ -127,7 +127,14 @@ class JobManager:
         write_job_state(str(self.job_state_path), cleared)
         return cleared
 
-    def _launch(self, phase: str, round_idx: int, config_path: Optional[str]) -> dict:
+    def _launch(
+        self,
+        phase: str,
+        round_idx: int,
+        config_path: Optional[str],
+        profile_path: Optional[str] = None,
+        profile_summary: Optional[dict] = None,
+    ) -> dict:
         self.reconcile_running_job()
         state = read_job_state(str(self.job_state_path))
         if state.get("status") == "running":
@@ -143,6 +150,8 @@ class JobManager:
         ]
         if config_path:
             cmd.extend(["--config", config_path])
+        if phase == "train" and profile_path:
+            cmd.extend(["--profile", profile_path])
 
         log_path = self.log_dir / f"{phase}_round_{round_idx:02d}.log"
         log_handle = open(log_path, "w", encoding="utf-8")
@@ -151,6 +160,7 @@ class JobManager:
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
+        env["PYTHONUNBUFFERED"] = "1"
         env["AUGMENT_PLAIN_LOG"] = "1"
         proc = subprocess.Popen(
             cmd,
@@ -172,12 +182,28 @@ class JobManager:
                 "pid": proc.pid,
                 "log_path": str(log_path),
                 "error": None,
+                "profile_path": profile_path,
+                "training_profile": profile_summary,
             },
         )
-        return {"pid": proc.pid, "phase": phase, "round": round_idx, "log_path": str(log_path), "python": self.python_executable}
+        return {
+            "pid": proc.pid,
+            "phase": phase,
+            "round": round_idx,
+            "log_path": str(log_path),
+            "python": self.python_executable,
+            "profile_path": profile_path,
+            "training_profile": profile_summary,
+        }
 
-    def start_train(self, round_idx: int, config_path: Optional[str] = None) -> dict:
-        return self._launch("train", round_idx, config_path)
+    def start_train(
+        self,
+        round_idx: int,
+        config_path: Optional[str] = None,
+        profile_path: Optional[str] = None,
+        profile_summary: Optional[dict] = None,
+    ) -> dict:
+        return self._launch("train", round_idx, config_path, profile_path=profile_path, profile_summary=profile_summary)
 
     def start_infer(self, round_idx: int, config_path: Optional[str] = None) -> dict:
         return self._launch("infer", round_idx, config_path)

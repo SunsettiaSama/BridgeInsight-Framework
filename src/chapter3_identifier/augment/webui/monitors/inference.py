@@ -8,13 +8,14 @@ from sklearn.metrics import cohen_kappa_score
 from src.chapter3_identifier.augment.annotation.gold_index import annotation_key
 from src.chapter3_identifier.augment.labels import get_label_names
 from src.chapter3_identifier.augment.queue.inference_cache import parse_infer_progress
-from src.chapter3_identifier.augment.settings import (
-    get_round_manual_edits_path,
-    get_round_manual_history_path,
-)
+from src.chapter3_identifier.augment.annotation.store import load_cumulative_manual_change_events
+from src.chapter3_identifier.augment.settings import get_round_manual_edits_path
 
 if TYPE_CHECKING:
     from src.chapter3_identifier.augment.queue.inference_cache import InferenceSnapshotCache
+
+_CONSISTENCY_CACHE_KEY: tuple | None = None
+_CONSISTENCY_CACHE_VALUE: dict | None = None
 
 
 def _safe_int(value, default: int = 0) -> int:
@@ -55,22 +56,18 @@ def _load_manual_snapshots(cfg: dict, round_idx: int) -> Dict[tuple[str, int], L
 
 
 def _load_manual_change_events(cfg: dict, round_idx: int) -> List[dict]:
-    events: List[dict] = []
+    return load_cumulative_manual_change_events(cfg, max(round_idx, 1))
+
+
+def _manual_round_signature(cfg: dict, round_idx: int) -> tuple:
+    parts = []
     for idx in range(1, max(round_idx, 1) + 1):
-        path = get_round_manual_history_path(cfg, idx)
-        if not path.exists():
-            continue
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                event = json.loads(line)
-                if event.get("round_idx") is None:
-                    event["round_idx"] = idx
-                events.append(event)
-    events.sort(key=lambda e: (int(e.get("round_idx", 0)), str(e.get("event_time", ""))))
-    return events
+        edits_path = get_round_manual_edits_path(cfg, idx)
+        history_path = edits_path.with_name("manual_edits_history.jsonl")
+        edits_mtime = edits_path.stat().st_mtime if edits_path.exists() else -1.0
+        history_mtime = history_path.stat().st_mtime if history_path.exists() else -1.0
+        parts.append((idx, edits_mtime, history_mtime))
+    return tuple(parts)
 
 
 def _kappa_payload(first_labels: List[int], latest_labels: List[int]) -> dict:
@@ -95,6 +92,15 @@ def _kappa_payload(first_labels: List[int], latest_labels: List[int]) -> dict:
 
 
 def build_annotation_consistency_payload(cfg: dict, round_idx: int, label_names: List[str]) -> dict:
+    global _CONSISTENCY_CACHE_KEY, _CONSISTENCY_CACHE_VALUE
+    cache_key = (
+        int(round_idx),
+        tuple(label_names),
+        _manual_round_signature(cfg, round_idx),
+    )
+    if _CONSISTENCY_CACHE_KEY == cache_key and _CONSISTENCY_CACHE_VALUE is not None:
+        return _CONSISTENCY_CACHE_VALUE
+
     num_classes = len(label_names)
     history = _load_manual_snapshots(cfg, round_idx)
     change_events = _load_manual_change_events(cfg, round_idx)
@@ -177,7 +183,7 @@ def build_annotation_consistency_payload(cfg: dict, round_idx: int, label_names:
         if len(recent_changes) >= 20:
             break
 
-    return {
+    payload = {
         "total_distinct_samples": len(history),
         "reannotated_sample_count": len(repeated),
         "compared_pairs": compared,
@@ -189,6 +195,9 @@ def build_annotation_consistency_payload(cfg: dict, round_idx: int, label_names:
         "recent_changes": recent_changes,
         "top_reannotated": repeated_rows[:20],
     }
+    _CONSISTENCY_CACHE_KEY = cache_key
+    _CONSISTENCY_CACHE_VALUE = payload
+    return payload
 
 
 def build_infer_monitor_payload(

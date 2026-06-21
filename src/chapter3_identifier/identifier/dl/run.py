@@ -34,7 +34,7 @@ def main():
     # -------------------------------------------------------------------------
     project_root = Path(__file__).parent.parent.parent.parent
 
-    dataset_config_path = project_root / "config" / "datasets" / "total_staycable_vib.yaml"
+    dataset_config_path = project_root / "config" / "datasets" / "total_staycable_vib_202409.yaml"
     checkpoint_path     = project_root / "results" / "training_result" / "deep_learning_module" / "res_cnn" / "checkpoints" / "ResCNN_20260402_111429" / "best_checkpoint.pth"
     model_config_path   = project_root / "config" / "train" / "models" / "res_cnn.yaml"
 

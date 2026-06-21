@@ -8,7 +8,6 @@ from typing import Optional
 
 def build_infer_monitor_payload(
     cfg: dict,
-    round_idx: int,
     job_state: dict,
     log_tail: str,
 ) -> dict:
@@ -16,7 +15,7 @@ def build_infer_monitor_payload(
 
     dist = {}
     record_count = 0
-    infer_path = get_inference_path(cfg, round_idx)
+    infer_path = get_inference_path(cfg)
     if infer_path.exists():
         with open(infer_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -26,7 +25,6 @@ def build_infer_monitor_payload(
         dist = {str(k): v for k, v in sorted(c.items())}
 
     return {
-        "round_idx": round_idx,
         "job": job_state,
         "log_tail": log_tail,
         "record_count": record_count,

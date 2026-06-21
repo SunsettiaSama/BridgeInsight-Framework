@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import asynccontextmanager
+import atexit
+import threading
 from pathlib import Path
 
 import uvicorn
@@ -17,30 +18,60 @@ from src.chapter3_identifier.augment.webui.routes.figures import build_figures_r
 from src.chapter3_identifier.augment.webui.routes.jobs import build_jobs_router
 from src.chapter3_identifier.augment.webui.routes.pages import build_pages_router
 from src.chapter3_identifier.augment.webui.routes.queue import build_queue_router
+from src.chapter3_identifier.augment.webui.routes.training_profiles import build_training_profiles_router
+from src.data_infra.bootstrap import ensure_docker_mysql, ensure_mysql_metadata_cache
 
 ensure_paths()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
+def _start_mysql_bootstrap_background(cfg: dict) -> None:
+    def _run() -> None:
+        try:
+            print("Checking MySQL Docker service...")
+            ensure_docker_mysql(max_wait_s=int(cfg.get("webui_mysql_start_timeout_s", 120)))
+            print("MySQL is ready")
+            print("Checking MySQL metadata cache...")
+            ensure_mysql_metadata_cache(cfg)
+            print("MySQL metadata is ready")
+        except Exception as exc:
+            print(f"MySQL bootstrap failed: {exc}")
+
+    threading.Thread(target=_run, name="augment-mysql-bootstrap", daemon=True).start()
+
+
 def create_app(config_path: str | None = None) -> FastAPI:
     cfg = load_config(config_path)
+    if bool(cfg.get("webui_auto_start_mysql", True)) and not bool(cfg.get("wind_force_dict_mode", False)):
+        if bool(cfg.get("webui_mysql_bootstrap_background", True)):
+            print("MySQL bootstrap started in background")
+            _start_mysql_bootstrap_background(cfg)
+        else:
+            print("Checking MySQL Docker service...")
+            ensure_docker_mysql(max_wait_s=int(cfg.get("webui_mysql_start_timeout_s", 120)))
+            print("MySQL is ready")
+            print("Checking MySQL metadata cache...")
+            ensure_mysql_metadata_cache(cfg)
+            print("MySQL metadata is ready")
     deps = build_deps(cfg, config_path=config_path)
-
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        deps.figures.start()
-        deps.warmup_figure_buffer()
-        yield
-        deps.figures.shutdown()
-
-    app = FastAPI(title="Augment Annotation WebUI", lifespan=lifespan)
+    deps.figures.start()
+    if bool(cfg.get("webui_warmup_on_start", True)):
+        print("WebUI queue/figure warmup started in background")
+        threading.Thread(
+            target=deps.warmup_figure_buffer,
+            name="augment-webui-warmup",
+            daemon=True,
+        ).start()
+    atexit.register(deps.figures.shutdown)
+    app = FastAPI(title="Augment Annotation WebUI")
     app.include_router(build_pages_router())
     app.include_router(build_config_router(deps))
     app.include_router(build_queue_router(deps))
     app.include_router(build_annotations_router(deps))
     app.include_router(build_figures_router(deps))
     app.include_router(build_jobs_router(deps))
+    app.include_router(build_training_profiles_router(deps))
 
     @app.websocket("/ws/ws")
     async def ide_live_stub(websocket: WebSocket):

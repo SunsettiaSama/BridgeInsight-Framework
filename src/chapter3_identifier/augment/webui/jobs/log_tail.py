@@ -34,7 +34,20 @@ def read_log_tail_text(log_path: str | Path | None, max_chars: int = 8000) -> st
     with open(path, "rb") as f:
         f.seek(max(0, size - read_bytes))
         chunk = f.read()
-    text = chunk.decode("utf-8", errors="replace")
-    if len(text) > max_chars:
-        text = text[-max_chars:]
-    return _sanitize_log_text(text.strip())
+        tail_text = chunk.decode("utf-8", errors="replace")
+        if len(tail_text) <= max_chars:
+            return _sanitize_log_text(tail_text.strip())
+
+        # Keep both the beginning and end of long logs.
+        marker = "\n... [日志中间已省略] ...\n"
+        head_chars = max(600, int(max_chars * 0.3))
+        tail_chars = max(1200, max_chars - head_chars - len(marker))
+        head_read_bytes = min(size, max(head_chars * 4, 4096))
+        f.seek(0)
+        head_chunk = f.read(head_read_bytes)
+        head_text = head_chunk.decode("utf-8", errors="replace")
+
+    head_text = _sanitize_log_text(head_text.strip())[:head_chars]
+    tail_text = _sanitize_log_text(tail_text.strip())
+    tail_text = tail_text[-tail_chars:] if len(tail_text) > tail_chars else tail_text
+    return f"{head_text}{marker}{tail_text}"

@@ -66,12 +66,15 @@ def ensure_smoke_fixtures(force: bool = False) -> Path:
     from src.chapter4_characteristics._bootstrap import ensure_paths
 
     ensure_paths()
-    if _READY_MARKER.exists() and not force:
+    checkpoint_path = _FIXTURES_DIR / "identifier" / "best_checkpoint.pth"
+    if _READY_MARKER.exists() and checkpoint_path.exists() and not force:
         return _FIXTURES_DIR
 
     output_dir = Path(__file__).resolve().parent / "output"
     if output_dir.exists():
         shutil.rmtree(output_dir)
+    if _FIXTURES_DIR.exists():
+        shutil.rmtree(_FIXTURES_DIR)
 
     vic_dir = _FIXTURES_DIR / "vic"
     wind_dir = _FIXTURES_DIR / "wind"
@@ -138,7 +141,7 @@ def ensure_smoke_fixtures(force: bool = False) -> Path:
         encoding="utf-8",
     )
 
-    _write_checkpoint(_FIXTURES_DIR / "augment" / "round_01" / "best_checkpoint.pth")
+    _write_checkpoint(checkpoint_path)
 
     feature_yaml = Path(__file__).resolve().parent / "feature_analysis.yaml"
     feature_yaml.write_text(
