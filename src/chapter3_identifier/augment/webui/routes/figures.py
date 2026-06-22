@@ -14,6 +14,7 @@ class PreloadRequest(BaseModel):
     layout_profile: str = "wide_fill_v3"
     round_idx: int = 1
     priority: bool = False
+    replace_queue: bool = False
 
 
 def build_figures_router(deps: AppDeps) -> APIRouter:
@@ -34,6 +35,11 @@ def build_figures_router(deps: AppDeps) -> APIRouter:
     ):
         record = _get_record(sample_idx, round_idx)
         if wait_ms > 0:
+            ctx = deps.context_params(
+                "inplane",
+                round_idx=round_idx,
+                layout_profile=layout_profile,
+            )
             deps.figures.wait_bundle_ready(
                 sample_idx,
                 "inplane",
@@ -41,6 +47,7 @@ def build_figures_router(deps: AppDeps) -> APIRouter:
                 round_idx=round_idx,
                 layout_profile=layout_profile,
                 wait_ms=wait_ms,
+                ctx=ctx,
             )
         inplane_ready = deps.figures.bundle_ready(
             sample_idx,
@@ -60,7 +67,6 @@ def build_figures_router(deps: AppDeps) -> APIRouter:
             "sample_idx": sample_idx,
             "round_idx": round_idx,
             "layout_profile": layout_profile,
-            "wind_stats": deps.figures.get_wind_stats(record, round_idx=round_idx),
             "sample_ready": deps.figures.sample_ready(
                 sample_idx,
                 round_idx=round_idx,
@@ -131,29 +137,37 @@ def build_figures_router(deps: AppDeps) -> APIRouter:
         priority = set(req.sample_indices) if req.priority else None
         lookup = lambda sample_idx: deps.find_record(sample_idx, round_idx=req.round_idx)
         if req.both_directions:
-            in_ctx = deps.context_params(
-                "inplane",
+            primary_direction = req.direction if req.direction in ("inplane", "outplane") else "inplane"
+            secondary_direction = "inplane" if primary_direction == "outplane" else "outplane"
+            primary_ctx = deps.context_params(
+                primary_direction,
                 round_idx=req.round_idx,
                 layout_profile=req.layout_profile,
             )
-            out_ctx = deps.context_params(
-                "outplane",
+            secondary_ctx = deps.context_params(
+                secondary_direction,
                 round_idx=req.round_idx,
                 layout_profile=req.layout_profile,
             )
-            queued_in = deps.figures.schedule_by_indices(
+            queued_primary = deps.figures.schedule_by_indices(
                 lookup,
                 req.sample_indices,
-                in_ctx,
+                primary_ctx,
                 priority_samples=priority,
+                replace=bool(req.replace_queue),
             )
-            queued_out = deps.figures.schedule_by_indices(
+            queued_secondary = deps.figures.schedule_by_indices(
                 lookup,
                 req.sample_indices,
-                out_ctx,
+                secondary_ctx,
                 priority_samples=priority,
+                replace=False,
             )
-            return {"ok": True, "queued": queued_in + queued_out}
+            return {
+                "ok": True,
+                "queued": queued_primary + queued_secondary,
+                "primary_direction": primary_direction,
+            }
 
         direction = req.direction if req.direction in ("inplane", "outplane") else "inplane"
         ctx = deps.context_params(
@@ -166,6 +180,7 @@ def build_figures_router(deps: AppDeps) -> APIRouter:
             req.sample_indices,
             ctx,
             priority_samples=priority,
+            replace=bool(req.replace_queue),
         )
         return {"ok": True, "queued": queued}
 

@@ -10,8 +10,8 @@ SAMPLE_FIGURE_NAMES = (
     "out_spectrum",
     "trajectory",
     "prediction",
-    "wind_speed_rose",
-    "wind_turbulence_rose",
+    "wind_direction",
+    "wind_speed_timeseries",
 )
 
 

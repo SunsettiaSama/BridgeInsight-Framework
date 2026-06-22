@@ -14,6 +14,10 @@ from src.chapter3_identifier.augment.annotation.split import load_or_create_spli
 from src.chapter3_identifier.augment.annotation.gold_index import annotation_key
 from src.chapter3_identifier.augment.features.context_window import extract_context_window
 from src.chapter3_identifier.augment.features.spectrum import compute_psd_vector
+from src.chapter3_identifier.augment.features.wind_features import (
+    WIND_FEATURE_DIM,
+    build_short_wind_features,
+)
 from src.data_processer.preprocess.get_data_vib import VICWindowExtractor
 
 logger = logging.getLogger(__name__)
@@ -331,13 +335,29 @@ def build_round2_pair_entries(
         wi: int,
         in_pair: tuple[int, str],
         out_pair: tuple[int, str],
+        source: dict,
     ) -> None:
+        in_source = merged_by_key.get(in_key, {})
+        out_key = annotation_key(str(out_fp), wi)
+        out_source = merged_by_key.get(out_key, {})
+        in_meta = in_source.get("metadata") or {}
+        out_meta = out_source.get("metadata") or {}
+        timestamp = source.get("timestamp") or in_source.get("timestamp")
+        if timestamp is None and in_meta.get("month") is not None and in_meta.get("day") is not None and in_meta.get("hour") is not None:
+            timestamp = [
+                int(in_meta["month"]),
+                int(in_meta["day"]),
+                int(in_meta["hour"]),
+            ]
         source_counter[f"inplane_{in_pair[1]}"] += 1
         source_counter[f"outplane_{out_pair[1]}"] += 1
         paired[in_key] = {
             "inplane_file_path": str(in_fp),
             "outplane_file_path": str(out_fp),
             "window_index": wi,
+            "timestamp": timestamp,
+            "inplane_sensor_id": source.get("inplane_sensor_id") or in_source.get("sensor_id") or in_meta.get("sensor_id"),
+            "outplane_sensor_id": source.get("outplane_sensor_id") or out_source.get("sensor_id") or out_meta.get("sensor_id"),
             "inplane_annotation": int(in_pair[0]),
             "outplane_annotation": int(out_pair[0]),
             "inplane_label_source": in_pair[1],
@@ -359,7 +379,7 @@ def build_round2_pair_entries(
         in_pair, out_pair = fill_missing_from_prediction(hint, in_pair, out_pair)
         if in_pair is None or out_pair is None:
             continue
-        add_pair(in_key, in_fp, str(out_fp), wi, in_pair, out_pair)
+        add_pair(in_key, in_fp, str(out_fp), wi, in_pair, out_pair, hint)
 
     for in_key, in_entry in merged_by_key.items():
         in_fp = in_entry.get("file_path")
@@ -373,7 +393,7 @@ def build_round2_pair_entries(
         in_pair, out_pair = fill_missing_from_gold(in_pair, out_pair)
         if in_pair is None or out_pair is None:
             continue
-        add_pair(in_key, str(in_fp), str(out_fp), wi, in_pair, out_pair)
+        add_pair(in_key, str(in_fp), str(out_fp), wi, in_pair, out_pair, in_entry)
 
     result = list(paired.values())
     if not result and raise_on_empty:
@@ -410,6 +430,8 @@ class Round2PairDataset(Dataset):
         context_input_size: int = DEFAULT_CONTEXT_INPUT_SIZE,
         context_total_seconds: float = DEFAULT_CONTEXT_TOTAL_SECONDS,
         context_allow_cross_file: bool = DEFAULT_CONTEXT_ALLOW_CROSS_FILE,
+        enable_wind_features: bool = False,
+        wind_config: Optional[dict] = None,
         enable_preload_cache: bool = True,
         preload_num_workers: int = 4,
         show_preload_progress: bool = True,
@@ -425,6 +447,8 @@ class Round2PairDataset(Dataset):
         self.context_input_size = int(context_input_size)
         self.context_total_seconds = float(context_total_seconds)
         self.context_allow_cross_file = bool(context_allow_cross_file)
+        self.enable_wind_features = bool(enable_wind_features)
+        self.wind_config = dict(wind_config or {})
         self.extractor = VICWindowExtractor(enable_denoise=enable_denoise)
         self._cache_path: Optional[str] = None
         self._cache_data = None
@@ -467,6 +491,11 @@ class Round2PairDataset(Dataset):
         out_psd = compute_psd_vector(out_time, fs=self.fs, nfft=self.nfft, freq_max_hz=self.freq_max_hz)
         in_label = int(entry["inplane_annotation"])
         out_label = int(entry["outplane_annotation"])
+        wind_features = (
+            build_short_wind_features(entry, self.wind_config)
+            if self.enable_wind_features
+            else np.zeros(WIND_FEATURE_DIM, dtype=np.float32)
+        )
         if self.enable_long_context:
             in_context = load_context_array(
                 entry["inplane_file_path"],
@@ -488,7 +517,11 @@ class Round2PairDataset(Dataset):
                 allow_cross_file=self.context_allow_cross_file,
                 extractor=self.extractor,
             )
+            if self.enable_wind_features:
+                return in_time, in_psd, in_context, out_time, out_psd, out_context, wind_features, in_label, out_label
             return in_time, in_psd, in_context, out_time, out_psd, out_context, in_label, out_label
+        if self.enable_wind_features:
+            return in_time, in_psd, out_time, out_psd, wind_features, in_label, out_label
         return in_time, in_psd, out_time, out_psd, in_label, out_label
 
     def _preload_worker(
@@ -512,6 +545,8 @@ class Round2PairDataset(Dataset):
             context_input_size=self.context_input_size,
             context_total_seconds=self.context_total_seconds,
             context_allow_cross_file=self.context_allow_cross_file,
+            enable_wind_features=self.enable_wind_features,
+            wind_config=self.wind_config,
         )
         pair_payload, reason = payload
         return ds_idx, pair_payload, reason
@@ -570,6 +605,8 @@ class Round2PairDataset(Dataset):
                     context_input_size=self.context_input_size,
                     context_total_seconds=self.context_total_seconds,
                     context_allow_cross_file=self.context_allow_cross_file,
+                    enable_wind_features=self.enable_wind_features,
+                    wind_config=self.wind_config,
                 )
                 pair_payload, reason = payload
                 if pair_payload is None:
@@ -609,11 +646,21 @@ class Round2PairDataset(Dataset):
             payload = self._preload_pair(entry)
 
         if self.enable_long_context:
-            in_time, in_psd, in_context, out_time, out_psd, out_context, in_label, out_label = payload
+            if self.enable_wind_features:
+                in_time, in_psd, in_context, out_time, out_psd, out_context, wind_features, in_label, out_label = payload
+                wind_features_t = torch.from_numpy(wind_features).float()
+            else:
+                in_time, in_psd, in_context, out_time, out_psd, out_context, in_label, out_label = payload
+                wind_features_t = None
             in_context_t = torch.from_numpy(in_context).float().unsqueeze(-1)
             out_context_t = torch.from_numpy(out_context).float().unsqueeze(-1)
         else:
-            in_time, in_psd, out_time, out_psd, in_label, out_label = payload
+            if self.enable_wind_features:
+                in_time, in_psd, out_time, out_psd, wind_features, in_label, out_label = payload
+                wind_features_t = torch.from_numpy(wind_features).float()
+            else:
+                in_time, in_psd, out_time, out_psd, in_label, out_label = payload
+                wind_features_t = None
 
         in_time_t = torch.from_numpy(in_time).float().unsqueeze(-1)
         in_psd_t = torch.from_numpy(in_psd).float().unsqueeze(-1)
@@ -622,7 +669,11 @@ class Round2PairDataset(Dataset):
         in_label_t = torch.tensor(in_label, dtype=torch.long)
         out_label_t = torch.tensor(out_label, dtype=torch.long)
         if self.enable_long_context:
+            if self.enable_wind_features:
+                return in_time_t, in_psd_t, in_context_t, out_time_t, out_psd_t, out_context_t, wind_features_t, in_label_t, out_label_t
             return in_time_t, in_psd_t, in_context_t, out_time_t, out_psd_t, out_context_t, in_label_t, out_label_t
+        if self.enable_wind_features:
+            return in_time_t, in_psd_t, out_time_t, out_psd_t, wind_features_t, in_label_t, out_label_t
         return in_time_t, in_psd_t, out_time_t, out_psd_t, in_label_t, out_label_t
 
 
@@ -691,6 +742,8 @@ def _load_round2_pair_arrays(
     context_input_size: int = DEFAULT_CONTEXT_INPUT_SIZE,
     context_total_seconds: float = DEFAULT_CONTEXT_TOTAL_SECONDS,
     context_allow_cross_file: bool = DEFAULT_CONTEXT_ALLOW_CROSS_FILE,
+    enable_wind_features: bool = False,
+    wind_config: Optional[dict] = None,
 ) -> Tuple[Optional[tuple], str]:
     extractor = VICWindowExtractor(enable_denoise=enable_denoise)
 
@@ -720,7 +773,21 @@ def _load_round2_pair_arrays(
     out_time = np.asarray(out_sig, dtype=np.float32).reshape(-1)
     in_psd = compute_psd_vector(in_time, fs=fs, nfft=nfft, freq_max_hz=freq_max_hz)
     out_psd = compute_psd_vector(out_time, fs=fs, nfft=nfft, freq_max_hz=freq_max_hz)
+    wind_features = (
+        build_short_wind_features(
+            {
+                "inplane_file_path": inplane_file_path,
+                "outplane_file_path": outplane_file_path,
+                "window_index": int(window_index),
+            },
+            wind_config,
+        )
+        if enable_wind_features
+        else np.zeros(WIND_FEATURE_DIM, dtype=np.float32)
+    )
     if not enable_long_context:
+        if enable_wind_features:
+            return (in_time, in_psd, out_time, out_psd, wind_features, int(in_label), int(out_label)), "ok"
         return (in_time, in_psd, out_time, out_psd, int(in_label), int(out_label)), "ok"
 
     in_context = load_context_array(
@@ -743,6 +810,18 @@ def _load_round2_pair_arrays(
         allow_cross_file=context_allow_cross_file,
         extractor=extractor,
     )
+    if enable_wind_features:
+        return (
+            in_time,
+            in_psd,
+            in_context,
+            out_time,
+            out_psd,
+            out_context,
+            wind_features,
+            int(in_label),
+            int(out_label),
+        ), "ok"
     return (
         in_time,
         in_psd,
@@ -775,6 +854,8 @@ def _preload_round2_worker(
         context_input_size=int(entry.get("_context_input_size", DEFAULT_CONTEXT_INPUT_SIZE)),
         context_total_seconds=float(entry.get("_context_total_seconds", DEFAULT_CONTEXT_TOTAL_SECONDS)),
         context_allow_cross_file=bool(entry.get("_context_allow_cross_file", DEFAULT_CONTEXT_ALLOW_CROSS_FILE)),
+        enable_wind_features=bool(entry.get("_enable_wind_features", False)),
+        wind_config=entry.get("_wind_config") or None,
     )
     return ds_idx, payload, reason
 
@@ -795,6 +876,8 @@ def build_round2_dataloaders(
     context_input_size: int = DEFAULT_CONTEXT_INPUT_SIZE,
     context_total_seconds: float = DEFAULT_CONTEXT_TOTAL_SECONDS,
     context_allow_cross_file: bool = DEFAULT_CONTEXT_ALLOW_CROSS_FILE,
+    enable_wind_features: bool = False,
+    wind_config: Optional[dict] = None,
     enable_preload_cache: bool = True,
     preload_num_workers: int = 4,
     show_preload_progress: bool = True,
@@ -814,6 +897,8 @@ def build_round2_dataloaders(
         row["_context_input_size"] = int(context_input_size)
         row["_context_total_seconds"] = float(context_total_seconds)
         row["_context_allow_cross_file"] = bool(context_allow_cross_file)
+        row["_enable_wind_features"] = bool(enable_wind_features)
+        row["_wind_config"] = dict(wind_config or {})
         augmented.append(row)
 
     train_idx, val_idx = load_or_create_split(
@@ -846,6 +931,8 @@ def build_round2_dataloaders(
         "context_input_size": context_input_size,
         "context_total_seconds": context_total_seconds,
         "context_allow_cross_file": context_allow_cross_file,
+        "enable_wind_features": enable_wind_features,
+        "wind_config": wind_config,
         "enable_preload_cache": enable_preload_cache,
         "preload_num_workers": preload_num_workers,
         "show_preload_progress": show_preload_progress,

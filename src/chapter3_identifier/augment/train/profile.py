@@ -9,6 +9,7 @@ from src.chapter3_identifier.augment.datasets.dual_stream_dataset import (
     DEFAULT_CONTEXT_INPUT_SIZE,
     DEFAULT_CONTEXT_TOTAL_SECONDS,
 )
+from src.chapter3_identifier.augment.features.wind_features import WIND_FEATURE_DIM
 from src.chapter3_identifier.augment.settings import (
     get_round_train_profile_path,
     load_best_params,
@@ -20,6 +21,7 @@ MODEL_TYPES = (
     "dual_stream_single_head",
     "quad_stream_dual_head",
     "quad_stream_dual_head_context",
+    "quad_stream_serial_context_dual_head",
 )
 CONTEXT_MODES = ("short_only", "short_long")
 PREDICTION_FILL_MODES = ("auto", "always", "off")
@@ -30,7 +32,11 @@ def _default_model_type(round_idx: int) -> str:
         return "dual_stream_single_head"
     if int(round_idx) == 2:
         return "quad_stream_dual_head"
-    return "quad_stream_dual_head_context"
+    return "quad_stream_serial_context_dual_head"
+
+
+def _uses_long_context_model(model_type: str) -> bool:
+    return model_type in {"quad_stream_dual_head_context", "quad_stream_serial_context_dual_head"}
 
 
 def _best_params(cfg: dict) -> dict:
@@ -89,11 +95,13 @@ def default_training_profile(cfg: dict, round_idx: int) -> dict:
     return {
         "schema_version": SCHEMA_VERSION,
         "model_type": model_type,
-        "context_mode": "short_long" if model_type == "quad_stream_dual_head_context" else "short_only",
-        "enable_long_context": model_type == "quad_stream_dual_head_context",
+        "context_mode": "short_long" if _uses_long_context_model(model_type) else "short_only",
+        "enable_long_context": _uses_long_context_model(model_type),
         "context_input_size": int(cfg.get("context_input_size", DEFAULT_CONTEXT_INPUT_SIZE)),
         "context_total_seconds": float(cfg.get("context_total_seconds", DEFAULT_CONTEXT_TOTAL_SECONDS)),
         "context_allow_cross_file": bool(cfg.get("context_allow_cross_file", DEFAULT_CONTEXT_ALLOW_CROSS_FILE)),
+        "enable_wind_features": bool(cfg.get("enable_wind_features", True)),
+        "wind_feature_dim": int(cfg.get("wind_feature_dim", 5)),
         "train_val_ratio": float(cfg.get("train_val_ratio", 0.8)),
         "require_bidirectional_labels": False,
         "enable_gold_fill": False,
@@ -141,7 +149,7 @@ def normalize_training_profile(payload: dict, cfg: dict, round_idx: int) -> dict
     model_type = str(merged["model_type"])
     if model_type not in MODEL_TYPES:
         raise ValueError(f"未知 model_type：{model_type}")
-    context_mode = str(merged.get("context_mode", "short_long" if model_type == "quad_stream_dual_head_context" else "short_only"))
+    context_mode = str(merged.get("context_mode", "short_long" if _uses_long_context_model(model_type) else "short_only"))
     if context_mode not in CONTEXT_MODES:
         raise ValueError(f"未知 context_mode：{context_mode}")
     prediction_fill_mode = str(merged.get("prediction_fill_mode", "auto"))
@@ -158,6 +166,8 @@ def normalize_training_profile(payload: dict, cfg: dict, round_idx: int) -> dict
         "context_input_size": _positive_int(merged["context_input_size"], "context_input_size"),
         "context_total_seconds": _positive_float(merged["context_total_seconds"], "context_total_seconds"),
         "context_allow_cross_file": _as_bool(merged["context_allow_cross_file"]),
+        "enable_wind_features": _as_bool(merged["enable_wind_features"]),
+        "wind_feature_dim": int(merged["wind_feature_dim"]),
         "train_val_ratio": _ratio_float(merged["train_val_ratio"], "train_val_ratio"),
         "require_bidirectional_labels": _as_bool(merged["require_bidirectional_labels"]),
         "enable_gold_fill": _as_bool(merged["enable_gold_fill"]),
@@ -191,9 +201,13 @@ def normalize_training_profile(payload: dict, cfg: dict, round_idx: int) -> dict
     }
     if normalized["fusion_dropout"] >= 1.0:
         raise ValueError("fusion_dropout 必须小于 1")
+    if normalized["wind_feature_dim"] < 0:
+        raise ValueError("wind_feature_dim 不能小于 0")
+    if normalized["enable_wind_features"] and normalized["wind_feature_dim"] != WIND_FEATURE_DIM:
+        raise ValueError(f"当前短窗风特征维度固定为 {WIND_FEATURE_DIM}")
     if normalized["same_structure_lr_scale"] > 1.0:
         raise ValueError("same_structure_lr_scale 不能大于 1")
-    if model_type != "quad_stream_dual_head_context":
+    if not _uses_long_context_model(model_type):
         normalized["enable_long_context"] = False
         normalized["context_mode"] = "short_only"
     else:
@@ -204,6 +218,8 @@ def normalize_training_profile(payload: dict, cfg: dict, round_idx: int) -> dict
         normalized["require_bidirectional_labels"] = False
         normalized["enable_gold_fill"] = False
         normalized["prediction_fill_mode"] = "off"
+        normalized["enable_wind_features"] = False
+        normalized["wind_feature_dim"] = 0
     return normalized
 
 
@@ -212,6 +228,8 @@ def profile_summary(profile: dict) -> dict:
         "model_type": profile["model_type"],
         "context_mode": profile.get("context_mode", "short_only"),
         "enable_long_context": bool(profile["enable_long_context"]),
+        "enable_wind_features": bool(profile["enable_wind_features"]),
+        "wind_feature_dim": int(profile["wind_feature_dim"]),
         "train_val_ratio": float(profile["train_val_ratio"]),
         "require_bidirectional_labels": bool(profile["require_bidirectional_labels"]),
         "enable_gold_fill": bool(profile["enable_gold_fill"]),
@@ -279,6 +297,7 @@ def training_profile_options() -> dict:
             {"value": "dual_stream_single_head", "label": "DualStream 单头（time+spec）"},
             {"value": "quad_stream_dual_head", "label": "QuadStream 双头（time+spec）"},
             {"value": "quad_stream_dual_head_context", "label": "QuadStream 双头 + 长上下文"},
+            {"value": "quad_stream_serial_context_dual_head", "label": "QuadStream 串行融合 + 长上下文"},
         ],
         "context_modes": [
             {"value": "short_only", "label": "仅短窗口"},

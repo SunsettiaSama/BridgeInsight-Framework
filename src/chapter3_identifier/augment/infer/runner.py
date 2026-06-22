@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from src.chapter3_identifier.augment.datasets.dual_stream_dataset import load_context_array
 from src.chapter3_identifier.augment.features.spectrum import compute_psd_vector
+from src.chapter3_identifier.augment.features.wind_features import build_short_wind_features
 from src.chapter3_identifier.augment.infer.batch_ops import AsyncPsdPipeline, normalize_time_batch
 from src.chapter3_identifier.augment.infer.identifier import DualStreamIdentifier
 from src.chapter3_identifier.identifier.dl.progress import iter_progress
@@ -17,6 +18,15 @@ from src.identifier.dl.runner import FullDatasetRunner
 logger = logging.getLogger(__name__)
 
 _NORMAL_LABEL = 0
+_DUAL_HEAD_MODEL_TYPES = {
+    "quad_stream_dual_head",
+    "quad_stream_dual_head_context",
+    "quad_stream_serial_context_dual_head",
+}
+_LONG_CONTEXT_MODEL_TYPES = {
+    "quad_stream_dual_head_context",
+    "quad_stream_serial_context_dual_head",
+}
 
 
 def _collate_windows(batch):
@@ -81,6 +91,8 @@ class _PairedWindowDataset(Dataset):
         context_input_size: int = 3000,
         context_total_seconds: float = 1500.0,
         context_allow_cross_file: bool = True,
+        enable_wind_features: bool = False,
+        wind_config: Optional[dict] = None,
     ):
         self._records = records
         self._window_size = window_size
@@ -91,6 +103,8 @@ class _PairedWindowDataset(Dataset):
         self._context_input_size = int(context_input_size)
         self._context_total_seconds = float(context_total_seconds)
         self._context_allow_cross_file = bool(context_allow_cross_file)
+        self._enable_wind_features = bool(enable_wind_features)
+        self._wind_config = dict(wind_config or {})
         self._extractor = None
         self._cache_path = None
         self._cache_data = None
@@ -140,10 +154,30 @@ class _PairedWindowDataset(Dataset):
         out_fp = out_meta.get("file_path")
         in_time = self._load_signal(in_fp, rec.window_idx, in_meta)
         out_time = self._load_signal(out_fp, rec.window_idx, out_meta)
+        wind_features = None
+        if self._enable_wind_features:
+            m, d, h = rec.timestamp_key
+            wind_features = torch.from_numpy(
+                build_short_wind_features(
+                    {
+                        "timestamp": [m, d, h],
+                        "window_index": rec.window_idx,
+                        "inplane_sensor_id": in_meta.get("sensor_id"),
+                        "outplane_sensor_id": out_meta.get("sensor_id"),
+                        "inplane_file_path": in_fp,
+                        "outplane_file_path": out_fp,
+                    },
+                    self._wind_config,
+                )
+            ).float()
         if self._enable_long_context:
             in_context = self._load_context(in_fp, rec.window_idx)
             out_context = self._load_context(out_fp, rec.window_idx)
+            if self._enable_wind_features:
+                return in_time, in_context, out_time, out_context, wind_features, self._original_indices[idx]
             return in_time, in_context, out_time, out_context, self._original_indices[idx]
+        if self._enable_wind_features:
+            return in_time, out_time, wind_features, self._original_indices[idx]
         return in_time, out_time, self._original_indices[idx]
 
 
@@ -157,6 +191,7 @@ class DualStreamInferenceRunner:
         fs: float = 50.0,
         nfft: int = 2048,
         freq_max_hz: float = 25.0,
+        wind_config: Optional[dict] = None,
     ):
         self.identifier = identifier
         self.batch_size = batch_size
@@ -165,6 +200,7 @@ class DualStreamInferenceRunner:
         self.fs = fs
         self.nfft = nfft
         self.freq_max_hz = freq_max_hz
+        self.wind_config = dict(wind_config or {})
 
     def _run_direction_proba(self, dataset, direction: str) -> Dict[int, np.ndarray]:
         from src.identifier.dl.runner import _make_extractor
@@ -224,7 +260,7 @@ class DualStreamInferenceRunner:
         return probas
 
     def run_with_proba(self, dataset) -> Tuple[Dict[int, np.ndarray], Dict[int, np.ndarray]]:
-        if self.identifier.model_type in {"quad_stream_dual_head", "quad_stream_dual_head_context"}:
+        if self.identifier.model_type in _DUAL_HEAD_MODEL_TYPES:
             return self._run_joint_proba(dataset)
         inplane = self._run_direction_proba(dataset, "inplane")
         outplane = self._run_direction_proba(dataset, "outplane")
@@ -236,9 +272,10 @@ class DualStreamInferenceRunner:
         window_size = dataset.config.window_size
         enable_denoise = dataset.config.enable_denoise
         enable_long_context = (
-            self.identifier.model_type == "quad_stream_dual_head_context"
+            self.identifier.model_type in _LONG_CONTEXT_MODEL_TYPES
             and self.identifier.context_mode == "short_long"
         )
+        enable_wind_features = int(getattr(self.identifier, "wind_feature_dim", 0)) > 0
         extractor = _make_extractor(enable_denoise=enable_denoise)
         _, in_idxs = FullDatasetRunner._validate_records(dataset._samples, window_size, extractor=extractor)
         _, out_idxs = FullDatasetRunner._validate_outplane_records(
@@ -256,6 +293,8 @@ class DualStreamInferenceRunner:
             context_input_size=self.identifier.context_input_size,
             context_total_seconds=self.identifier.context_total_seconds,
             context_allow_cross_file=self.identifier.context_allow_cross_file,
+            enable_wind_features=enable_wind_features,
+            wind_config=self.wind_config,
         )
         loader = DataLoader(
             ds,
@@ -270,10 +309,17 @@ class DualStreamInferenceRunner:
         for batch in iter_progress(
             loader, total=len(loader), desc="配对双头联合推理"
         ):
+            wind_features_batch = None
             if enable_long_context:
-                in_time_batch, in_context_batch, out_time_batch, out_context_batch, idx_batch = batch
+                if enable_wind_features:
+                    in_time_batch, in_context_batch, out_time_batch, out_context_batch, wind_features_batch, idx_batch = batch
+                else:
+                    in_time_batch, in_context_batch, out_time_batch, out_context_batch, idx_batch = batch
             else:
-                in_time_batch, out_time_batch, idx_batch = batch
+                if enable_wind_features:
+                    in_time_batch, out_time_batch, wind_features_batch, idx_batch = batch
+                else:
+                    in_time_batch, out_time_batch, idx_batch = batch
             in_time_batch = normalize_time_batch(in_time_batch)
             out_time_batch = normalize_time_batch(out_time_batch)
 
@@ -311,6 +357,7 @@ class DualStreamInferenceRunner:
                     out_psd_batch,
                     in_context=in_context_batch,
                     out_context=out_context_batch,
+                    wind_features=wind_features_batch,
                 )
             else:
                 in_batch_proba, out_batch_proba = self.identifier.predict_dual_proba_batch(
@@ -318,6 +365,7 @@ class DualStreamInferenceRunner:
                     in_psd_batch,
                     out_time_batch,
                     out_psd_batch,
+                    wind_features=wind_features_batch,
                 )
             for idx, in_p, out_p in zip(idx_batch, in_batch_proba, out_batch_proba):
                 in_probas[int(idx)] = in_p
@@ -328,8 +376,16 @@ class DualStreamInferenceRunner:
     def merge_proba_predictions(
         inplane: Dict[int, np.ndarray],
         outplane: Dict[int, np.ndarray],
+        projection_mode: str = "direction",
+        projection_direction: str = "outplane",
     ) -> Dict[int, Tuple[int, np.ndarray]]:
         merged: Dict[int, Tuple[int, np.ndarray]] = {}
+        mode = str(projection_mode or "direction")
+        direction = str(projection_direction or "outplane")
+        if mode not in {"direction", "abnormal_priority"}:
+            raise ValueError(f"未知 prediction_projection_mode: {mode}")
+        if direction not in {"inplane", "outplane"}:
+            raise ValueError(f"未知 prediction_projection_direction: {direction}")
         all_idx = set(inplane.keys()) | set(outplane.keys())
         for idx in all_idx:
             in_p = inplane.get(idx)
@@ -343,6 +399,11 @@ class DualStreamInferenceRunner:
             if out_p is None:
                 pred = int(in_p.argmax())
                 merged[idx] = (pred, in_p)
+                continue
+            if mode == "direction":
+                proba = out_p if direction == "outplane" else in_p
+                pred = int(proba.argmax())
+                merged[idx] = (pred, proba)
                 continue
             in_pred = int(in_p.argmax())
             out_pred = int(out_p.argmax())

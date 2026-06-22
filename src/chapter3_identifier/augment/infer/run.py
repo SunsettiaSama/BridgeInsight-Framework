@@ -44,6 +44,7 @@ def _record_to_json(
     out_proba,
     gold_keys: Set[Tuple[str, int]],
     annotated_keys: Set[Tuple[str, int]],
+    projection_mode: str,
 ) -> dict:
     in_meta = rec.inplane_meta or {}
     out_meta = rec.outplane_meta or {}
@@ -75,7 +76,7 @@ def _record_to_json(
         "inplane_uncertainty": in_uncertainty,
         "outplane_uncertainty": out_uncertainty,
         "primary_prediction_source": primary_source,
-        "projection_mode": "dual_head_confidence_projection",
+        "projection_mode": projection_mode,
         "inplane_prediction": int(in_pred),
         "outplane_prediction": int(out_pred),
         "inplane_proba": in_proba_list,
@@ -99,6 +100,7 @@ def _build_chunk_rows(
     outplane_p: Dict[int, np.ndarray],
     gold_keys: Set[Tuple[str, int]],
     annotated_keys: Set[Tuple[str, int]],
+    projection_mode: str,
 ) -> List[dict]:
     rows: List[dict] = []
     for sample_idx in sample_indices:
@@ -120,6 +122,7 @@ def _build_chunk_rows(
                 out_proba,
                 gold_keys,
                 annotated_keys,
+                projection_mode,
             )
         )
     return rows
@@ -135,6 +138,7 @@ def _assemble_records_parallel(
     annotated_keys: Set[Tuple[str, int]],
     chunk_size: int,
     workers: int,
+    projection_mode: str,
 ) -> List[dict]:
     total = len(merged_indices)
     chunks = [
@@ -159,6 +163,7 @@ def _assemble_records_parallel(
                 outplane_p,
                 gold_keys,
                 annotated_keys,
+                projection_mode,
             ): chunk_idx
             for chunk_idx, chunk in enumerate(chunks)
         }
@@ -188,6 +193,7 @@ def _stream_write_inference_json(
         f.write(f'  "round_idx": {json.dumps(header["round_idx"])},\n')
         f.write(f'  "generated_at": {json.dumps(header["generated_at"], ensure_ascii=False)},\n')
         f.write(f'  "checkpoint": {json.dumps(header["checkpoint"], ensure_ascii=False)},\n')
+        f.write(f'  "projection_mode": {json.dumps(header["projection_mode"], ensure_ascii=False)},\n')
         f.write(f'  "record_count": {total},\n')
         f.write('  "records": [\n')
         for i, record in enumerate(records):
@@ -221,6 +227,7 @@ def run_inference(round_idx: int = 1, config_path: str | None = None) -> str:
         fs=float(cfg["fs"]),
         nfft=int(cfg["nfft"]),
         freq_max_hz=float(cfg["freq_max_hz"]),
+        wind_config=cfg,
     )
     runner = DualStreamInferenceRunner(
         identifier,
@@ -240,7 +247,20 @@ def run_inference(round_idx: int = 1, config_path: str | None = None) -> str:
 
     inplane_p, outplane_p = runner.run_with_proba(dataset)
     logger.info("面内/面外推理完成，正在合并结果并写入 inference.json …")
-    merged = runner.merge_proba_predictions(inplane_p, outplane_p)
+    projection_mode = str(cfg.get("prediction_projection_mode", "direction"))
+    projection_direction = str(cfg.get("prediction_projection_direction", "outplane"))
+    merged = runner.merge_proba_predictions(
+        inplane_p,
+        outplane_p,
+        projection_mode=projection_mode,
+        projection_direction=projection_direction,
+    )
+    projection_label = (
+        f"direction:{projection_direction}"
+        if projection_mode == "direction"
+        else projection_mode
+    )
+    logger.info("推理总 prediction 投影模式：%s", projection_label)
 
     merged_indices = sorted(merged.keys())
     logger.info(f"概率合并完成：{len(merged_indices)} 条有效预测")
@@ -265,6 +285,7 @@ def run_inference(round_idx: int = 1, config_path: str | None = None) -> str:
         annotated_keys=annotated_keys,
         chunk_size=chunk_size,
         workers=record_workers,
+        projection_mode=projection_label,
     )
 
     logger.info("记录排序 …")
@@ -288,6 +309,7 @@ def run_inference(round_idx: int = 1, config_path: str | None = None) -> str:
         "round_idx": round_idx,
         "generated_at": ts,
         "checkpoint": ckpt_path.name,
+        "projection_mode": projection_label,
     }
     _stream_write_inference_json(archive_path, header, records, chunk_size)
     shutil.copy2(archive_path, stable_path)
@@ -302,6 +324,7 @@ def run_inference(round_idx: int = 1, config_path: str | None = None) -> str:
         "model_snapshot": model_snapshot_path.name,
         "inference": stable_path.name,
         "inference_archive": archive_path.name,
+        "projection_mode": projection_label,
         "record_count": len(records),
     }
     with open(round_dir / "round_manifest.json", "w", encoding="utf-8") as f:

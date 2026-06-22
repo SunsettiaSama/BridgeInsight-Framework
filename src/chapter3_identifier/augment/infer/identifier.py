@@ -17,6 +17,7 @@ from src.chapter3_identifier.augment.models.dual_stream_res_cnn import DualStrea
 from src.chapter3_identifier.augment.models.quad_stream_dual_head_res_cnn import (
     QuadStreamDualHeadContextResCNN,
     QuadStreamDualHeadResCNN,
+    QuadStreamSerialContextDualHeadResCNN,
 )
 from src.chapter3_identifier.augment.labels import get_label_names
 from src.chapter3_identifier.augment.settings import (
@@ -48,7 +49,9 @@ class DualStreamIdentifier:
         self.label_names = label_names or get_label_names()
         self.num_classes = len(self.label_names)
         self.model_type = "dual_stream_single_head"
-        if isinstance(self.model, QuadStreamDualHeadContextResCNN):
+        if isinstance(self.model, QuadStreamSerialContextDualHeadResCNN):
+            self.model_type = "quad_stream_serial_context_dual_head"
+        elif isinstance(self.model, QuadStreamDualHeadContextResCNN):
             self.model_type = "quad_stream_dual_head_context"
         elif isinstance(self.model, QuadStreamDualHeadResCNN):
             self.model_type = "quad_stream_dual_head"
@@ -56,6 +59,7 @@ class DualStreamIdentifier:
         self.context_total_seconds = DEFAULT_CONTEXT_TOTAL_SECONDS
         self.context_allow_cross_file = DEFAULT_CONTEXT_ALLOW_CROSS_FILE
         self.context_mode = "short_only"
+        self.wind_feature_dim = int(getattr(self.model, "wind_feature_dim", 0))
 
     @classmethod
     def from_checkpoint(
@@ -75,6 +79,7 @@ class DualStreamIdentifier:
             from src.chapter3_identifier.augment.features.spectrum import psd_bin_count
             cfg_dict.setdefault("spec_branch", {})["input_size"] = psd_bin_count(fs, nfft, freq_max_hz)
         model_type = str(cfg_dict.get("model_type", "dual_stream_single_head"))
+        wind_feature_dim = int(cfg_dict.get("wind_feature_dim", 0))
         if model_type == "quad_stream_dual_head":
             time_cfg = BranchConfig(**cfg_dict["time_branch"])
             spec_cfg = BranchConfig(**cfg_dict["spec_branch"])
@@ -85,12 +90,18 @@ class DualStreamIdentifier:
                 fusion_hidden_dim=int(cfg_dict.get("fusion_hidden_dim", 128)),
                 fusion_dropout=float(cfg_dict.get("fusion_dropout", 0.1)),
                 cross_attn_heads=int(cfg_dict.get("cross_attn_heads", 4)),
+                wind_feature_dim=wind_feature_dim,
             )
-        elif model_type == "quad_stream_dual_head_context":
+        elif model_type in {"quad_stream_dual_head_context", "quad_stream_serial_context_dual_head"}:
             time_cfg = BranchConfig(**cfg_dict["time_branch"])
             spec_cfg = BranchConfig(**cfg_dict["spec_branch"])
             context_cfg = BranchConfig(**cfg_dict["context_branch"])
-            model = QuadStreamDualHeadContextResCNN(
+            model_cls = (
+                QuadStreamSerialContextDualHeadResCNN
+                if model_type == "quad_stream_serial_context_dual_head"
+                else QuadStreamDualHeadContextResCNN
+            )
+            model = model_cls(
                 time_branch_cfg=time_cfg,
                 spec_branch_cfg=spec_cfg,
                 context_branch_cfg=context_cfg,
@@ -98,6 +109,7 @@ class DualStreamIdentifier:
                 fusion_hidden_dim=int(cfg_dict.get("fusion_hidden_dim", 128)),
                 fusion_dropout=float(cfg_dict.get("fusion_dropout", 0.1)),
                 cross_attn_heads=int(cfg_dict.get("cross_attn_heads", 4)),
+                wind_feature_dim=wind_feature_dim,
             )
         else:
             model_cfg = DualStreamResCNNConfig.from_dict(cfg_dict)
@@ -116,7 +128,9 @@ class DualStreamIdentifier:
         identifier.context_allow_cross_file = bool(
             cfg_dict.get("context_allow_cross_file", DEFAULT_CONTEXT_ALLOW_CROSS_FILE)
         )
-        identifier.context_mode = str(cfg_dict.get("context_mode", "short_long" if model_type == "quad_stream_dual_head_context" else "short_only"))
+        uses_context = model_type in {"quad_stream_dual_head_context", "quad_stream_serial_context_dual_head"}
+        identifier.context_mode = str(cfg_dict.get("context_mode", "short_long" if uses_context else "short_only"))
+        identifier.wind_feature_dim = int(wind_feature_dim)
         return identifier
 
     def _prepare_batch(self, time_np: np.ndarray) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -162,14 +176,17 @@ class DualStreamIdentifier:
         out_psd: torch.Tensor,
         in_context: torch.Tensor | None = None,
         out_context: torch.Tensor | None = None,
+        wind_features: torch.Tensor | None = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        if self.model_type not in {"quad_stream_dual_head", "quad_stream_dual_head_context"}:
+        if self.model_type not in {"quad_stream_dual_head", "quad_stream_dual_head_context", "quad_stream_serial_context_dual_head"}:
             raise ValueError("当前 checkpoint 不是双头模型，不能做联合双向预测")
         in_time = in_time.to(self.device, non_blocking=True)
         in_psd = in_psd.to(self.device, non_blocking=True)
         out_time = out_time.to(self.device, non_blocking=True)
         out_psd = out_psd.to(self.device, non_blocking=True)
-        if self.model_type == "quad_stream_dual_head_context":
+        if wind_features is not None:
+            wind_features = wind_features.to(self.device, non_blocking=True)
+        if self.model_type in {"quad_stream_dual_head_context", "quad_stream_serial_context_dual_head"}:
             use_context = self.context_mode == "short_long"
             if use_context:
                 if in_context is None or out_context is None:
@@ -183,10 +200,17 @@ class DualStreamIdentifier:
                 out_time,
                 out_psd,
                 out_context,
+                wind_features=wind_features,
                 use_context=use_context,
             )
         else:
-            in_logits, out_logits = self.model(in_time, in_psd, out_time, out_psd)
+            in_logits, out_logits = self.model(
+                in_time,
+                in_psd,
+                out_time,
+                out_psd,
+                wind_features=wind_features,
+            )
         in_proba = F.softmax(in_logits, dim=1).cpu().numpy()
         out_proba = F.softmax(out_logits, dim=1).cpu().numpy()
         return in_proba, out_proba

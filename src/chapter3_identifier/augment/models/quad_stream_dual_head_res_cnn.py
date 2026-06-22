@@ -35,6 +35,37 @@ class _ResCnnFeatureEncoder(nn.Module):
         return self.feature_head(x)
 
 
+def _make_wind_encoder(wind_feature_dim: int, fusion_hidden_dim: int, fusion_dropout: float) -> nn.Module:
+    if int(wind_feature_dim) <= 0:
+        return nn.Identity()
+    return nn.Sequential(
+        nn.Linear(int(wind_feature_dim), int(fusion_hidden_dim)),
+        nn.ReLU(inplace=True),
+        nn.Dropout(p=float(fusion_dropout)) if float(fusion_dropout) > 0 else nn.Identity(),
+    )
+
+
+def _encode_wind_features(
+    wind_encoder: nn.Module,
+    wind_feature_dim: int,
+    wind_features: torch.Tensor | None,
+    like: torch.Tensor,
+) -> torch.Tensor | None:
+    if int(wind_feature_dim) <= 0:
+        return None
+    if wind_features is None:
+        wind_features = torch.zeros(
+            like.shape[0],
+            int(wind_feature_dim),
+            device=like.device,
+            dtype=like.dtype,
+        )
+    wind_features = wind_features.to(device=like.device, dtype=like.dtype)
+    if wind_features.ndim != 2 or wind_features.shape[1] != int(wind_feature_dim):
+        raise ValueError(f"wind_features 必须是 (B, {int(wind_feature_dim)})，当前：{wind_features.shape}")
+    return wind_encoder(wind_features)
+
+
 class QuadStreamDualHeadResCNN(nn.Module):
     def __init__(
         self,
@@ -44,11 +75,13 @@ class QuadStreamDualHeadResCNN(nn.Module):
         fusion_hidden_dim: int = 128,
         fusion_dropout: float = 0.1,
         cross_attn_heads: int = 4,
+        wind_feature_dim: int = 0,
     ):
         super().__init__()
         self.num_classes = int(num_classes)
         self.fusion_hidden_dim = int(fusion_hidden_dim)
         self.fusion_dropout = float(fusion_dropout)
+        self.wind_feature_dim = int(wind_feature_dim)
         self.cross_attn_heads = int(max(1, cross_attn_heads))
         if self.fusion_hidden_dim % self.cross_attn_heads != 0:
             self.cross_attn_heads = 1
@@ -88,9 +121,17 @@ class QuadStreamDualHeadResCNN(nn.Module):
         self.cross_out_dropout = (
             nn.Dropout(p=self.fusion_dropout) if self.fusion_dropout > 0 else nn.Identity()
         )
+        self.wind_encoder = _make_wind_encoder(
+            self.wind_feature_dim,
+            self.fusion_hidden_dim,
+            self.fusion_dropout,
+        )
 
-        self.inplane_head = nn.Linear(self.fusion_hidden_dim * 2, self.num_classes)
-        self.outplane_head = nn.Linear(self.fusion_hidden_dim * 2, self.num_classes)
+        head_dim = self.fusion_hidden_dim * 2
+        if self.wind_feature_dim > 0:
+            head_dim += self.fusion_hidden_dim
+        self.inplane_head = nn.Linear(head_dim, self.num_classes)
+        self.outplane_head = nn.Linear(head_dim, self.num_classes)
 
     def forward(
         self,
@@ -98,6 +139,7 @@ class QuadStreamDualHeadResCNN(nn.Module):
         in_spec_x: torch.Tensor,
         out_time_x: torch.Tensor,
         out_spec_x: torch.Tensor,
+        wind_features: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         in_time_feat = self.in_time_encoder(in_time_x)
         in_spec_feat = self.in_spec_encoder(in_spec_x)
@@ -119,6 +161,10 @@ class QuadStreamDualHeadResCNN(nn.Module):
         out_cross = tokens[:, 1, :]
         in_feat = torch.cat([in_local, in_cross], dim=1)
         out_feat = torch.cat([out_local, out_cross], dim=1)
+        wind_feat = _encode_wind_features(self.wind_encoder, self.wind_feature_dim, wind_features, in_local)
+        if wind_feat is not None:
+            in_feat = torch.cat([in_feat, wind_feat], dim=1)
+            out_feat = torch.cat([out_feat, wind_feat], dim=1)
         return self.inplane_head(in_feat), self.outplane_head(out_feat)
 
 
@@ -132,11 +178,13 @@ class QuadStreamDualHeadContextResCNN(nn.Module):
         fusion_hidden_dim: int = 128,
         fusion_dropout: float = 0.1,
         cross_attn_heads: int = 4,
+        wind_feature_dim: int = 0,
     ):
         super().__init__()
         self.num_classes = int(num_classes)
         self.fusion_hidden_dim = int(fusion_hidden_dim)
         self.fusion_dropout = float(fusion_dropout)
+        self.wind_feature_dim = int(wind_feature_dim)
         self.cross_attn_heads = int(max(1, cross_attn_heads))
         if self.fusion_hidden_dim % self.cross_attn_heads != 0:
             self.cross_attn_heads = 1
@@ -186,9 +234,17 @@ class QuadStreamDualHeadContextResCNN(nn.Module):
         self.cross_out_dropout = (
             nn.Dropout(p=self.fusion_dropout) if self.fusion_dropout > 0 else nn.Identity()
         )
+        self.wind_encoder = _make_wind_encoder(
+            self.wind_feature_dim,
+            self.fusion_hidden_dim,
+            self.fusion_dropout,
+        )
 
-        self.inplane_head = nn.Linear(self.fusion_hidden_dim * 2, self.num_classes)
-        self.outplane_head = nn.Linear(self.fusion_hidden_dim * 2, self.num_classes)
+        head_dim = self.fusion_hidden_dim * 2
+        if self.wind_feature_dim > 0:
+            head_dim += self.fusion_hidden_dim
+        self.inplane_head = nn.Linear(head_dim, self.num_classes)
+        self.outplane_head = nn.Linear(head_dim, self.num_classes)
 
     def forward(
         self,
@@ -198,6 +254,7 @@ class QuadStreamDualHeadContextResCNN(nn.Module):
         out_time_x: torch.Tensor,
         out_spec_x: torch.Tensor,
         out_context_x: torch.Tensor | None,
+        wind_features: torch.Tensor | None = None,
         use_context: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         in_time_feat = self.in_time_encoder(in_time_x)
@@ -234,4 +291,154 @@ class QuadStreamDualHeadContextResCNN(nn.Module):
         out_cross = tokens[:, 1, :]
         in_feat = torch.cat([in_local, in_cross], dim=1)
         out_feat = torch.cat([out_local, out_cross], dim=1)
+        wind_feat = _encode_wind_features(self.wind_encoder, self.wind_feature_dim, wind_features, in_local)
+        if wind_feat is not None:
+            in_feat = torch.cat([in_feat, wind_feat], dim=1)
+            out_feat = torch.cat([out_feat, wind_feat], dim=1)
+        return self.inplane_head(in_feat), self.outplane_head(out_feat)
+
+
+class QuadStreamSerialContextDualHeadResCNN(nn.Module):
+    def __init__(
+        self,
+        time_branch_cfg: BranchConfig,
+        spec_branch_cfg: BranchConfig,
+        context_branch_cfg: BranchConfig,
+        num_classes: int = 4,
+        fusion_hidden_dim: int = 128,
+        fusion_dropout: float = 0.1,
+        cross_attn_heads: int = 4,
+        wind_feature_dim: int = 0,
+    ):
+        super().__init__()
+        self.num_classes = int(num_classes)
+        self.fusion_hidden_dim = int(fusion_hidden_dim)
+        self.fusion_dropout = float(fusion_dropout)
+        self.wind_feature_dim = int(wind_feature_dim)
+        self.cross_attn_heads = int(max(1, cross_attn_heads))
+        if self.fusion_hidden_dim % self.cross_attn_heads != 0:
+            self.cross_attn_heads = 1
+
+        self.in_time_encoder = _ResCnnFeatureEncoder(time_branch_cfg)
+        self.in_spec_encoder = _ResCnnFeatureEncoder(spec_branch_cfg)
+        self.out_time_encoder = _ResCnnFeatureEncoder(time_branch_cfg)
+        self.out_spec_encoder = _ResCnnFeatureEncoder(spec_branch_cfg)
+        self.in_context_encoder = _ResCnnFeatureEncoder(context_branch_cfg)
+        self.out_context_encoder = _ResCnnFeatureEncoder(context_branch_cfg)
+
+        in_short_dim = self.in_time_encoder.feature_dim + self.in_spec_encoder.feature_dim
+        out_short_dim = self.out_time_encoder.feature_dim + self.out_spec_encoder.feature_dim
+        self.inplane_fusion = nn.Sequential(
+            nn.Linear(in_short_dim, self.fusion_hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=self.fusion_dropout) if self.fusion_dropout > 0 else nn.Identity(),
+        )
+        self.outplane_fusion = nn.Sequential(
+            nn.Linear(out_short_dim, self.fusion_hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=self.fusion_dropout) if self.fusion_dropout > 0 else nn.Identity(),
+        )
+
+        self.cross_attn = nn.MultiheadAttention(
+            embed_dim=self.fusion_hidden_dim,
+            num_heads=self.cross_attn_heads,
+            dropout=self.fusion_dropout if self.fusion_dropout > 0 else 0.0,
+            batch_first=True,
+        )
+        self.cross_attn_norm = nn.LayerNorm(self.fusion_hidden_dim)
+        self.cross_ffn = nn.Sequential(
+            nn.Linear(self.fusion_hidden_dim, self.fusion_hidden_dim * 2),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=self.fusion_dropout) if self.fusion_dropout > 0 else nn.Identity(),
+            nn.Linear(self.fusion_hidden_dim * 2, self.fusion_hidden_dim),
+        )
+        self.cross_ffn_norm = nn.LayerNorm(self.fusion_hidden_dim)
+
+        self.in_context_fusion = nn.Sequential(
+            nn.Linear(self.in_context_encoder.feature_dim, self.fusion_hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=self.fusion_dropout) if self.fusion_dropout > 0 else nn.Identity(),
+        )
+        self.out_context_fusion = nn.Sequential(
+            nn.Linear(self.out_context_encoder.feature_dim, self.fusion_hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=self.fusion_dropout) if self.fusion_dropout > 0 else nn.Identity(),
+        )
+        self.context_attn = nn.MultiheadAttention(
+            embed_dim=self.fusion_hidden_dim,
+            num_heads=self.cross_attn_heads,
+            dropout=self.fusion_dropout if self.fusion_dropout > 0 else 0.0,
+            batch_first=True,
+        )
+        self.context_attn_norm = nn.LayerNorm(self.fusion_hidden_dim)
+        self.context_ffn = nn.Sequential(
+            nn.Linear(self.fusion_hidden_dim, self.fusion_hidden_dim * 2),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=self.fusion_dropout) if self.fusion_dropout > 0 else nn.Identity(),
+            nn.Linear(self.fusion_hidden_dim * 2, self.fusion_hidden_dim),
+        )
+        self.context_ffn_norm = nn.LayerNorm(self.fusion_hidden_dim)
+        self.out_dropout = (
+            nn.Dropout(p=self.fusion_dropout) if self.fusion_dropout > 0 else nn.Identity()
+        )
+        self.wind_encoder = _make_wind_encoder(
+            self.wind_feature_dim,
+            self.fusion_hidden_dim,
+            self.fusion_dropout,
+        )
+
+        head_dim = self.fusion_hidden_dim * 3
+        if self.wind_feature_dim > 0:
+            head_dim += self.fusion_hidden_dim
+        self.inplane_head = nn.Linear(head_dim, self.num_classes)
+        self.outplane_head = nn.Linear(head_dim, self.num_classes)
+
+    def forward(
+        self,
+        in_time_x: torch.Tensor,
+        in_spec_x: torch.Tensor,
+        in_context_x: torch.Tensor | None,
+        out_time_x: torch.Tensor,
+        out_spec_x: torch.Tensor,
+        out_context_x: torch.Tensor | None,
+        wind_features: torch.Tensor | None = None,
+        use_context: bool = True,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        in_time_feat = self.in_time_encoder(in_time_x)
+        in_spec_feat = self.in_spec_encoder(in_spec_x)
+        out_time_feat = self.out_time_encoder(out_time_x)
+        out_spec_feat = self.out_spec_encoder(out_spec_x)
+
+        in_local = self.inplane_fusion(torch.cat([in_time_feat, in_spec_feat], dim=1))
+        out_local = self.outplane_fusion(torch.cat([out_time_feat, out_spec_feat], dim=1))
+
+        direction_tokens = torch.stack([in_local, out_local], dim=1)
+        cross_out, _ = self.cross_attn(direction_tokens, direction_tokens, direction_tokens, need_weights=False)
+        direction_tokens = self.cross_attn_norm(direction_tokens + self.out_dropout(cross_out))
+        cross_ffn_out = self.cross_ffn(direction_tokens)
+        direction_tokens = self.cross_ffn_norm(direction_tokens + self.out_dropout(cross_ffn_out))
+        in_cross = direction_tokens[:, 0, :]
+        out_cross = direction_tokens[:, 1, :]
+
+        if use_context and in_context_x is not None and out_context_x is not None:
+            in_ctx = self.in_context_fusion(self.in_context_encoder(in_context_x))
+            out_ctx = self.out_context_fusion(self.out_context_encoder(out_context_x))
+        else:
+            in_ctx = torch.zeros_like(in_local)
+            out_ctx = torch.zeros_like(out_local)
+
+        context_tokens = torch.stack([in_ctx, out_ctx], dim=1)
+        ctx_out, _ = self.context_attn(context_tokens, context_tokens, context_tokens, need_weights=False)
+        context_tokens = self.context_attn_norm(context_tokens + self.out_dropout(ctx_out))
+        ctx_ffn_out = self.context_ffn(context_tokens)
+        context_tokens = self.context_ffn_norm(context_tokens + self.out_dropout(ctx_ffn_out))
+        in_context = context_tokens[:, 0, :]
+        out_context = context_tokens[:, 1, :]
+
+        in_feat = torch.cat([in_local, in_cross, in_context], dim=1)
+        out_feat = torch.cat([out_local, out_cross, out_context], dim=1)
+        wind_feat = _encode_wind_features(self.wind_encoder, self.wind_feature_dim, wind_features, in_local)
+        if wind_feat is not None:
+            in_feat = torch.cat([in_feat, wind_feat], dim=1)
+            out_feat = torch.cat([out_feat, wind_feat], dim=1)
         return self.inplane_head(in_feat), self.outplane_head(out_feat)

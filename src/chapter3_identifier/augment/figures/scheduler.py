@@ -31,6 +31,8 @@ class FigureScheduler:
         self._seq = 0
         self._generation = 0
         self._queued: Dict[Tuple[int, int, str, str], int] = {}
+        self._index_by_key: Dict[Tuple[int, int, str, str], int] = {}
+        self._ordered_keys: List[Tuple[int, int, str, str]] = []
         self._completed = 0
         self._started = False
 
@@ -54,6 +56,17 @@ class FigureScheduler:
                 "queued_samples": len(self._queued),
                 "completed": self._completed,
                 "generation": self._generation,
+                "ordered_queue": [
+                    {
+                        "round_idx": key[0],
+                        "sample_idx": key[1],
+                        "direction": key[2],
+                        "layout_profile": key[3],
+                        "order": self._index_by_key.get(key),
+                    }
+                    for key in self._ordered_keys[:20]
+                    if key in self._queued
+                ],
             }
 
     def reset_generation(self) -> int:
@@ -61,6 +74,8 @@ class FigureScheduler:
             self._generation += 1
             self._heap.clear()
             self._queued.clear()
+            self._index_by_key.clear()
+            self._ordered_keys.clear()
             self._cv.notify_all()
             return self._generation
 
@@ -73,8 +88,7 @@ class FigureScheduler:
         priority_samples: Optional[Set[int]] = None,
     ) -> int:
         priority_samples = priority_samples or set()
-        generation = self._generation + (1 if replace else 0)
-        pending_jobs: List[_PreloadJob] = []
+        candidates: List[tuple[int, int, dict, Tuple[int, int, str, str]]] = []
         for rank, record in enumerate(records):
             sample_idx = int(record["sample_idx"])
             if self._engine.bundle_ready(
@@ -86,39 +100,37 @@ class FigureScheduler:
             ):
                 continue
             queue_key = (int(ctx.round_idx), sample_idx, ctx.direction, ctx.layout_profile)
-            uncertainty = float(record.get("uncertainty", 0.0))
-            self._seq += 1
-            sort_key = (
-                (-1e18, rank, self._seq)
-                if sample_idx in priority_samples
-                else (-uncertainty, rank, self._seq)
-            )
-            pending_jobs.append(
-                _PreloadJob(
-                    sort_key=sort_key,
+            candidates.append((rank, sample_idx, record, queue_key))
+
+        with self._cv:
+            if replace:
+                generation = self._generation + 1
+                self._generation = generation
+                self._heap.clear()
+                self._queued.clear()
+                generation = self._generation
+                self._index_by_key.clear()
+                self._ordered_keys.clear()
+            else:
+                generation = self._generation
+            queued = 0
+            for rank, sample_idx, record, queue_key in candidates:
+                self._seq += 1
+                priority_rank = 0 if sample_idx in priority_samples else 1
+                job = _PreloadJob(
+                    sort_key=(priority_rank, rank, self._seq),
                     sample_idx=sample_idx,
                     record=record,
                     ctx=ctx,
                     generation=generation,
                     queue_key=queue_key,
                 )
-            )
-
-        with self._cv:
-            if replace:
-                self._generation = generation
-                self._heap.clear()
-                self._queued.clear()
-            elif pending_jobs:
-                generation = self._generation
-                for job in pending_jobs:
-                    job.generation = generation
-            queued = 0
-            for job in pending_jobs:
                 if self._queued.get(job.queue_key) == job.generation:
                     continue
                 heapq.heappush(self._heap, job)
                 self._queued[job.queue_key] = job.generation
+                self._index_by_key[job.queue_key] = int(rank)
+                self._ordered_keys.append(job.queue_key)
                 queued += 1
             if queued:
                 self._cv.notify_all()
@@ -131,6 +143,7 @@ class FigureScheduler:
         ctx: ContextParams,
         *,
         priority_samples: Optional[Set[int]] = None,
+        replace: bool = False,
     ) -> int:
         records: List[dict] = []
         for sample_idx in sample_indices:
@@ -141,6 +154,7 @@ class FigureScheduler:
             records,
             ctx,
             priority_samples=priority_samples,
+            replace=replace,
         )
 
     def _worker(self) -> None:
@@ -156,6 +170,7 @@ class FigureScheduler:
                 with self._cv:
                     if self._queued.get(job.queue_key) == job.generation:
                         self._queued.pop(job.queue_key, None)
+                        self._index_by_key.pop(job.queue_key, None)
                 continue
 
             self._engine.preload_bundle(job.record, job.ctx)
@@ -163,4 +178,5 @@ class FigureScheduler:
             with self._cv:
                 if self._queued.get(job.queue_key) == job.generation:
                     self._queued.pop(job.queue_key, None)
+                    self._index_by_key.pop(job.queue_key, None)
                 self._completed += 1

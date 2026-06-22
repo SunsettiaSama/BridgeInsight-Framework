@@ -55,12 +55,14 @@ class FigureService:
         ctx: ContextParams,
         *,
         priority_samples: Optional[Set[int]] = None,
+        replace: bool = False,
     ) -> int:
         return self._scheduler.schedule_by_indices(
             lookup,
             sample_indices,
             ctx,
             priority_samples=priority_samples,
+            replace=replace,
         )
 
     def get_sample_png(
@@ -103,8 +105,24 @@ class FigureService:
         )
         if png is not None:
             return png
+        if self._engine.is_wind_figure(figure_name):
+            sample_idx = int(record["sample_idx"])
+            raise FigureNotReadyError(
+                f"wind figure rendering: {figure_name} sample={sample_idx} layout={layout_profile}"
+            )
         if wait_ms > 0:
             sample_idx = int(record["sample_idx"])
+            ctx = ContextParams(
+                direction="inplane",
+                round_idx=round_idx,
+                layout_profile=layout_profile,
+            )
+            self._scheduler.schedule_records(
+                [record],
+                ctx,
+                priority_samples={sample_idx},
+                replace=False,
+            )
             key = self._engine.sample_cache_key(
                 round_idx,
                 sample_idx,
@@ -143,6 +161,12 @@ class FigureService:
             return png
         if wait_ms > 0:
             sample_idx = int(record["sample_idx"])
+            self._scheduler.schedule_records(
+                [record],
+                ctx,
+                priority_samples={sample_idx},
+                replace=False,
+            )
             key = self._engine.context_cache_key(
                 int(ctx.round_idx),
                 sample_idx,
@@ -208,6 +232,7 @@ class FigureService:
         round_idx: int = 1,
         layout_profile: str = "wide_fill_v3",
         wait_ms: int = 0,
+        ctx: ContextParams | None = None,
     ) -> bool:
         if self.bundle_ready(
             sample_idx,
@@ -219,6 +244,16 @@ class FigureService:
             return True
         if wait_ms <= 0:
             return False
+        if record is not None:
+            if ctx is not None:
+                self._scheduler.schedule_records(
+                    [record],
+                    ctx,
+                    priority_samples={sample_idx},
+                    replace=False,
+                )
+            else:
+                self._engine.preload_sample(record, layout_profile=layout_profile, round_idx=round_idx)
         keys = self._engine.sample_bundle_keys(round_idx, sample_idx, layout_profile) + [
             self._engine.context_cache_key(round_idx, sample_idx, direction, "timeseries", layout_profile),
             self._engine.context_cache_key(round_idx, sample_idx, direction, "spectrogram", layout_profile),
@@ -235,6 +270,7 @@ class FigureService:
 
     def on_user_jump_reset(self) -> int:
         self._engine.cancel_pending()
+        self._engine.clear_wind_stats()
         self._cache.clear()
         self._scheduler.reset_generation()
         return self._dispatch.mark_jump_reset()

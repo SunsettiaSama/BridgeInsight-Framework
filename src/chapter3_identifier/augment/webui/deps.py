@@ -113,6 +113,16 @@ class AppDeps:
         window_rows = items[start:end]
         if not window_rows:
             window_rows = items[:preload_total]
+        if window_rows:
+            local_center = max(0, min(len(window_rows) - 1, center_pos - start))
+            ordered_rows = [window_rows[local_center]]
+            next_end = min(len(window_rows), local_center + 6)
+            ordered_rows.extend(window_rows[local_center + 1:next_end])
+            if local_center - 1 >= 0:
+                ordered_rows.append(window_rows[local_center - 1])
+            seen = {id(row) for row in ordered_rows}
+            ordered_rows.extend(row for row in window_rows if id(row) not in seen)
+            window_rows = ordered_rows
 
         preload_records = []
         for row in window_rows[:preload_total]:
@@ -121,13 +131,7 @@ class AppDeps:
                 preload_records.append(record)
         if not preload_records:
             return
-        local_center = 0
-        if center_sample_idx is not None:
-            local_center = max(0, min(len(window_rows) - 1, center_pos - start))
-        pri_back = max(1, preload_back)
-        pri_start = max(0, local_center - pri_back)
-        pri_end = min(len(window_rows), local_center + pri_back + 1)
-        priority_rows = window_rows[pri_start:pri_end]
+        priority_rows = window_rows[: min(len(window_rows), 7)]
         if center_sample_idx is not None:
             center_row = next(
                 (row for row in window_rows if int(row.get("sample_idx", -1)) == int(center_sample_idx)),
@@ -144,7 +148,7 @@ class AppDeps:
         self.figures.schedule_preload(
             preload_records,
             inplane_ctx,
-            replace=False,
+            replace=bool(jump_reset),
             priority_samples=priority_samples,
         )
         self.figures.schedule_preload(

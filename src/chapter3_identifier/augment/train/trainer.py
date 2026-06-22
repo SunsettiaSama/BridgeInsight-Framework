@@ -15,10 +15,13 @@ from src.chapter3_identifier.augment.models.dual_stream_res_cnn import DualStrea
 from src.chapter3_identifier.augment.models.quad_stream_dual_head_res_cnn import (
     QuadStreamDualHeadContextResCNN,
     QuadStreamDualHeadResCNN,
+    QuadStreamSerialContextDualHeadResCNN,
 )
 from src.chapter3_identifier.augment.train.visualize import TrainingVisualizer, compute_class_metrics
 
 logger = logging.getLogger(__name__)
+
+_LONG_CONTEXT_MODEL_CLASSES = (QuadStreamDualHeadContextResCNN, QuadStreamSerialContextDualHeadResCNN)
 
 
 class FocalLoss(nn.Module):
@@ -291,8 +294,9 @@ class QuadStreamDualHeadTrainer:
         self.dataset_info = dict(dataset_info or {})
         self.dataset_info.setdefault("train_size", int(len(self.train_loader.dataset)))
         self.dataset_info.setdefault("val_size", int(len(self.val_loader.dataset)))
-        self.uses_long_context = isinstance(self.model, QuadStreamDualHeadContextResCNN)
+        self.uses_long_context = isinstance(self.model, _LONG_CONTEXT_MODEL_CLASSES)
         self.use_context_input = self.uses_long_context and self.dataset_info.get("context_mode") != "short_only"
+        self.use_wind_features = int(getattr(self.model, "wind_feature_dim", 0)) > 0
 
     def _run_epoch(self, loader: DataLoader, train: bool):
         if train:
@@ -315,25 +319,44 @@ class QuadStreamDualHeadTrainer:
             for batch in loader:
                 in_context_x = None
                 out_context_x = None
+                wind_features = None
                 if self.use_context_input:
-                    (
-                        in_time_x,
-                        in_psd_x,
-                        in_context_x,
-                        out_time_x,
-                        out_psd_x,
-                        out_context_x,
-                        in_labels,
-                        out_labels,
-                    ) = batch
+                    if self.use_wind_features:
+                        (
+                            in_time_x,
+                            in_psd_x,
+                            in_context_x,
+                            out_time_x,
+                            out_psd_x,
+                            out_context_x,
+                            wind_features,
+                            in_labels,
+                            out_labels,
+                        ) = batch
+                    else:
+                        (
+                            in_time_x,
+                            in_psd_x,
+                            in_context_x,
+                            out_time_x,
+                            out_psd_x,
+                            out_context_x,
+                            in_labels,
+                            out_labels,
+                        ) = batch
                     in_context_x = in_context_x.to(self.device)
                     out_context_x = out_context_x.to(self.device)
                 else:
-                    in_time_x, in_psd_x, out_time_x, out_psd_x, in_labels, out_labels = batch
+                    if self.use_wind_features:
+                        in_time_x, in_psd_x, out_time_x, out_psd_x, wind_features, in_labels, out_labels = batch
+                    else:
+                        in_time_x, in_psd_x, out_time_x, out_psd_x, in_labels, out_labels = batch
                 in_time_x = in_time_x.to(self.device)
                 in_psd_x = in_psd_x.to(self.device)
                 out_time_x = out_time_x.to(self.device)
                 out_psd_x = out_psd_x.to(self.device)
+                if wind_features is not None:
+                    wind_features = wind_features.to(self.device)
                 in_labels = in_labels.to(self.device)
                 out_labels = out_labels.to(self.device)
 
@@ -347,10 +370,17 @@ class QuadStreamDualHeadTrainer:
                         out_time_x,
                         out_psd_x,
                         out_context_x,
+                        wind_features=wind_features,
                         use_context=self.use_context_input,
                     )
                 else:
-                    in_logits, out_logits = self.model(in_time_x, in_psd_x, out_time_x, out_psd_x)
+                    in_logits, out_logits = self.model(
+                        in_time_x,
+                        in_psd_x,
+                        out_time_x,
+                        out_psd_x,
+                        wind_features=wind_features,
+                    )
                 in_loss = self.criterion(in_logits, in_labels)
                 out_loss = self.criterion(out_logits, out_labels)
                 reg_loss = torch.tensor(0.0, device=self.device)
@@ -375,6 +405,7 @@ class QuadStreamDualHeadTrainer:
                                 out_time_x,
                                 out_psd_x,
                                 out_context_x,
+                                wind_features=wind_features,
                                 use_context=self.use_context_input,
                             )
                         else:
@@ -383,6 +414,7 @@ class QuadStreamDualHeadTrainer:
                                 in_psd_x,
                                 out_time_x,
                                 out_psd_x,
+                                wind_features=wind_features,
                             )
                     same_reg_in = teacher_kl_loss(
                         in_logits, same_in_logits, self.same_structure_reg_temperature
@@ -510,16 +542,22 @@ class QuadStreamDualHeadTrainer:
             if score > self.best_metric:
                 self.best_metric = score
                 self.best_epoch = epoch
+                if isinstance(self.model, QuadStreamSerialContextDualHeadResCNN):
+                    model_type = "quad_stream_serial_context_dual_head"
+                elif isinstance(self.model, QuadStreamDualHeadContextResCNN):
+                    model_type = "quad_stream_dual_head_context"
+                else:
+                    model_type = "quad_stream_dual_head"
                 config = {
-                    "model_type": "quad_stream_dual_head_context"
-                    if self.uses_long_context
-                    else "quad_stream_dual_head",
+                    "model_type": model_type,
                     "time_branch": vars(self.model.in_time_encoder.backbone.cfg),
                     "spec_branch": vars(self.model.in_spec_encoder.backbone.cfg),
                     "num_classes": self.model.num_classes,
                     "fusion_hidden_dim": self.model.fusion_hidden_dim,
                     "fusion_dropout": self.model.fusion_dropout,
                     "cross_attn_heads": self.model.cross_attn_heads,
+                    "wind_feature_dim": int(getattr(self.model, "wind_feature_dim", 0)),
+                    "enable_wind_features": bool(int(getattr(self.model, "wind_feature_dim", 0)) > 0),
                     "inplane_loss_weight": self.inplane_loss_weight,
                     "outplane_loss_weight": self.outplane_loss_weight,
                     "legacy_reg_lambda": self.legacy_reg_lambda,

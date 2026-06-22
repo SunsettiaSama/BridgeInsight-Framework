@@ -24,10 +24,12 @@ from src.chapter3_identifier.augment.datasets.dual_stream_dataset import (
     build_round2_pair_entries,
 )
 from src.chapter3_identifier.augment.features.spectrum import psd_bin_count
+from src.chapter3_identifier.augment.features.wind_features import WIND_FEATURE_DIM
 from src.chapter3_identifier.augment.models.dual_stream_res_cnn import DualStreamResCNN
 from src.chapter3_identifier.augment.models.quad_stream_dual_head_res_cnn import (
     QuadStreamDualHeadContextResCNN,
     QuadStreamDualHeadResCNN,
+    QuadStreamSerialContextDualHeadResCNN,
 )
 from src.chapter3_identifier.augment.labels import get_label_names
 from src.chapter3_identifier.augment.settings import (
@@ -55,6 +57,9 @@ ensure_paths()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+_CONTEXT_MODEL_TYPES = {"quad_stream_dual_head_context", "quad_stream_serial_context_dual_head"}
+_QUAD_MODEL_TYPES = {"quad_stream_dual_head", *_CONTEXT_MODEL_TYPES}
 
 
 def resolve_gold_only(round_idx: int, cfg: dict, gold_only: bool | None) -> bool:
@@ -273,10 +278,10 @@ def run_training(
 
     model_type = str(train_profile["model_type"])
 
-    if model_type in {"quad_stream_dual_head", "quad_stream_dual_head_context"}:
+    if model_type in _QUAD_MODEL_TYPES:
         context_mode = str(train_profile.get("context_mode", "short_long"))
         enable_long_context = (
-            model_type == "quad_stream_dual_head_context"
+            model_type in _CONTEXT_MODEL_TYPES
             and bool(train_profile["enable_long_context"])
             and context_mode == "short_long"
         )
@@ -284,11 +289,15 @@ def run_training(
         context_total_seconds = float(train_profile.get("context_total_seconds", DEFAULT_CONTEXT_TOTAL_SECONDS))
         context_allow_cross_file = bool(train_profile.get("context_allow_cross_file", DEFAULT_CONTEXT_ALLOW_CROSS_FILE))
         dataset_info["enable_long_context"] = bool(enable_long_context)
-        dataset_info["context_mode"] = context_mode if model_type == "quad_stream_dual_head_context" else "short_only"
-        if model_type == "quad_stream_dual_head_context":
+        dataset_info["context_mode"] = context_mode if model_type in _CONTEXT_MODEL_TYPES else "short_only"
+        if model_type in _CONTEXT_MODEL_TYPES:
             dataset_info["context_input_size"] = int(context_input_size)
             dataset_info["context_total_seconds"] = float(context_total_seconds)
             dataset_info["context_allow_cross_file"] = bool(context_allow_cross_file)
+        enable_wind_features = bool(train_profile.get("enable_wind_features", False))
+        wind_feature_dim = int(train_profile.get("wind_feature_dim", WIND_FEATURE_DIM)) if enable_wind_features else 0
+        dataset_info["enable_wind_features"] = bool(enable_wind_features)
+        dataset_info["wind_feature_dim"] = int(wind_feature_dim)
         pair_entries, pair_stats = _select_pair_entries(
             cfg=cfg,
             entries=entries,
@@ -331,6 +340,8 @@ def run_training(
             context_input_size=context_input_size,
             context_total_seconds=context_total_seconds,
             context_allow_cross_file=context_allow_cross_file,
+            enable_wind_features=enable_wind_features,
+            wind_config=cfg,
             enable_preload_cache=bool(cfg.get("enable_preload_cache", True)),
             preload_num_workers=int(cfg.get("preload_num_workers", 4)),
             show_preload_progress=bool(cfg.get("show_preload_progress", True)),
@@ -354,16 +365,23 @@ def run_training(
             "fusion_hidden_dim": int(train_profile["fusion_hidden_dim"]),
             "fusion_dropout": float(train_profile["fusion_dropout"]),
             "cross_attn_heads": int(train_profile["cross_attn_heads"]),
+            "wind_feature_dim": int(wind_feature_dim),
         }
-        if model_type == "quad_stream_dual_head_context":
+        if model_type in _CONTEXT_MODEL_TYPES:
             context_branch_cfg = _context_branch_config(model_cfg.time_branch, context_input_size)
-            model = QuadStreamDualHeadContextResCNN(
-                context_branch_cfg=context_branch_cfg,
-                **model_kwargs,
-            )
+            if model_type == "quad_stream_serial_context_dual_head":
+                model = QuadStreamSerialContextDualHeadResCNN(
+                    context_branch_cfg=context_branch_cfg,
+                    **model_kwargs,
+                )
+            else:
+                model = QuadStreamDualHeadContextResCNN(
+                    context_branch_cfg=context_branch_cfg,
+                    **model_kwargs,
+                )
         else:
             model = QuadStreamDualHeadResCNN(**model_kwargs)
-        current_model_type = "quad_stream_dual_head_context" if model_type == "quad_stream_dual_head_context" else "quad_stream_dual_head"
+        current_model_type = model_type
         init_ckpt, _ = resolve_training_checkpoints(
             cfg["rounds_output_dir"],
             round_idx,
@@ -397,7 +415,7 @@ def run_training(
                             same_structure_reg_temperature,
                             learning_rate,
                         )
-            elif prev_type in {"quad_stream_dual_head", "quad_stream_dual_head_context"}:
+            elif prev_type in _QUAD_MODEL_TYPES:
                 _load_matching_checkpoint_state(model, state, init_ckpt, round_idx)
             else:
                 in_time_state = model.in_time_encoder.backbone.state_dict()

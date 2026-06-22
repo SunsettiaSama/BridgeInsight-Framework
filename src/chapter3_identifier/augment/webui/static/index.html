@@ -16,6 +16,7 @@
       --warn: #d97706;
       --slot-wide-ar: 4.25 / 1;
       --slot-long-ar: 3.55 / 1;
+      --slot-wind-ts-ar: 4.3 / 1;
       --slot-square-ar: 1 / 1;
       --slot-pred-ar: 4.8 / 1;
       --slot-context-ts-ar: 4 / 1;
@@ -451,9 +452,60 @@
     .grid-vib { grid-column: 1 / span 2; }
     .wind-stack {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: minmax(112px, 132px) minmax(120px, 1fr);
+      grid-template-rows: 124px minmax(0, 1fr);
       gap: 6px;
       min-height: 0;
+    }
+    .wind-summary-card {
+      min-height: 0;
+    }
+    .wind-summary-card .figure-head {
+      margin-bottom: 3px;
+    }
+    .wind-summary-card img {
+      align-self: center;
+      width: auto;
+      max-width: 100%;
+      max-height: 92px;
+      aspect-ratio: 1 / 1;
+    }
+    .wind-metrics-column {
+      display: grid;
+      grid-template-rows: 1fr 1fr;
+      gap: 6px;
+      min-height: 0;
+    }
+    .wind-metric-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 8px;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .wind-metric-label {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .wind-metric-value {
+      margin-top: 2px;
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .wind-metric-unit {
+      font-size: 11px;
+      color: var(--muted);
+      margin-left: 3px;
+    }
+    .wind-ts-card {
+      grid-column: 1 / span 2;
     }
     .square-matrix {
       display: grid;
@@ -486,6 +538,7 @@
     .figure-card.shape-wide img { aspect-ratio: var(--slot-wide-ar); }
     .figure-card.shape-long img { aspect-ratio: var(--slot-long-ar); }
     .figure-card.shape-square img { aspect-ratio: var(--slot-square-ar); }
+    .figure-card.wind-ts-card img { aspect-ratio: var(--slot-wind-ts-ar); }
     .card-in-ts { grid-area: inTs; }
     .card-out-ts { grid-area: outTs; }
     .card-in-sp { grid-area: inSp; }
@@ -942,8 +995,18 @@
         </div>
         <div class="wind-column">
           <div class="wind-stack">
-            <div class="figure-card shape-square"><div class="figure-head"><span class="figure-label" id="labelWindSpeed">风速特征 · 风速玫瑰</span><button type="button" class="btn btn-mini save-img-btn" data-img="imgWindSpeed" data-name="wind_speed_rose">保存</button></div><img id="imgWindSpeed" alt="风速玫瑰" class="loading" /></div>
-            <div class="figure-card shape-square"><div class="figure-head"><span class="figure-label" id="labelWindTi">风速特征 · 紊流度玫瑰</span><button type="button" class="btn btn-mini save-img-btn" data-img="imgWindTi" data-name="wind_turbulence_rose">保存</button></div><img id="imgWindTi" alt="紊流度玫瑰" class="loading" /></div>
+            <div class="figure-card shape-square wind-summary-card"><div class="figure-head"><span class="figure-label" id="labelWindDir">平均风向</span><button type="button" class="btn btn-mini save-img-btn" data-img="imgWindDir" data-name="wind_direction">保存</button></div><img id="imgWindDir" alt="平均风向" class="loading" /></div>
+            <div class="wind-metrics-column">
+              <div class="wind-metric-card">
+                <div class="wind-metric-label">平均风速</div>
+                <div class="wind-metric-value"><span id="windAvgSpeed">--</span><span class="wind-metric-unit">m/s</span></div>
+              </div>
+              <div class="wind-metric-card">
+                <div class="wind-metric-label">平均紊流度</div>
+                <div class="wind-metric-value"><span id="windAvgTi">--</span><span class="wind-metric-unit">%</span></div>
+              </div>
+            </div>
+            <div class="figure-card shape-long wind-ts-card"><div class="figure-head"><span class="figure-label" id="labelWindTs">风速长时程</span><button type="button" class="btn btn-mini save-img-btn" data-img="imgWindTs" data-name="wind_speed_timeseries">保存</button></div><img id="imgWindTs" alt="风速长时程" class="loading" /></div>
           </div>
         </div>
       </div>
@@ -1113,12 +1176,16 @@
     const EPOCH_HISTORY_VISIBLE_ROWS = 12;
     const PRELOAD_FORWARD = 50;
     const PRELOAD_BACK = 5;
-    const FIGURE_CACHE_MAX = 420;
+    const FRONT_CACHE_FORWARD = 15;
+    const FRONT_CACHE_BACK = 5;
+    const FIGURE_CACHE_MAX = 260;
     const BUNDLE_READY_TIMEOUT_MS = 6000;
     const BUNDLE_READY_POLL_MS = 120;
     const FIGURE_WAIT_MS = 6000;
     const BUNDLE_STATUS_WAIT_MS = 1200;
     const JUMP_REFRESH_THRESHOLD = PRELOAD_BACK + PRELOAD_FORWARD;
+    const FAST_JUMP_INTERVAL_MS = 260;
+    const FAST_PRELOAD_DEBOUNCE_MS = 180;
     const SESSION_STORAGE_KEY = 'chapter3_augment_annotate_v1';
     const SAVE_TIMEOUT_MS = 30000;
     const LABEL_KEYS = { '1': 0, '2': 1, '3': 2, '4': 3 };
@@ -1139,7 +1206,7 @@
     let inferMonitorOpen = false;
     let inferMonitorPollTimer = null;
     let inferMonitorRound = 1;
-    let forcePreloadReset = false;
+    let forcePreloadReset = true;
 
     let CLASS_NAMES = ['Normal', 'VIV', 'RWIV', 'Others'];
     let annotationContext = null;
@@ -1155,6 +1222,8 @@
     let annotationState = null;
     let lastPreloadFocusSig = '';
     let lastPreloadFocusAt = 0;
+    let lastSelectAt = 0;
+    let fastPreloadTimer = null;
     let datasetSummaryLoading = false;
     const figureSlots = [
       ['imgInTs', 'in_timeseries'],
@@ -1162,8 +1231,8 @@
       ['imgInSp', 'in_spectrum'],
       ['imgOutSp', 'out_spectrum'],
       ['imgTraj', 'trajectory'],
-      ['imgWindSpeed', 'wind_speed_rose'],
-      ['imgWindTi', 'wind_turbulence_rose'],
+      ['imgWindDir', 'wind_direction'],
+      ['imgWindTs', 'wind_speed_timeseries'],
     ];
     const ctxSlots = [
       ['imgCtxTs', 'timeseries'],
@@ -1180,6 +1249,9 @@
       }
       if (Number.isFinite(aspect.long) && aspect.long > 0) {
         root.style.setProperty('--slot-long-ar', `${aspect.long} / 1`);
+      }
+      if (Number.isFinite(aspect.wind_timeseries) && aspect.wind_timeseries > 0) {
+        root.style.setProperty('--slot-wind-ts-ar', `${aspect.wind_timeseries} / 1`);
       }
       if (Number.isFinite(aspect.square) && aspect.square > 0) {
         root.style.setProperty('--slot-square-ar', `${aspect.square} / 1`);
@@ -1211,6 +1283,7 @@
       constructor() {
         this.cache = new Map();
         this.pending = new Map();
+        this.keepKeys = new Set();
       }
 
       _key(sampleIdx, kind, name, direction) {
@@ -1232,6 +1305,7 @@
         this.cache.forEach(url => URL.revokeObjectURL(url));
         this.cache.clear();
         this.pending.clear();
+        this.keepKeys.clear();
       }
 
       async fetchBlob(url, retries = 0) {
@@ -1269,6 +1343,11 @@
         const promise = this.fetchBlob(this.figureUrl(sampleIdx, name, figDirection))
           .then(blob => {
             const objUrl = URL.createObjectURL(blob);
+            if (this.keepKeys.size && !this.keepKeys.has(key)) {
+              URL.revokeObjectURL(objUrl);
+              this.pending.delete(key);
+              return objUrl;
+            }
             this.cache.set(key, objUrl);
             this.pending.delete(key);
             this.trim();
@@ -1290,6 +1369,11 @@
         const promise = this.fetchBlob(this.contextUrl(sampleIdx, part, direction))
           .then(blob => {
             const objUrl = URL.createObjectURL(blob);
+            if (this.keepKeys.size && !this.keepKeys.has(key)) {
+              URL.revokeObjectURL(objUrl);
+              this.pending.delete(key);
+              return objUrl;
+            }
             this.cache.set(key, objUrl);
             this.pending.delete(key);
             this.trim();
@@ -1313,6 +1397,7 @@
 
       evictExcept(keepKeys) {
         const keep = new Set(keepKeys);
+        this.keepKeys = keep;
         for (const key of [...this.cache.keys()]) {
           if (!keep.has(key)) {
             URL.revokeObjectURL(this.cache.get(key));
@@ -1338,7 +1423,6 @@
         if (token !== selectToken) return false;
         if (res.ok) {
           const data = await res.json();
-          if (data.wind_stats) setWindFigureLabels(data.wind_stats);
           if (data.sample_ready && data.inplane_context_ready) return true;
         }
         await new Promise(r => setTimeout(r, BUNDLE_READY_POLL_MS));
@@ -1617,17 +1701,24 @@
     }
 
     function setWindFigureLabels(stats) {
-      const speedEl = document.getElementById('labelWindSpeed');
-      const tiEl = document.getElementById('labelWindTi');
-      if (!speedEl || !tiEl) return;
+      const titleEl = document.getElementById('labelWindTs');
+      const dirEl = document.getElementById('labelWindDir');
+      const speedEl = document.getElementById('windAvgSpeed');
+      const tiEl = document.getElementById('windAvgTi');
+      if (!titleEl || !dirEl || !speedEl || !tiEl) return;
       if (!stats || !stats.ready) {
-        speedEl.textContent = '风速特征 · 风速玫瑰';
-        tiEl.textContent = '风速特征 · 紊流度玫瑰';
+        titleEl.textContent = '风速长时程';
+        dirEl.textContent = '平均风向';
+        speedEl.textContent = '--';
+        tiEl.textContent = '--';
         return;
       }
       const windTitle = stats.title || `${stats.sensor_name || stats.sensor_id || 'WIND'}`;
-      speedEl.textContent = `风速特征 · ${windTitle} · 平均风速 ${Number(stats.avg_wind_speed).toFixed(2)} m/s`;
-      tiEl.textContent = `紊流度特征 · ${windTitle} · 整窗紊流度 ${Number(stats.avg_turbulence).toFixed(2)}%`;
+      titleEl.textContent = `风速长时程 · ${windTitle}`;
+      const windDir = Number(stats.avg_wind_direction);
+      dirEl.textContent = Number.isFinite(windDir) ? `平均风向 · ${windDir.toFixed(0)}°` : '平均风向 · 不可用';
+      speedEl.textContent = Number(stats.avg_wind_speed).toFixed(2);
+      tiEl.textContent = Number(stats.avg_turbulence).toFixed(2);
     }
 
     async function loadWindFigureLabels(sampleIdx, token) {
@@ -2125,8 +2216,8 @@
               imgInSp: 'in_spectrum',
               imgOutSp: 'out_spectrum',
               imgTraj: 'trajectory',
-              imgWindSpeed: 'wind_speed_rose',
-              imgWindTi: 'wind_turbulence_rose',
+              imgWindDir: 'wind_direction',
+              imgWindTs: 'wind_speed_timeseries',
             };
             const figName = figMap[imgId];
             if (figName) {
@@ -2156,6 +2247,9 @@
       const r = items[i];
       const sid = r.sample_idx;
       const jumpDistance = Math.abs(i - prevIdx);
+      const now = Date.now();
+      const fastNavigation = jumpDistance > 0 && lastSelectAt > 0 && (now - lastSelectAt) <= FAST_JUMP_INTERVAL_MS;
+      lastSelectAt = now;
       const jumpRefresh = forcePreloadReset || jumpDistance > JUMP_REFRESH_THRESHOLD;
       forcePreloadReset = false;
 
@@ -2163,17 +2257,19 @@
       setWindFigureLabels(null);
       loadWindFigureLabels(sid, myToken);
       setImgLoading(figureSlots.map(([id]) => id).concat(ctxSlots.map(([id]) => id)), true);
-      schedulePreload(i, { jumpRefresh, jumpDistance });
-      // Do not block UI on bundle_status polling.
-      waitPrimaryBundleReady(sid, myToken, 1200).catch(() => {});
-      if (myToken !== selectToken) return;
-      figureSlots.forEach(([imgId, name]) => {
-        const dir = name === 'prediction' ? contextDirection : '-';
-        bindFigure(imgId, buffer.getFigure(sid, name, dir));
-      });
-      ctxSlots.forEach(([imgId, part]) => {
-        bindFigure(imgId, buffer.getContext(sid, part, contextDirection));
-      });
+      schedulePreload(i, { jumpRefresh, jumpDistance, fastNavigation, token: myToken });
+      if (!fastNavigation) {
+        // Do not block UI on bundle_status polling.
+        waitPrimaryBundleReady(sid, myToken, 1200).catch(() => {});
+        if (myToken !== selectToken) return;
+        figureSlots.forEach(([imgId, name]) => {
+          const dir = name === 'prediction' ? contextDirection : '-';
+          bindFigure(imgId, buffer.getFigure(sid, name, dir));
+        });
+        ctxSlots.forEach(([imgId, part]) => {
+          bindFigure(imgId, buffer.getContext(sid, part, contextDirection));
+        });
+      }
 
       const detailRes = await fetch(`/api/samples/${sid}?round_idx=${currentRound}`);
       if (myToken !== selectToken) return;
@@ -2199,11 +2295,68 @@
 
     function preloadIndices(centerIdx) {
       const indices = [];
-      for (let k = -PRELOAD_BACK; k <= PRELOAD_FORWARD; k += 1) {
-        const j = centerIdx + k;
-        if (j >= 0 && j < items.length) indices.push(j);
-      }
+      const add = (j) => {
+        if (j >= 0 && j < items.length && !indices.includes(j)) indices.push(j);
+      };
+      add(centerIdx);
+      for (let k = 1; k <= Math.min(5, PRELOAD_FORWARD); k += 1) add(centerIdx + k);
+      add(centerIdx - 1);
+      for (let k = 6; k <= PRELOAD_FORWARD; k += 1) add(centerIdx + k);
+      for (let k = 2; k <= PRELOAD_BACK; k += 1) add(centerIdx - k);
       return indices;
+    }
+
+    function frontCacheIndices(centerIdx) {
+      const indices = [];
+      const add = (j) => {
+        if (j >= 0 && j < items.length && !indices.includes(j)) indices.push(j);
+      };
+      add(centerIdx);
+      for (let k = 1; k <= FRONT_CACHE_FORWARD; k += 1) add(centerIdx + k);
+      for (let k = 1; k <= FRONT_CACHE_BACK; k += 1) add(centerIdx - k);
+      return indices;
+    }
+
+    function sendPreloadFocus(centerIdx, options = {}) {
+      const center = items[centerIdx];
+      if (!center) return;
+      const focusId = center.sample_idx;
+      const focusSig = `${currentRound}:${queueClassFilterCsv}:${focusId}:${contextDirection}:focus:${options.jumpRefresh ? 1 : 0}:${Number(options.jumpDistance || 0)}`;
+      if (focusSig === lastPreloadFocusSig) return;
+      lastPreloadFocusSig = focusSig;
+      lastPreloadFocusAt = Date.now();
+      const q = new URLSearchParams({
+        round_idx: String(currentRound),
+        sample_idx: String(focusId),
+        pred_classes: queueClassFilterCsv,
+        jump_refresh: options.jumpRefresh ? '1' : '0',
+        jump_distance: String(options.jumpDistance || 0),
+      });
+      fetch(`/api/queue/preload-focus?${q.toString()}`, { method: 'POST' }).catch(() => {});
+    }
+
+    function scheduleFastPreloadFocus(centerIdx, options = {}) {
+      if (fastPreloadTimer) clearTimeout(fastPreloadTimer);
+      fastPreloadTimer = setTimeout(() => {
+        fastPreloadTimer = null;
+        if (centerIdx !== currentIdx) return;
+        if (options.token && options.token !== selectToken) return;
+        sendPreloadFocus(centerIdx, {
+          jumpRefresh: true,
+          jumpDistance: options.jumpDistance || 0,
+        });
+        const center = items[centerIdx];
+        if (!center) return;
+        const sid = center.sample_idx;
+        waitPrimaryBundleReady(sid, selectToken, 1200).catch(() => {});
+        figureSlots.forEach(([imgId, name]) => {
+          const dir = name === 'prediction' ? contextDirection : '-';
+          bindFigure(imgId, buffer.getFigure(sid, name, dir));
+        });
+        ctxSlots.forEach(([imgId, part]) => {
+          bindFigure(imgId, buffer.getContext(sid, part, contextDirection));
+        });
+      }, FAST_PRELOAD_DEBOUNCE_MS);
     }
 
     function schedulePreload(centerIdx, options = {}) {
@@ -2212,21 +2365,16 @@
       const neighborIds = [...new Set(neighborIndices.map(j => items[j].sample_idx))];
       const centerIds = center ? [center.sample_idx] : [];
       const preloadIds = center ? [center.sample_idx, ...neighborIds] : neighborIds;
-      if (centerIds.length) {
+      if (options.fastNavigation) {
+        scheduleFastPreloadFocus(centerIdx, options);
+      } else if (centerIds.length) {
         const focusId = centerIds[0];
-        const focusSig = `${currentRound}:${queueClassFilterCsv}:${focusId}:${options.jumpRefresh ? 1 : 0}:${Number(options.jumpDistance || 0)}`;
+        const focusSig = `${currentRound}:${queueClassFilterCsv}:${focusId}:${contextDirection}:${options.jumpRefresh ? 1 : 0}:${Number(options.jumpDistance || 0)}`;
         if (focusSig !== lastPreloadFocusSig) {
           lastPreloadFocusSig = focusSig;
           lastPreloadFocusAt = Date.now();
           if (options.jumpRefresh) {
-            const q = new URLSearchParams({
-              round_idx: String(currentRound),
-              sample_idx: String(focusId),
-              pred_classes: queueClassFilterCsv,
-              jump_refresh: '1',
-              jump_distance: String(options.jumpDistance || 0),
-            });
-            fetch(`/api/queue/preload-focus?${q.toString()}`, { method: 'POST' }).catch(() => {});
+            sendPreloadFocus(centerIdx, options);
           } else if (preloadIds.length) {
             fetch('/api/preload', {
               method: 'POST',
@@ -2234,16 +2382,18 @@
               body: JSON.stringify({
                 sample_indices: preloadIds,
                 round_idx: currentRound,
+                direction: contextDirection,
                 layout_profile: LAYOUT_PROFILE,
                 both_directions: true,
                 priority: true,
+                replace_queue: true,
               }),
             }).catch(() => {});
           }
         }
       }
 
-      const keepIds = preloadIds;
+      const keepIds = frontCacheIndices(centerIdx).map(j => items[j].sample_idx);
       const keepKeys = [];
       keepIds.forEach(sampleIdx => {
         figureSlots.forEach(([, name]) => {
@@ -2267,11 +2417,11 @@
       document.getElementById('tabOut').classList.toggle('active', direction === 'outplane');
       if (!items.length) return;
       const sid = items[currentIdx].sample_idx;
+      schedulePreload(currentIdx, { jumpRefresh: false, jumpDistance: 0 });
       ctxSlots.forEach(([imgId, part]) => {
         bindFigure(imgId, buffer.getContext(sid, part, contextDirection));
       });
       renderPredictionCards(items[currentIdx]);
-      schedulePreload(currentIdx, { jumpRefresh: false, jumpDistance: 0 });
     }
 
     function toggleFocusAndContextDirection() {
@@ -2325,6 +2475,7 @@
     function collectTrainingProfile() {
       const keys = [
         'model_type', 'context_mode', 'enable_long_context', 'context_input_size', 'context_total_seconds', 'context_allow_cross_file',
+        'enable_wind_features', 'wind_feature_dim',
         'train_val_ratio', 'require_bidirectional_labels', 'enable_gold_fill', 'prediction_fill_mode', 'min_pairs_without_prediction',
         'enable_legacy_regularization', 'legacy_reg_lambda', 'legacy_reg_temperature', 'legacy_teacher_checkpoint',
         'enable_same_structure_regularization', 'same_structure_reg_lambda', 'same_structure_reg_temperature', 'same_structure_lr_scale',
@@ -2339,12 +2490,13 @@
     function updateTrainingProfileFieldStates() {
       const modelType = String(profileValue('model_type') || '');
       const isSingle = modelType === 'dual_stream_single_head';
-      const isContext = modelType === 'quad_stream_dual_head_context';
+      const isContext = modelType === 'quad_stream_dual_head_context' || modelType === 'quad_stream_serial_context_dual_head';
       const isShortLong = String(profileValue('context_mode') || '') === 'short_long';
       const predictionMode = String(profileValue('prediction_fill_mode') || 'auto');
       const requireBidirectional = profileBool('require_bidirectional_labels');
       const groups = {
         long: ['context_mode', 'enable_long_context', 'context_input_size', 'context_total_seconds', 'context_allow_cross_file'],
+        wind: ['enable_wind_features', 'wind_feature_dim'],
         quad: ['enable_legacy_regularization', 'legacy_reg_lambda', 'legacy_reg_temperature', 'legacy_teacher_checkpoint', 'enable_same_structure_regularization', 'same_structure_reg_lambda', 'same_structure_reg_temperature', 'same_structure_lr_scale', 'inplane_loss_weight', 'outplane_loss_weight', 'fusion_hidden_dim', 'fusion_dropout', 'cross_attn_heads'],
         pair: ['require_bidirectional_labels', 'enable_gold_fill', 'prediction_fill_mode', 'min_pairs_without_prediction'],
       };
@@ -2360,6 +2512,18 @@
         el.disabled = isSingle;
         el.closest('.profile-field')?.classList.toggle('disabled', isSingle);
       });
+      groups.wind.forEach(key => {
+        const el = profileField(key);
+        if (!el) return;
+        el.disabled = isSingle;
+        el.closest('.profile-field')?.classList.toggle('disabled', isSingle);
+      });
+      const windDim = profileField('wind_feature_dim');
+      if (windDim && !isSingle) {
+        const disabled = !profileBool('enable_wind_features');
+        windDim.disabled = disabled;
+        windDim.closest('.profile-field')?.classList.toggle('disabled', disabled);
+      }
       groups.pair.forEach(key => {
         const el = profileField(key);
         if (!el) return;
@@ -2452,6 +2616,13 @@
             ${profileInputHtml('enable_gold_fill', '允许金标镜像补全缺失方向', p.enable_gold_fill, 'checkbox')}
             <div class="profile-field"><label>Prediction 补全</label><select data-profile-field="prediction_fill_mode">${predictionFillOptions}</select></div>
             ${profileInputHtml('min_pairs_without_prediction', '无 prediction 最小 pair 数', p.min_pairs_without_prediction)}
+          </div>
+        </div>
+        <div class="dataset-section">
+          <h4>短窗风特征</h4>
+          <div class="profile-grid">
+            ${profileInputHtml('enable_wind_features', '启用短窗风特征', p.enable_wind_features, 'checkbox')}
+            ${profileInputHtml('wind_feature_dim', '风特征维度', p.wind_feature_dim)}
           </div>
         </div>
         <div class="dataset-section">

@@ -13,7 +13,6 @@ from src.chapter3_identifier.augment.figures.render.context import (
 from src.chapter3_identifier.augment.figures.render.placeholders import render_placeholder_figure
 from src.chapter3_identifier.augment.figures.render.sample import (
     build_sample_render_data,
-    render_prediction_figure,
     render_sample_figure_from_data,
 )
 from src.chapter3_identifier.augment.figures.render.wind import (
@@ -26,7 +25,8 @@ from src.chapter3_identifier.augment.settings import load_config
 
 logger = logging.getLogger(__name__)
 _CFG = load_config()
-_WIND_FIGURE_NAMES = frozenset({"wind_speed_rose", "wind_turbulence_rose"})
+_WIND_FIGURE_NAMES = frozenset({"wind_direction", "wind_speed_timeseries"})
+_CORE_SAMPLE_FIGURE_NAMES = tuple(name for name in SAMPLE_FIGURE_NAMES if name not in _WIND_FIGURE_NAMES)
 
 
 class FigureRenderEngine:
@@ -120,13 +120,60 @@ class FigureRenderEngine:
 
     def _sample_keys(self, round_idx: int, sample_idx: int, layout_profile: str) -> list[str]:
         keys: list[str] = []
-        for name in SAMPLE_FIGURE_NAMES:
+        for name in _CORE_SAMPLE_FIGURE_NAMES:
             if name == "prediction":
                 keys.append(self._sample_key(round_idx, sample_idx, name, layout_profile, "inplane"))
                 keys.append(self._sample_key(round_idx, sample_idx, name, layout_profile, "outplane"))
             else:
                 keys.append(self._sample_key(round_idx, sample_idx, name, layout_profile))
         return keys
+
+    def is_wind_figure(self, figure_name: str) -> bool:
+        return figure_name in _WIND_FIGURE_NAMES
+
+    def _store_wind_figure(
+        self,
+        record: dict,
+        layout_profile: str = "wide_fill_v3",
+        round_idx: int = 1,
+    ) -> None:
+        sample_idx = int(record["sample_idx"])
+        wind_stats_key = self._wind_stats_key(round_idx, sample_idx)
+        try:
+            wind_payload = build_wind_render_payload(record, _CFG)
+            stats = wind_stats_to_dict(wind_payload)
+        except Exception as exc:
+            logger.warning("Build wind render payload failed: sample=%s error=%s", sample_idx, exc)
+            stats = {"ready": False, "error": str(exc)}
+            png = render_placeholder_figure(f"风特征不可用\nsample={sample_idx}\n{exc}")
+            with self._lock:
+                self._wind_stats[wind_stats_key] = stats
+            for fig_name in _WIND_FIGURE_NAMES:
+                self._cache.put(self._sample_key(round_idx, sample_idx, fig_name, layout_profile), png)
+            return
+
+        with self._lock:
+            self._wind_stats[wind_stats_key] = stats
+        for fig_name in _WIND_FIGURE_NAMES:
+            key = self._sample_key(round_idx, sample_idx, fig_name, layout_profile)
+            if self._cache.get(key) is not None:
+                continue
+            try:
+                png = self._render_with_mpl_lock(
+                    render_wind_figure_from_payload,
+                    wind_payload,
+                    fig_name,
+                    layout_profile,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Render wind figure failed: sample=%s figure=%s layout=%s",
+                    sample_idx,
+                    fig_name,
+                    layout_profile,
+                )
+                png = render_placeholder_figure(f"风特征渲染失败\nsample={sample_idx}\n{exc}")
+            self._cache.put(key, png)
 
     def sample_bundle_keys(
         self,
@@ -135,6 +182,10 @@ class FigureRenderEngine:
         layout_profile: str = "wide_fill_v3",
     ) -> list[str]:
         return self._sample_keys(round_idx, sample_idx, layout_profile)
+
+    def clear_wind_stats(self) -> None:
+        with self._lock:
+            self._wind_stats.clear()
 
     def sample_ready(self, round_idx: int, sample_idx: int, layout_profile: str = "wide_fill_v3") -> bool:
         return self._cache.has_all(self._sample_keys(round_idx, sample_idx, layout_profile))
@@ -198,7 +249,7 @@ class FigureRenderEngine:
                 layout_profile,
             )
             msg = render_placeholder_figure(f"样本图渲染失败\nsample={sample_idx}\n{exc}")
-            for name in SAMPLE_FIGURE_NAMES:
+            for name in _CORE_SAMPLE_FIGURE_NAMES:
                 if name == "prediction":
                     self._cache.put(
                         self._sample_key(round_idx, sample_idx, name, layout_profile, "inplane"),
@@ -244,35 +295,6 @@ class FigureRenderEngine:
             )
             aux_futures[fut] = (fig_name, pred_dir)
 
-        wind_payload = None
-        wind_payload_error = None
-        wind_stats_key = self._wind_stats_key(round_idx, sample_idx)
-        try:
-            wind_payload = build_wind_render_payload(record, _CFG)
-            with self._lock:
-                self._wind_stats[wind_stats_key] = wind_stats_to_dict(wind_payload)
-        except Exception as exc:
-            logger.warning("Build wind render payload failed: sample=%s error=%s", sample_idx, exc)
-            wind_payload_error = str(exc)
-            with self._lock:
-                self._wind_stats[wind_stats_key] = {"ready": False, "error": wind_payload_error}
-
-        for fig_name in _WIND_FIGURE_NAMES:
-            pred_dir = "inplane"
-            if wind_payload is None:
-                png = render_placeholder_figure(
-                    f"风特征不可用\nsample={sample_idx}\n{wind_payload_error or '未知原因'}"
-                )
-                self._cache.put(self._sample_key(round_idx, sample_idx, fig_name, layout_profile, pred_dir), png)
-                continue
-            fut = self._image_executor.submit(
-                self._render_with_mpl_lock,
-                render_wind_figure_from_payload,
-                wind_payload,
-                fig_name,
-                layout_profile,
-            )
-            aux_futures[fut] = (fig_name, pred_dir)
         self._collect_sample_futures(aux_futures, sample_idx, round_idx, layout_profile)
 
     def _collect_sample_futures(
@@ -433,8 +455,8 @@ class FigureRenderEngine:
         )
 
     def preload_bundle(self, record: dict, ctx: ContextParams) -> None:
-        self.preload_sample(record, layout_profile=ctx.layout_profile, round_idx=ctx.round_idx)
         self.preload_context(record, ctx)
+        self.preload_sample(record, layout_profile=ctx.layout_profile, round_idx=ctx.round_idx)
 
     def get_wind_stats(self, record: dict, round_idx: int = 1) -> dict:
         sample_idx = int(record["sample_idx"])
@@ -461,23 +483,18 @@ class FigureRenderEngine:
         round_idx: int = 1,
     ) -> Optional[bytes]:
         sample_idx = int(record["sample_idx"])
+        if figure_name in _WIND_FIGURE_NAMES:
+            key = self._sample_key(round_idx, sample_idx, figure_name, layout_profile, prediction_direction)
+            png = self._cache.get(key)
+            if png is not None:
+                return png
+            self._store_wind_figure(record, layout_profile=layout_profile, round_idx=round_idx)
+            return self._cache.get(key)
         png = self._cache.get(
             self._sample_key(round_idx, sample_idx, figure_name, layout_profile, prediction_direction)
         )
         if png is not None:
             return png
-        if figure_name == "prediction":
-            png = render_prediction_figure(
-                record,
-                prediction_direction=prediction_direction,
-                layout_profile=layout_profile,
-            )
-            self._cache.put(
-                self._sample_key(round_idx, sample_idx, figure_name, layout_profile, prediction_direction),
-                png,
-            )
-            return png
-        self.preload_sample(record, layout_profile=layout_profile, round_idx=round_idx)
         return None
 
     def get_context_png(
@@ -502,5 +519,4 @@ class FigureRenderEngine:
                 layout_profile=ctx.layout_profile,
             )
             return self._cache.get(key)
-        self.preload_context(record, ctx)
         return None
