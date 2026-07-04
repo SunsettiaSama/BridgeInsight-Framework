@@ -20,10 +20,11 @@ import matplotlib.pyplot as plt
 from typing import Dict, Optional
 
 from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
 from src.chapter4_characteristics._bootstrap import ensure_paths
 
 ensure_paths()
-from src.chapter3_identifier.identifier.dl.runner import FullDatasetRunner
+from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import load_dl_result
 
 # 从统一配置模块导入图像配置（字体、尺寸、配色）
 from src.figure_paintings.figs_for_thesis.config import (
@@ -47,9 +48,6 @@ CLASS_LABELS = {
 }
 _class_palette = get_blue_color_map(style="discrete", start_map_index=1, end_map_index=5).colors
 CLASS_COLORS = {cls_id: _class_palette[cls_id] for cls_id in range(4)}
-
-
-load_identification_result = FullDatasetRunner.load_result
 
 
 def aggregate_total_counts(result: Dict) -> Dict[int, int]:
@@ -132,26 +130,10 @@ def plot_class_distribution_pie(
 
 def main():
     """主函数"""
-    # 识别结果路径（使用最新的结果文件）
-    # fig3_1_all_recognition_result.py 位于 src/figure_paintings/figs_for_thesis/Chapter3/
     project_root = Path(__file__).parent.parent.parent.parent.parent
-    
-    # 查找最新的识别结果文件
-    result_dir = project_root / "results" / "identification_result"
-    if not result_dir.exists():
-        logger.error(f"识别结果目录不存在：{result_dir}")
-        return
-    
-    result_files = sorted(result_dir.glob("res_cnn_full_dataset_*.json"))
-    if not result_files:
-        logger.error("未找到识别结果文件")
-        return
-    
-    result_path = result_files[-1]  # 选择最新的结果文件
-    logger.info(f"使用结果文件：{result_path}")
-    
-    # 加载识别结果
-    result = load_identification_result(str(result_path))
+
+    logger.info("加载 DL 全量识别结果（data_config.DATA_SOURCE）")
+    result = load_dl_result()
 
     # 生成图表
     output_dir = project_root / "results" / "figures"
@@ -163,6 +145,15 @@ def main():
     pie_fig_path = output_dir / "fig3_2_class_distribution_pie.png"
     fig_pie, _ = plot_class_distribution_pie(total_counts, str(pie_fig_path))
     plot_lib.figs.append(fig_pie)
+
+    web_push(
+        fig_pie,
+        page="fig4_3 全量识别类别占比",
+        slot=0,
+        title="全年四类振动窗口占比",
+        page_cols=1,
+    )
+    logger.info("图表已推送到 WebUI")
 
     logger.info("图表生成完成！")
     plot_lib.show()

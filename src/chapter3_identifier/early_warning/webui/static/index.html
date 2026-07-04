@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>预警识别系统</title>
+  <style>
+    :root {
+      --bg: #f4f6f9;
+      --surface: #ffffff;
+      --border: #d5dbe3;
+      --accent: #2563eb;
+      --accent-soft: #eff6ff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --ok: #047857;
+      --warn: #b45309;
+      --err: #b91c1c;
+      --severe: #991b1b;
+      --attention: #0369a1;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
+    header { height: 54px; display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    .topbar-title { font-weight: 700; color: var(--accent); margin-right: 8px; }
+    .toolbar-group { display: flex; gap: 6px; align-items: center; padding-right: 10px; border-right: 1px solid var(--border); }
+    .toolbar-group:last-child { border-right: none; }
+    .btn { border: 1px solid var(--border); background: #fff; border-radius: 6px; padding: 6px 10px; cursor: pointer; color: var(--text); font-size: 12px; }
+    .btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .chip { border: 1px solid var(--border); border-radius: 999px; padding: 4px 8px; background: #fff; color: var(--muted); font-size: 12px; }
+    main { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px 1fr; gap: 10px; padding: 10px; }
+    aside, section { min-height: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+    aside { display: flex; flex-direction: column; overflow: hidden; }
+    .side-head { padding: 10px; border-bottom: 1px solid var(--border); display: grid; gap: 8px; }
+    .side-head select, .side-head input { width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
+    #warningList { flex: 1; overflow: auto; padding: 8px; display: grid; gap: 6px; }
+    .warning-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: #fff; cursor: pointer; }
+    .warning-item.active { outline: 2px solid var(--accent); background: var(--accent-soft); }
+    .warning-title { font-weight: 600; font-size: 13px; display: flex; justify-content: space-between; gap: 8px; }
+    .warning-meta { margin-top: 4px; font-size: 11px; color: var(--muted); line-height: 1.4; }
+    .level-badge { border-radius: 999px; padding: 2px 8px; font-size: 11px; color: #fff; white-space: nowrap; }
+    .level-normal { background: var(--ok); }
+    .level-attention { background: var(--attention); }
+    .level-warning { background: var(--warn); }
+    .level-severe { background: var(--severe); }
+    section { padding: 10px; display: grid; grid-template-rows: auto auto auto 1fr; gap: 10px; overflow: hidden; }
+    .panel-row { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; }
+    .summary-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .card, .figure-card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 10px; min-width: 0; }
+    .card h3, .figure-card h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+    .kv-grid { display: grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); gap: 6px; font-size: 12px; }
+    .kv-item { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; background: #fafafa; }
+    .kv-item b { display: block; color: var(--muted); font-size: 11px; margin-bottom: 2px; }
+    .risk-grid { display: grid; grid-template-columns: 80px repeat(3, 1fr); gap: 6px; font-size: 12px; }
+    .risk-cell { padding: 6px; border: 1px solid var(--border); border-radius: 6px; text-align: center; background: #fafafa; }
+    .risk-hot { background: #fff7ed; border-color: #fdba74; color: var(--warn); font-weight: 700; }
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; min-height: 0; }
+    .figure-card { display: flex; flex-direction: column; min-height: 0; }
+    .figure-card img { width: 100%; height: 240px; object-fit: contain; background: #fafafa; border: 1px solid var(--border); border-radius: 8px; }
+    pre { margin: 0; white-space: pre-wrap; font-size: 12px; line-height: 1.5; color: var(--muted); overflow: auto; max-height: 220px; }
+    #monitorBackdrop { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.35); align-items: center; justify-content: center; z-index: 10; }
+    .monitor-panel { width: min(960px, 92vw); max-height: 86vh; background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 14px; overflow: auto; }
+    .monitor-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .monitor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .status-ok { color: var(--ok); }
+    .status-err { color: var(--err); }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="topbar-title">预警识别系统</span>
+    <div class="toolbar-group">
+      <span>Round</span>
+      <input id="roundInput" type="number" value="1" min="1" style="width:64px" />
+      <button class="btn" id="btnReload">刷新</button>
+    </div>
+    <div class="toolbar-group">
+      <button class="btn" id="btnBuildCache">构建缓存</button>
+      <button class="btn" id="btnTrain">训练</button>
+      <button class="btn primary" id="btnInfer">生成预警</button>
+      <button class="btn" id="btnMonitor">监控台</button>
+    </div>
+    <span class="chip" id="jobStatus">idle</span>
+    <span class="chip" id="dataStatus">no forecast</span>
+    <span class="chip" id="modeStatus">mode</span>
+  </header>
+
+  <main>
+    <aside>
+      <div class="side-head">
+        <select id="horizonFilter"></select>
+        <select id="levelFilter"></select>
+        <select id="classFilter"></select>
+        <input id="riskFilter" type="number" min="0" max="1" step="0.05" value="0" placeholder="最小风险" />
+      </div>
+      <div id="warningList"></div>
+    </aside>
+    <section>
+      <div class="panel-row">
+        <div class="card"><h3>样本</h3><div id="sampleTitle">未选择</div></div>
+        <div class="card"><h3>预警等级</h3><div id="levelSummary">-</div></div>
+        <div class="card"><h3>时间</h3><div id="timeSummary">-</div></div>
+        <div class="card"><h3>拉索</h3><div id="cableSummary">-</div></div>
+      </div>
+      <div class="summary-row">
+        <div class="card">
+          <h3>当前风况摘要</h3>
+          <div class="kv-grid" id="windSummary"></div>
+        </div>
+        <div class="card">
+          <h3>当前响应摘要</h3>
+          <div class="kv-grid" id="vibrationSummary"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>未来预警矩阵</h3>
+        <div class="risk-grid" id="riskGrid"></div>
+      </div>
+      <div class="detail-grid">
+        <div class="figure-card">
+          <h3>风险曲线</h3>
+          <img id="riskFigure" alt="risk curve" />
+        </div>
+        <div class="figure-card">
+          <h3>响应指标曲线（RMS）</h3>
+          <img id="responseFigure" alt="response curve" />
+        </div>
+        <div class="card">
+          <h3>风到响应解释</h3>
+          <pre id="featureDetail">-</pre>
+        </div>
+        <div class="card">
+          <h3>Horizon 详情</h3>
+          <pre id="horizonDetail">-</pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="monitorBackdrop">
+    <div class="monitor-panel">
+      <div class="monitor-head">
+        <h3 style="margin:0">任务监控</h3>
+        <button class="btn" id="btnMonitorClose">关闭</button>
+      </div>
+      <div class="monitor-grid">
+        <div class="card"><h3>训练</h3><pre id="trainMonitor">-</pre></div>
+        <div class="card"><h3>预测</h3><pre id="inferMonitor">-</pre></div>
+      </div>
+      <div class="card" style="margin-top:10px"><h3>日志</h3><pre id="jobLog">-</pre></div>
+    </div>
+  </div>
+
+  <script>
+    const state = { config: null, warnings: [], active: null, lastJobStatus: null };
+    const $ = (id) => document.getElementById(id);
+    const roundIdx = () => Number($('roundInput').value || 1);
+
+    async function json(url, opts) {
+      const res = await fetch(url, opts);
+      if (!res.ok) throw new Error(await res.text());
+      return await res.json();
+    }
+
+    function levelClass(level) {
+      return `level-badge level-${level || 'normal'}`;
+    }
+
+    function renderFilters() {
+      const horizons = state.config.display_horizons || state.config.horizons_hours || [];
+      $('horizonFilter').innerHTML = '<option value="">全部 horizon</option>' + horizons.map(h => `<option value="${h}">${h}h</option>`).join('');
+      $('levelFilter').innerHTML = '<option value="">全部等级</option>' + (state.config.warning_levels || []).filter(x => x.id !== 'normal').map(x => `<option value="${x.id}">${x.label}</option>`).join('');
+      $('classFilter').innerHTML = '<option value="">全部类型</option>' + state.config.class_names.map(c => `<option value="${c}">${c}</option>`).join('');
+    }
+
+    async function loadConfig() {
+      state.config = await json(`/api/config?round_idx=${roundIdx()}`);
+      const ds = state.config.data_status || {};
+      $('dataStatus').textContent = ds.forecast_exists ? `${ds.record_count} 条预警` : '暂无 forecast';
+      $('modeStatus').textContent = `模式: ${state.config.feature_cache_mode || 'real'}`;
+      renderFilters();
+    }
+
+    async function loadWarnings() {
+      const h = $('horizonFilter').value;
+      const level = $('levelFilter').value;
+      const c = $('classFilter').value;
+      const minRisk = $('riskFilter').value || 0;
+      const qs = new URLSearchParams({ round_idx: roundIdx(), min_risk: minRisk, limit: 500 });
+      if (h) qs.set('horizon_hours', h);
+      if (level) qs.set('warning_level', level);
+      if (c) qs.set('risk_class', c);
+      const payload = await json(`/api/warnings?${qs.toString()}`);
+      state.warnings = payload.items || [];
+      renderList();
+      if (state.warnings.length) {
+        const keep = state.active && state.warnings.some(x => x.sample_idx === state.active.sample_idx);
+        selectSample(keep ? state.active.sample_idx : state.warnings[0].sample_idx);
+      } else {
+        state.active = null;
+        renderActiveEmpty();
+      }
+    }
+
+    function renderList() {
+      $('warningList').innerHTML = state.warnings.map(row => `
+        <div class="warning-item ${state.active && state.active.sample_idx === row.sample_idx ? 'active' : ''}" onclick="selectSample(${row.sample_idx})">
+          <div class="warning-title">
+            <span>#${row.sample_idx}</span>
+            <span class="${levelClass(row.warning_level)}">${row.warning_level_label || row.warning_level}</span>
+          </div>
+          <div class="warning-meta">${(row.cable_pair || []).join(' / ')}<br/>${row.risk_class} ${(row.risk_score || 0).toFixed(2)} · h=${row.horizon_hours || '-'} · ${fmtTime(row.timestamp)}</div>
+        </div>
+      `).join('') || '<div class="warning-meta" style="padding:8px">暂无预警结果，请先运行 构建缓存 / 训练 / 生成预警。</div>';
+    }
+
+    function fmtTime(ts) {
+      if (!ts) return '-';
+      return `${ts.dataset_tag || ''} ${ts.month || 0}-${ts.day || 0} ${ts.hour || 0}:00`;
+    }
+
+    async function selectSample(sampleIdx) {
+      state.active = await json(`/api/warnings/${sampleIdx}?round_idx=${roundIdx()}`);
+      renderList();
+      renderActive();
+    }
+
+    function renderKvGrid(el, summary, labels) {
+      const entries = Object.entries(summary || {});
+      if (!entries.length) {
+        el.innerHTML = '<div class="kv-item"><b>无数据</b>-</div>';
+        return;
+      }
+      el.innerHTML = entries.map(([key, value]) => `<div class="kv-item"><b>${labels[key] || key}</b>${Number(value).toFixed(4)}</div>`).join('');
+    }
+
+    const windLabels = {
+      wind_speed_mean: '平均风速',
+      wind_speed_max: '最大风速',
+      wind_direction_sin: '风向 sin',
+      wind_direction_cos: '风向 cos',
+      attack_angle_mean: '攻角',
+      turbulence_intensity: '湍流度',
+    };
+    const vibrationLabels = {
+      rms: 'RMS',
+      crest_factor: '波峰因子',
+      spectral_entropy: '谱熵',
+      spectral_centroid_hz: '主频',
+      cross_correlation: '耦合相关',
+    };
+
+    function renderActiveEmpty() {
+      $('sampleTitle').textContent = '未选择';
+      $('levelSummary').textContent = '-';
+      $('timeSummary').textContent = '-';
+      $('cableSummary').textContent = '-';
+      $('windSummary').innerHTML = '';
+      $('vibrationSummary').innerHTML = '';
+      $('riskGrid').innerHTML = '';
+      $('featureDetail').textContent = '-';
+      $('horizonDetail').textContent = '-';
+      $('riskFigure').removeAttribute('src');
+      $('responseFigure').removeAttribute('src');
+    }
+
+    function renderActive() {
+      const r = state.active;
+      if (!r) return renderActiveEmpty();
+      $('sampleTitle').textContent = `#${r.sample_idx} · ${r.risk_class || '-'}`;
+      $('levelSummary').innerHTML = `<span class="${levelClass(r.warning_level)}">${r.warning_level_label || r.warning_level}</span> · ${(r.risk_score || 0).toFixed(3)}`;
+      $('timeSummary').textContent = fmtTime(r.timestamp);
+      $('cableSummary').textContent = (r.cable_pair || []).join(' / ');
+      renderKvGrid($('windSummary'), r.wind_summary, windLabels);
+      renderKvGrid($('vibrationSummary'), r.vibration_summary, vibrationLabels);
+      renderRiskGrid(r);
+      $('featureDetail').textContent = JSON.stringify(r.feature_groups || {}, null, 2);
+      $('horizonDetail').textContent = JSON.stringify(r.horizon_matrix || [], null, 2);
+      $('riskFigure').src = `/api/figures/${r.sample_idx}/risk_curve?round_idx=${roundIdx()}&t=${Date.now()}`;
+      $('responseFigure').src = `/api/figures/${r.sample_idx}/response_curve?round_idx=${roundIdx()}&metric_name=rms&t=${Date.now()}`;
+    }
+
+    function renderRiskGrid(record) {
+      const classes = state.config.monitor_classes || ['VIV', 'RWIV', 'Others'];
+      let html = '<div></div>' + classes.map(c => `<div class="risk-cell"><b>${c}</b></div>`).join('');
+      for (const h of record.horizon_matrix || []) {
+        html += `<div class="risk-cell"><b>${h.horizon_hours}h</b></div>`;
+        for (const c of classes) {
+          const v = (h.event_proba || {})[c] || 0;
+          html += `<div class="risk-cell ${v >= 0.5 ? 'risk-hot' : ''}">${v.toFixed(2)}</div>`;
+        }
+      }
+      $('riskGrid').innerHTML = html;
+    }
+
+    async function startJob(phase) {
+      const map = { cache: 'build-cache', train: 'train', infer: 'infer' };
+      await json(`/api/jobs/${map[phase]}?round_idx=${roundIdx()}`, { method: 'POST' });
+      refreshJobState();
+    }
+
+    async function refreshJobState() {
+      const statePayload = await json('/api/jobs/status');
+      $('jobStatus').textContent = `${statePayload.status || 'idle'} ${statePayload.phase || ''}`;
+      $('jobStatus').className = `chip ${statePayload.status === 'error' ? 'status-err' : 'status-ok'}`;
+      if (state.lastJobStatus === 'running' && statePayload.status === 'done') {
+        await loadConfig();
+        await loadWarnings();
+      }
+      state.lastJobStatus = statePayload.status;
+    }
+
+    async function refreshMonitor() {
+      const train = await json(`/api/jobs/monitor?round_idx=${roundIdx()}`);
+      const infer = await json(`/api/jobs/infer/monitor?round_idx=${roundIdx()}`);
+      $('trainMonitor').textContent = JSON.stringify(train.latest || train, null, 2);
+      $('inferMonitor').textContent = JSON.stringify({ record_count: infer.record_count, risk_distribution: infer.risk_distribution, high_risk_samples: infer.high_risk_samples }, null, 2);
+      $('jobLog').textContent = infer.log_tail || train.log_tail || '-';
+    }
+
+    $('btnReload').onclick = () => loadConfig().then(loadWarnings);
+    $('btnBuildCache').onclick = () => startJob('cache');
+    $('btnTrain').onclick = () => startJob('train');
+    $('btnInfer').onclick = () => startJob('infer');
+    $('horizonFilter').onchange = loadWarnings;
+    $('levelFilter').onchange = loadWarnings;
+    $('classFilter').onchange = loadWarnings;
+    $('riskFilter').onchange = loadWarnings;
+    $('btnMonitor').onclick = () => { $('monitorBackdrop').style.display = 'flex'; refreshMonitor(); };
+    $('btnMonitorClose').onclick = () => { $('monitorBackdrop').style.display = 'none'; };
+
+    loadConfig().then(loadWarnings);
+    refreshJobState();
+    setInterval(refreshJobState, 5000);
+  </script>
+</body>
+</html>

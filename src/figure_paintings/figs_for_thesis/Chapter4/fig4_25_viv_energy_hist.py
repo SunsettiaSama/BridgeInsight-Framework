@@ -17,8 +17,9 @@ from src.figure_paintings.figs_for_thesis.config import (
 _chapter4_dir = str(Path(__file__).parent)
 if _chapter4_dir not in sys.path:
     sys.path.insert(0, _chapter4_dir)
+from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import get_enriched_class_dir
 from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import (
-    load_latest_result, get_viv_samples, compute_signal_stats, load_enriched_stats,
+    load_mecc_result, get_viv_samples, compute_signal_stats, load_enriched_stats,
     MECC_INPLANE_COLOR, MECC_OUTPLANE_COLOR,
 )
 
@@ -37,12 +38,8 @@ class Config:
     OUTPLANE_COLOR = VIV_OUTPLANE_COLOR
     BAR_ALPHA = 0.72
 
-    ENRICHED_STATS_DIR = (
-        project_root / "results" / "enriched_stats" / "class_1_viv"
-    )
+    ENRICHED_STATS_DIR = get_enriched_class_dir(1)
 
-    DL_RESULT_GLOB   = project_root / "results" / "identification_result"        / "res_cnn_full_dataset_*.json"
-    MECC_RESULT_GLOB = project_root / "results" / "identification_result_mecc_viv" / "mecc_viv_only_*.json"
     MAX_SAMPLES      = 5000
 
 
@@ -154,7 +151,7 @@ def main():
     print(f"✓ DL 面内：{len(dl_stats['dom_energy_in'])}，面外：{len(dl_stats['dom_energy_out'])}")
 
     print(f"\n[步骤2] 加载 MECC 识别结果并计算统计量...")
-    mecc_result  = load_latest_result(Config.MECC_RESULT_GLOB)
+    mecc_result  = load_mecc_result()
     mecc_samples = get_viv_samples(mecc_result, max_n=Config.MAX_SAMPLES)
     print(f"  MECC VIV 样本：{len(mecc_samples)} 个")
     mecc_stats = compute_signal_stats(mecc_samples, source='MECC')

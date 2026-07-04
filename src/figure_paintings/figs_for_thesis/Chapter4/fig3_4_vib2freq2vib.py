@@ -13,7 +13,7 @@ from src.visualize_tools.utils import PlotLib
 from src.chapter4_characteristics._bootstrap import ensure_paths
 
 ensure_paths()
-from src.chapter3_identifier.identifier.dl.runner import FullDatasetRunner
+from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import load_dl_result
 from src.figure_paintings.figs_for_thesis.config import (
     ENG_FONT, CN_FONT, SQUARE_FIG_SIZE, SQUARE_FONT_SIZE,
     NORMAL_VIB_COLOR, NORMAL_EDGE_COLOR, DEFAULT_COLOR,
@@ -204,14 +204,8 @@ def main():
     print("Fig 3-4  时域 → 频域 → 重建时域（随机振动）")
     print("=" * 80)
 
-    result_dir   = project_root / "results" / "identification_result"
-    result_files = sorted(result_dir.glob("res_cnn_full_dataset_*.json"))
-    if not result_files:
-        raise FileNotFoundError("未找到识别结果文件 res_cnn_full_dataset_*.json")
-
-    result_path = result_files[-1]
-    print(f"\n[步骤1] 加载识别结果：{result_path.name}")
-    result = FullDatasetRunner.load_result(str(result_path))
+    print("\n[步骤1] 加载识别结果（data_config.DATA_SOURCE）...")
+    result = load_dl_result()
 
     print("\n[步骤2] 筛选随机振动（class 0）样本...")
     samples = get_normal_vib_samples(result)

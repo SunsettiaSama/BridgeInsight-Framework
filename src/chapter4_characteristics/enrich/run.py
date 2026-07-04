@@ -59,11 +59,12 @@ def run_enrichment(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"开始特征归档 → {out_dir}")
+    feature_config = cfg.get("feature_analysis_config")
     feature_analysis_run(
         result_path=str(tmp_path),
         wind_metadata_path=str(cfg["wind_metadata_path"]),
         output_dir=str(out_dir),
-        config_yaml=str(cfg.get("feature_analysis_config")),
+        config_yaml=str(feature_config) if feature_config else None,
     )
 
     post_enrich_artifacts(cfg)

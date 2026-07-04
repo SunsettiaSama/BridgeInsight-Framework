@@ -9,6 +9,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from src.visualize_tools.utils import PlotLib
+from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import get_enriched_class_dir
 from src.figure_paintings.figs_for_thesis.config import (
     ENG_FONT, CN_FONT, FONT_SIZE, REC_FIG_SIZE,
     get_blue_color_map,
@@ -53,9 +54,7 @@ class Config:
     OUTLIER_ALPHA = 0.55
     OUTLIER_COLOR = plt.cm.YlOrRd(0.72)
 
-    ENRICHED_STATS_DIR = (
-        project_root / "results" / "enriched_stats" / "class_0_normal"
-    )
+    ENRICHED_STATS_DIR = get_enriched_class_dir(0)
 
 
 # ==================== 数据加载 ====================

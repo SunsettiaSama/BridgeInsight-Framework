@@ -21,7 +21,7 @@ def main(argv: list[str] | None = None) -> None:
 
     parser = argparse.ArgumentParser(
         prog="regression_forecast",
-        description="Chapter3 长期振动类型风险预测与指标回归",
+        description="Chapter3 预警识别系统（风到响应风险预测）",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -41,7 +41,7 @@ def main(argv: list[str] | None = None) -> None:
     p_infer.add_argument("--round", type=int, default=1)
     p_infer.add_argument("--config", type=str, default=None)
 
-    p_webui = sub.add_parser("webui", help="启动回归预测 WebUI")
+    p_webui = sub.add_parser("webui", help="启动预警识别 WebUI")
     p_webui.add_argument("--port", type=int, default=None)
     p_webui.add_argument("--config", type=str, default=None)
 

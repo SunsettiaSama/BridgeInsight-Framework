@@ -15,7 +15,7 @@ from src.figure_paintings.figs_for_thesis.config import (
 _chapter4_dir = str(Path(__file__).parent)
 if _chapter4_dir not in sys.path:
     sys.path.insert(0, _chapter4_dir)
-from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import load_latest_result
+from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import load_dl_result, load_mecc_result
 
 
 # ==================== 常量配置 ====================
@@ -27,9 +27,6 @@ class Config:
     COLOR_INPLANE  = VIV_INPLANE_COLOR     # '#8074C8' 深紫：仅面内
     COLOR_OUTPLANE = VIV_OUTPLANE_COLOR   # '#E3625D' 珊瑚红：仅面外
     COLOR_BOTH     = ABOVE_THRESHOLD_COLOR  # '#7895C1' 钢蓝：同时振动
-
-    DL_RESULT_GLOB   = project_root / "results" / "identification_result"         / "res_cnn_full_dataset_*.json"
-    MECC_RESULT_GLOB = project_root / "results" / "identification_result_mecc_viv" / "mecc_viv_only_*.json"
 
 
 # ==================== 分类统计 ====================
@@ -138,11 +135,11 @@ def main():
     page = "fig4_x VIV面内外占比"
 
     print("\n[步骤1] 加载 DL 识别结果并统计...")
-    dl_result = load_latest_result(Config.DL_RESULT_GLOB)
+    dl_result = load_dl_result()
     _classify_and_push(dl_result, page, "DL 识别 VIV 振动方向分布", slot=0)
 
     print("\n[步骤2] 加载 MECC 识别结果并统计...")
-    mecc_result = load_latest_result(Config.MECC_RESULT_GLOB)
+    mecc_result = load_mecc_result()
     _classify_and_push(mecc_result, page, "MECC 识别 VIV 振动方向分布", slot=1)
 
     print("\n" + "=" * 80)

@@ -11,6 +11,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from src.visualize_tools.utils import PlotLib
+from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import get_enriched_class_dir
 from src.figure_paintings.figs_for_thesis.config import (
     CN_FONT, ENG_FONT, SQUARE_FONT_SIZE, get_red_color_map, SQUARE_FIG_SIZE
 )
@@ -43,7 +44,7 @@ class Config:
     BAR_ALPHA       = 0.90
     CMAP            = _CMAP
 
-    ENRICHED_STATS_DIR = project_root / "results" / "enriched_stats" / "class_0_normal"
+    ENRICHED_STATS_DIR = get_enriched_class_dir(0)
 
     # 3 个位置 × 2 方向 = 6 张独立图
     SENSOR_GROUPS = {

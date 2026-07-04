@@ -13,7 +13,7 @@ from src.visualize_tools.utils import PlotLib
 from src.chapter4_characteristics._bootstrap import ensure_paths
 
 ensure_paths()
-from src.chapter3_identifier.identifier.dl.runner import FullDatasetRunner
+from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import load_dl_result
 from src.figure_paintings.figs_for_thesis.config import (
     ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE,
 )
@@ -172,17 +172,8 @@ def main():
     print("第三章 风雨振时域波形绘制（面内 & 面外）")
     print("=" * 80)
 
-    result_dir = project_root / "results" / "identification_result"
-    if not result_dir.exists():
-        raise FileNotFoundError(f"识别结果目录不存在：{result_dir}")
-
-    result_files = sorted(result_dir.glob("res_cnn_full_dataset_*.json"))
-    if not result_files:
-        raise FileNotFoundError("未找到识别结果文件 res_cnn_full_dataset_*.json")
-
-    result_path = result_files[-1]
-    print(f"\n[步骤1] 加载识别结果：{result_path.name}")
-    result = FullDatasetRunner.load_result(str(result_path))
+    print("\n[步骤1] 加载识别结果（data_config.DATA_SOURCE）...")
+    result = load_dl_result()
 
     print("\n[步骤2] 筛选风雨振（class 2）样本...")
     samples = get_rwiv_samples(result)

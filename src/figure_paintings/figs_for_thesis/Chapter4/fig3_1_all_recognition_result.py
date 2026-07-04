@@ -26,7 +26,7 @@ from src.visualize_tools.utils import PlotLib
 from src.chapter4_characteristics._bootstrap import ensure_paths
 
 ensure_paths()
-from src.chapter3_identifier.identifier.dl.runner import FullDatasetRunner
+from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import load_dl_result
 
 # 从统一配置模块导入图像配置（字体、尺寸、配色）
 from src.figure_paintings.figs_for_thesis.config import ENG_FONT, CN_FONT, FONT_SIZE, REC_FIG_SIZE, get_blue_color_map
@@ -48,9 +48,6 @@ CLASS_LABELS = {
 }
 _class_palette = get_blue_color_map(style="discrete", start_map_index=1, end_map_index=5).colors
 CLASS_COLORS = {cls_id: _class_palette[cls_id] for cls_id in range(4)}
-
-
-load_identification_result = FullDatasetRunner.load_result
 
 
 def aggregate_by_month(
@@ -383,23 +380,9 @@ def main():
     # 识别结果路径（使用最新的结果文件）
     # fig3_1_all_recognition_result.py 位于 src/figure_paintings/figs_for_thesis/Chapter3/
     project_root = Path(__file__).parent.parent.parent.parent.parent
-    
-    # 查找最新的识别结果文件
-    result_dir = project_root / "results" / "identification_result"
-    if not result_dir.exists():
-        logger.error(f"识别结果目录不存在：{result_dir}")
-        return
-    
-    result_files = sorted(result_dir.glob("res_cnn_full_dataset_*.json"))
-    if not result_files:
-        logger.error("未找到识别结果文件")
-        return
-    
-    result_path = result_files[-1]  # 选择最新的结果文件
-    logger.info(f"使用结果文件：{result_path}")
-    
-    # 加载识别结果
-    result = load_identification_result(str(result_path))
+
+    logger.info("加载 DL 全量识别结果（data_config.DATA_SOURCE）")
+    result = load_dl_result()
     
     # 按月份聚合
     monthly_counts = aggregate_by_month(result)

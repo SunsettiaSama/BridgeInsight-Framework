@@ -30,14 +30,14 @@
     html, body { height: 100%; margin: 0; overflow: hidden; }
     body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
     header {
-      padding: 6px 12px;
+      padding: 6px 10px;
       border-bottom: 1px solid var(--border);
       background: var(--surface);
       display: flex;
-      gap: 8px;
+      gap: 6px 12px;
       align-items: center;
-      flex-wrap: nowrap;
-      overflow: hidden;
+      flex-wrap: wrap;
+      overflow: visible;
       box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
       flex-shrink: 0;
       min-height: 44px;
@@ -62,6 +62,27 @@
       white-space: nowrap;
       margin-right: 2px;
     }
+    .topbar-main,
+    .topbar-info {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+    }
+    .topbar-main {
+      flex: 1 1 720px;
+      gap: 6px 8px;
+      flex-wrap: wrap;
+    }
+    .topbar-info {
+      flex: 1 1 380px;
+      gap: 5px 8px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+    header .btn {
+      padding: 5px 8px;
+      font-size: 12px;
+    }
     .toolbar-group { display: flex; gap: 6px; align-items: center; padding-right: 10px; border-right: 1px solid var(--border); }
     .toolbar-group:last-child { border-right: none; }
     .pipeline-group {
@@ -72,8 +93,8 @@
     .console-step {
       display: inline-flex;
       align-items: center;
-      gap: 5px;
-      padding: 3px 6px;
+      gap: 4px;
+      padding: 2px 5px;
       border: 1px solid var(--border);
       border-radius: 999px;
       background: #f8fafc;
@@ -136,20 +157,24 @@
     .round-switch {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 4px;
       font-size: 12px;
       color: var(--muted);
+      white-space: nowrap;
     }
     .topbar-status {
       display: inline-flex;
       align-items: center;
       gap: 5px;
+      flex: 1 1 260px;
+      justify-content: flex-end;
       min-width: 0;
+      flex-wrap: wrap;
     }
     .status-chip {
       display: inline-flex;
       align-items: center;
-      max-width: 220px;
+      max-width: 170px;
       min-width: 0;
       font-size: 12px;
       color: var(--muted);
@@ -160,6 +185,11 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    .status-chip.warning {
+      color: #9a3412;
+      border-color: #fdba74;
+      background: #fff7ed;
     }
     .queue-sticky {
       position: sticky;
@@ -270,6 +300,18 @@
       margin-bottom: 4px;
       line-height: 1.35;
     }
+    .filter-warning {
+      display: none;
+      margin-top: 8px;
+      padding: 7px 9px;
+      border: 1px solid #fdba74;
+      border-radius: 6px;
+      background: #fff7ed;
+      color: #9a3412;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .filter-warning.open { display: block; }
     .dataset-dist-row {
       display: grid;
       grid-template-columns: 58px 1fr 42px 40px;
@@ -364,15 +406,18 @@
     }
     .profile-field label { color: var(--muted); }
     .profile-field input,
-    .profile-field select {
+    .profile-field select,
+    .profile-field textarea {
       border: 1px solid var(--border);
       border-radius: 6px;
       padding: 6px;
       background: #fff;
+      font: inherit;
     }
     .profile-field.disabled {
       opacity: 0.45;
     }
+    .profile-grid .wide { grid-column: 1 / -1; }
     .grid-vib {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -630,8 +675,8 @@
     .shortcut-tip {
       font-size: 11px;
       color: var(--muted);
-      margin-left: auto;
-      flex: 1 1 auto;
+      margin-left: 0;
+      flex: 0 1 100%;
       min-width: 0;
       display: inline-flex;
       gap: 4px;
@@ -646,6 +691,16 @@
       padding: 2px 6px;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    @media (max-width: 1180px) {
+      .topbar-info { justify-content: flex-start; }
+      .topbar-status { justify-content: flex-start; }
+      .shortcut-tip { justify-content: flex-start; }
+    }
+    @media (max-width: 760px) {
+      .pipeline-group { border-right: none; padding-right: 0; }
+      .shortcut-tip { display: none; }
+      .status-chip { max-width: 140px; }
     }
     #inferMonitorBackdrop {
       display: none;
@@ -822,6 +877,36 @@
     }
     .monitor-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
     .monitor-header h2 { margin: 0; font-size: 18px; flex: 1; }
+    .infer-filter-manager { position: relative; }
+    .infer-filter-manager summary {
+      list-style: none;
+      user-select: none;
+    }
+    .infer-filter-manager summary::-webkit-details-marker { display: none; }
+    .infer-filter-popover {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 6px);
+      z-index: 1040;
+      width: min(520px, 92vw);
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+    }
+    .infer-filter-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      align-items: end;
+    }
+    .infer-filter-grid .wide { grid-column: 1 / -1; }
+    .infer-filter-status {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
     .status-pill {
       padding: 4px 10px;
       border-radius: 999px;
@@ -832,6 +917,29 @@
     .status-pill.running { background: #dbeafe; border-color: #93c5fd; color: #1d4ed8; }
     .status-pill.done { background: #dcfce7; border-color: #86efac; color: #166534; }
     .status-pill.error { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
+    .frontend-signal {
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+    .frontend-signal.idle {
+      border-color: var(--border);
+      background: #f3f4f6;
+      color: var(--muted);
+    }
+    .rerun-note {
+      margin: 4px 0 10px;
+      padding: 8px 10px;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      background: #eff6ff;
+      color: #1e40af;
+      font-size: 12px;
+      line-height: 1.55;
+    }
     .progress-wrap { flex: 1; min-width: 180px; }
     .progress-bar {
       height: 8px;
@@ -897,6 +1005,22 @@
       border-radius: 6px;
       white-space: pre-wrap;
     }
+    #finalizeMonitorLog {
+      max-height: 260px;
+      overflow: auto;
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      background: #111827;
+      color: #e5e7eb;
+      padding: 8px;
+      border-radius: 6px;
+      white-space: pre-wrap;
+    }
+    #finalizeSummaryPanel {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
     #monitorConfusion {
       flex: 1;
       min-height: 0;
@@ -912,47 +1036,60 @@
 </head>
 <body>
   <header>
-    <span class="topbar-title">Augment 标注</span>
+    <div class="topbar-main">
+      <span class="topbar-title">Augment 标注</span>
 
-    <div class="toolbar-group pipeline-group">
-      <div class="console-step">
-        <span class="step-pill">步骤 1</span>
-        <button class="btn" id="btnMonitor" title="查看训练 loss / 指标曲线">训练控制台</button>
-        <span class="btn-hint">训练启动按钮已折叠进控制台</span>
+      <div class="toolbar-group pipeline-group">
+        <div class="console-step">
+          <span class="step-pill">步骤 1</span>
+          <button class="btn" id="btnMonitor" title="查看训练 loss / 指标曲线，并可从当前 round 重新开始训练">训练控制台</button>
+          <span class="btn-hint">当前 R 重训入口在控制台内</span>
+        </div>
+        <div class="console-step">
+          <span class="step-pill">步骤 2</span>
+          <button class="btn" id="btnInferMonitor" title="查看全量识别进度、类别比例与典型样本，并可从当前 round 重新开始识别">识别控制台</button>
+          <span class="btn-hint">当前 R 重识别入口在控制台内</span>
+        </div>
+        <div class="console-step">
+          <span class="step-pill">步骤 3</span>
+          <button class="btn" id="btnFinalizeMonitor" title="生成论文用 final rounds，不覆盖迭代产物">终盘整理</button>
+        </div>
+        <div class="console-step">
+          <button class="btn" id="btnWorkflowConfigOpen" title="编辑全局 Dataset / Training / Inference / Finalize / Chapter4 标准配置">全局流程配置</button>
+        </div>
       </div>
-      <div class="console-step">
-        <span class="step-pill">步骤 2</span>
-        <button class="btn" id="btnInferMonitor" title="查看全量识别进度、类别比例与典型样本">全量识别控制台</button>
-        <span class="btn-hint">全量识别按钮已折叠进控制台</span>
-      </div>
-    </div>
 
-    <div class="round-switch">
-      <button class="btn" id="btnRoundPrev" title="切到上一轮">上一轮</button>
-      <span id="roundCurrent">当前 R1</span>
-      <button class="btn" id="btnRoundNext" title="切到下一轮">下一轮</button>
+      <div class="round-switch">
+        <button class="btn" id="btnRoundPrev" title="切到上一轮">上一轮</button>
+        <span id="roundCurrent">当前 R1</span>
+        <button class="btn" id="btnRoundNext" title="切到下一轮">下一轮</button>
+      </div>
+      <div class="queue-filter-group">
+        <span class="queue-filter-label">队列</span>
+        <button type="button" class="queue-filter-btn active" data-queue-filter="1,2,3">1/2/3</button>
+        <button type="button" class="queue-filter-btn" data-queue-filter="0">0</button>
+        <button type="button" class="queue-filter-btn" data-queue-filter="1">1</button>
+        <button type="button" class="queue-filter-btn" data-queue-filter="2">2</button>
+        <button type="button" class="queue-filter-btn" data-queue-filter="3">3</button>
+        <button type="button" class="queue-filter-btn" data-queue-filter="0,1,2,3">全量</button>
+      </div>
     </div>
-    <div class="queue-filter-group">
-      <span class="queue-filter-label">队列</span>
-      <button type="button" class="queue-filter-btn active" data-queue-filter="1,2,3">1/2/3</button>
-      <button type="button" class="queue-filter-btn" data-queue-filter="0">0</button>
-      <button type="button" class="queue-filter-btn" data-queue-filter="1">1</button>
-      <button type="button" class="queue-filter-btn" data-queue-filter="2">2</button>
-      <button type="button" class="queue-filter-btn" data-queue-filter="3">3</button>
-      <button type="button" class="queue-filter-btn" data-queue-filter="0,1,2,3">全量</button>
+    <div class="topbar-info">
+      <div class="topbar-status">
+        <span id="roundBadge" class="status-chip">标注</span>
+        <span id="windModeBadge" class="status-chip">风: --</span>
+        <span id="inferFilterBadge" class="status-chip">识别过滤: --</span>
+        <span id="filterConsistencyBadge" class="status-chip">排除一致</span>
+        <span id="jobStatus" class="status-chip">后台: --</span>
+        <span id="goldBadge" class="status-chip"></span>
+      </div>
+      <span class="shortcut-tip">
+        <span class="shortcut-chip">←/→ 翻页</span>
+        <span class="shortcut-chip">Enter 保存下一条</span>
+        <span class="shortcut-chip">Tab 切换面内/面外</span>
+        <span class="shortcut-chip">1-4 标注</span>
+      </span>
     </div>
-    <div class="topbar-status">
-      <span id="roundBadge" class="status-chip">标注</span>
-      <span id="windModeBadge" class="status-chip">风: --</span>
-      <span id="jobStatus" class="status-chip">后台: --</span>
-      <span id="goldBadge" class="status-chip"></span>
-    </div>
-    <span class="shortcut-tip">
-      <span class="shortcut-chip">←/→ 翻页</span>
-      <span class="shortcut-chip">Enter 保存下一条</span>
-      <span class="shortcut-chip">Tab 切换面内/面外</span>
-      <span class="shortcut-chip">1-4 标注</span>
-    </span>
   </header>
 
   <main>
@@ -1049,10 +1186,13 @@
           <div class="progress-bar"><div id="monitorProgressBar" style="width:0%"></div></div>
         </div>
         <button class="btn" id="btnTrainProfileOpen" title="调整当前轮模型、正则和核心训练超参">训练配置</button>
-        <button class="btn warn" id="btnTrainStartInConsole" title="round1且无人工标注时仅金标；round2+为金标+人工">启动训练</button>
+        <button class="btn warn" id="btnTrainStartInConsole" title="断电或中断后，从当前 round 重新开始训练；不会自动推进 round">重新训练当前 R</button>
         <button class="btn" id="btnMonitorRefresh">刷新</button>
         <button class="btn warn" id="btnTrainJobReset" title="Ctrl+C 中断后释放 stuck 的 running 状态">释放后台</button>
         <button class="btn" id="btnMonitorClose">关闭</button>
+      </div>
+      <div class="rerun-note">
+        断电/中断后处理：如果后台状态仍显示 running，先点「释放后台」；然后点「重新训练当前 R」从本轮重新开始训练。该入口只重跑当前 round，不自动进入下一轮，也不执行终盘整理。
       </div>
 
       <div class="monitor-grid">
@@ -1121,7 +1261,25 @@
         </div>
       </div>
       <div id="trainingProfileForm" class="dataset-panel"></div>
+      <div id="trainingFilterWarning" class="filter-warning"></div>
       <div id="trainingProfileStatus" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
+    </div>
+  </div>
+
+  <div id="workflowConfigBackdrop" class="modal-backdrop">
+    <div class="modal-card" style="max-width:960px;width:min(960px,96vw);max-height:90vh;overflow:auto">
+      <div class="dataset-summary-head">
+        <h3>全局流程配置</h3>
+        <div class="dataset-summary-actions">
+          <span id="workflowConfigSource" class="status-chip">workflow: --</span>
+          <button class="btn" id="btnWorkflowMigrate" type="button">从 Round8 迁移</button>
+          <button class="btn primary" id="btnWorkflowSave" type="button">保存</button>
+          <button class="btn" id="btnWorkflowClose" type="button">关闭</button>
+        </div>
+      </div>
+      <div id="workflowResolvedPanel" class="dataset-panel" style="margin-bottom:12px"></div>
+      <div id="workflowConfigForm" class="dataset-panel"></div>
+      <div id="workflowConfigStatus" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
     </div>
   </div>
 
@@ -1130,10 +1288,41 @@
       <div class="monitor-header">
         <h2 id="inferMonitorTitle">Round 1 识别监控台</h2>
         <span id="inferStatusPill" class="status-pill">idle</span>
-        <button class="btn warn" id="btnInferStartInConsole" title="对 202409 全量数据重新推理并刷新队列">全量重新识别</button>
+        <span id="inferFrontendSignal" class="frontend-signal idle">前端未连接</span>
+        <details id="inferFilterManager" class="infer-filter-manager">
+          <summary class="btn">过滤设置</summary>
+          <div class="infer-filter-popover">
+            <div class="infer-filter-grid">
+              <label class="profile-field">
+                <span>排除传感器</span>
+                <input id="inferFilterEnableSensor" type="checkbox">
+              </label>
+              <label class="profile-field">
+                <span>排除金标样本</span>
+                <input id="inferFilterExcludeGold" type="checkbox">
+              </label>
+              <label class="profile-field">
+                <span>排除人工样本</span>
+                <input id="inferFilterExcludeManual" type="checkbox">
+              </label>
+              <label class="profile-field wide">
+                <span>传感器 ID（逗号或换行分隔）</span>
+                <textarea id="inferFilterSensorIds" rows="3" placeholder="ST-VIC-..."></textarea>
+              </label>
+              <button class="btn primary" id="btnInferFilterSave" type="button">保存过滤设置</button>
+              <button class="btn" id="btnInferFilterReload" type="button">重载</button>
+            </div>
+            <div id="inferFilterStatus" class="infer-filter-status">当前过滤：--</div>
+            <div id="inferFilterWarning" class="filter-warning"></div>
+          </div>
+        </details>
+        <button class="btn warn" id="btnInferStartInConsole" title="断电或中断后，从当前 round 重新开始全量识别并刷新队列">重新识别当前 R</button>
         <button class="btn" id="btnInferMonitorRefresh">刷新</button>
         <button class="btn warn" id="btnJobReset" title="Ctrl+C 中断后释放 stuck 的 running 状态">释放后台</button>
         <button class="btn" id="btnInferMonitorClose">关闭</button>
+      </div>
+      <div class="rerun-note">
+        断电/中断后处理：如果后台状态仍显示 running，先点「释放后台」；然后点「重新识别当前 R」从本轮 checkpoint 重新执行全量识别。该入口只重跑当前 round，不改训练结果，不执行终盘整理。
       </div>
       <div class="monitor-panel">
         <h4>识别类别比例</h4>
@@ -1156,6 +1345,47 @@
     </div>
   </div>
 
+  <div id="finalizeMonitorBackdrop" class="modal-backdrop">
+    <div class="modal-card" style="max-width:920px;width:min(920px,96vw);max-height:90vh;overflow:auto">
+      <div class="dataset-summary-head">
+        <h3>终盘整理</h3>
+        <div class="dataset-summary-actions">
+          <span id="finalizeStatusPill" class="status-pill">idle</span>
+          <button class="btn" id="btnFinalizeSummaryRefresh" type="button">刷新摘要</button>
+          <button class="btn warn" id="btnFinalizeStart" type="button">开始整理</button>
+          <button class="btn warn" id="btnFinalizeJobReset" type="button">释放后台</button>
+          <button class="btn" id="btnFinalizeMonitorClose" type="button">关闭</button>
+        </div>
+      </div>
+      <div class="dataset-panel">
+        <div class="dataset-meta">生成独立 final 目录，不覆盖现有迭代 round。round1 复制基线，round2+ 统一采用最后一轮模型结构顺序重训并重推理。</div>
+        <div class="profile-grid" style="margin-top:8px">
+          <label class="profile-field">
+            <span>起始 round</span>
+            <input id="finalizeFromRound" type="number" min="1" value="1">
+          </label>
+          <label class="profile-field">
+            <span>结束 round</span>
+            <input id="finalizeToRound" type="number" min="1" placeholder="默认最后一轮">
+          </label>
+          <label class="profile-field">
+            <span>canonical round</span>
+            <input id="finalizeCanonicalRound" type="number" min="1" placeholder="默认最后一轮">
+          </label>
+          <label class="profile-field">
+            <span>覆盖已有 final</span>
+            <input id="finalizeOverwriteFinal" type="checkbox">
+          </label>
+        </div>
+        <div id="finalizeSummaryPanel" style="margin-top:10px">点击「刷新摘要」查看整理计划。</div>
+      </div>
+      <div class="monitor-panel" style="margin-top:12px">
+        <h4>整理日志（尾部）</h4>
+        <pre id="finalizeMonitorLog">等待终盘整理启动…</pre>
+      </div>
+    </div>
+  </div>
+
   <div id="datasetSummaryBackdrop">
     <div id="datasetSummaryModal">
       <div class="dataset-summary-head">
@@ -1174,11 +1404,11 @@
 
   <script>
     const EPOCH_HISTORY_VISIBLE_ROWS = 12;
-    const PRELOAD_FORWARD = 50;
+    const PRELOAD_FORWARD = 12;
     const PRELOAD_BACK = 5;
-    const FRONT_CACHE_FORWARD = 15;
+    const FRONT_CACHE_FORWARD = 8;
     const FRONT_CACHE_BACK = 5;
-    const FIGURE_CACHE_MAX = 260;
+    const FIGURE_CACHE_MAX = 140;
     const BUNDLE_READY_TIMEOUT_MS = 6000;
     const BUNDLE_READY_POLL_MS = 120;
     const FIGURE_WAIT_MS = 6000;
@@ -1203,12 +1433,18 @@
     let trainingProfileRound = 1;
     let trainingProfilePayload = null;
     let trainingProfileDirty = false;
+    let workflowConfigPayload = null;
+    let workflowConfigDirty = false;
     let inferMonitorOpen = false;
     let inferMonitorPollTimer = null;
     let inferMonitorRound = 1;
+    let finalizeMonitorOpen = false;
+    let finalizeMonitorPollTimer = null;
     let forcePreloadReset = true;
 
     let CLASS_NAMES = ['Normal', 'VIV', 'RWIV', 'Others'];
+    let INFERENCE_FILTERS = {};
+    let TRAINING_FILTERS = {};
     let annotationContext = null;
     let selectedInplaneLabel = 0;
     let selectedOutplaneLabel = 0;
@@ -1224,6 +1460,7 @@
     let lastPreloadFocusAt = 0;
     let lastSelectAt = 0;
     let fastPreloadTimer = null;
+    let bundleStatusController = null;
     let datasetSummaryLoading = false;
     const figureSlots = [
       ['imgInTs', 'in_timeseries'],
@@ -1283,6 +1520,7 @@
       constructor() {
         this.cache = new Map();
         this.pending = new Map();
+        this.pendingControllers = new Map();
         this.keepKeys = new Set();
       }
 
@@ -1302,31 +1540,43 @@
       }
 
       clear() {
+        this.abortPendingRequests();
         this.cache.forEach(url => URL.revokeObjectURL(url));
         this.cache.clear();
-        this.pending.clear();
         this.keepKeys.clear();
       }
 
-      async fetchBlob(url, retries = 0) {
+      abortPendingRequests() {
+        this.pendingControllers.forEach(controller => controller.abort());
+        this.pendingControllers.clear();
+        this.pending.clear();
+      }
+
+      async fetchBlob(url, retries = 0, signal = null) {
+        if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
         const controller = new AbortController();
+        const abort = () => controller.abort();
+        if (signal) signal.addEventListener('abort', abort, { once: true });
         const timer = setTimeout(() => controller.abort(), 20000);
         let res;
         try {
           res = await fetch(url, { signal: controller.signal });
         } catch (err) {
           clearTimeout(timer);
-          if (retries < 12) {
+          if (signal) signal.removeEventListener('abort', abort);
+          if (err?.name !== 'AbortError' && retries < 12) {
             await new Promise(r => setTimeout(r, 500 + retries * 200));
-            return this.fetchBlob(url, retries + 1);
+            return this.fetchBlob(url, retries + 1, signal);
           }
           throw err;
         }
         clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', abort);
         if ((res.status === 503 || res.status === 429) && retries < 12) {
           const retryAfter = Number(res.headers.get('Retry-After') || 0);
+          if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
           await new Promise(r => setTimeout(r, retryAfter > 0 ? retryAfter * 1000 : 600 + retries * 150));
-          return this.fetchBlob(url, retries + 1);
+          return this.fetchBlob(url, retries + 1, signal);
         }
         if (!res.ok) throw new Error(`${res.status} ${url}`);
         return res.blob();
@@ -1340,21 +1590,26 @@
         if (this.cache.has(key)) return this.cache.get(key);
         if (this.pending.has(key)) return this.pending.get(key);
 
-        const promise = this.fetchBlob(this.figureUrl(sampleIdx, name, figDirection))
+        const controller = new AbortController();
+        this.pendingControllers.set(key, controller);
+        const promise = this.fetchBlob(this.figureUrl(sampleIdx, name, figDirection), 0, controller.signal)
           .then(blob => {
             const objUrl = URL.createObjectURL(blob);
             if (this.keepKeys.size && !this.keepKeys.has(key)) {
               URL.revokeObjectURL(objUrl);
               this.pending.delete(key);
+              this.pendingControllers.delete(key);
               return objUrl;
             }
             this.cache.set(key, objUrl);
             this.pending.delete(key);
+            this.pendingControllers.delete(key);
             this.trim();
             return objUrl;
           })
           .catch(err => {
             this.pending.delete(key);
+            this.pendingControllers.delete(key);
             throw err;
           });
         this.pending.set(key, promise);
@@ -1366,21 +1621,26 @@
         if (this.cache.has(key)) return this.cache.get(key);
         if (this.pending.has(key)) return this.pending.get(key);
 
-        const promise = this.fetchBlob(this.contextUrl(sampleIdx, part, direction))
+        const controller = new AbortController();
+        this.pendingControllers.set(key, controller);
+        const promise = this.fetchBlob(this.contextUrl(sampleIdx, part, direction), 0, controller.signal)
           .then(blob => {
             const objUrl = URL.createObjectURL(blob);
             if (this.keepKeys.size && !this.keepKeys.has(key)) {
               URL.revokeObjectURL(objUrl);
               this.pending.delete(key);
+              this.pendingControllers.delete(key);
               return objUrl;
             }
             this.cache.set(key, objUrl);
             this.pending.delete(key);
+            this.pendingControllers.delete(key);
             this.trim();
             return objUrl;
           })
           .catch(err => {
             this.pending.delete(key);
+            this.pendingControllers.delete(key);
             throw err;
           });
         this.pending.set(key, promise);
@@ -1419,7 +1679,15 @@
           layout_profile: LAYOUT_PROFILE,
           wait_ms: String(BUNDLE_STATUS_WAIT_MS),
         });
-        const res = await fetch(`/api/figures/${sampleIdx}/_bundle_status?${q.toString()}`);
+        const controller = new AbortController();
+        bundleStatusController = controller;
+        const timeoutId = setTimeout(() => controller.abort(), BUNDLE_STATUS_WAIT_MS + 1000);
+        const res = await fetch(`/api/figures/${sampleIdx}/_bundle_status?${q.toString()}`, {
+          signal: controller.signal,
+        }).finally(() => {
+          clearTimeout(timeoutId);
+          if (bundleStatusController === controller) bundleStatusController = null;
+        });
         if (token !== selectToken) return false;
         if (res.ok) {
           const data = await res.json();
@@ -1457,6 +1725,167 @@
       return classes.map(c => `${c}:${labelName(c)}`).join(' / ');
     }
 
+    function inferenceFilterText(filters) {
+      const f = filters || {};
+      const parts = [];
+      if (f.enable_sensor_exclusion) {
+        const count = Array.isArray(f.exclude_sensor_ids) ? f.exclude_sensor_ids.length : 0;
+        parts.push(`传感器${count ? count : 'on'}`);
+      }
+      if (f.exclude_gold_annotations) parts.push('金标');
+      if (f.exclude_manual_annotations) parts.push('人工');
+      return parts.length ? parts.join('+') : 'off';
+    }
+
+    function parseSensorIdText(text) {
+      return [...new Set(String(text || '')
+        .split(/[\n,]+/)
+        .map(v => v.trim())
+        .filter(Boolean))]
+        .sort();
+    }
+
+    function trainingFiltersFromProfile(profile) {
+      const p = profile || {};
+      return {
+        enable_sensor_exclusion: !!p.enable_sensor_exclusion,
+        exclude_sensor_ids: Array.isArray(p.exclude_sensor_ids) ? [...p.exclude_sensor_ids].sort() : [],
+      };
+    }
+
+    function effectiveSensorFilterIds(filters) {
+      const f = filters || {};
+      if (!f.enable_sensor_exclusion) return [];
+      return Array.isArray(f.exclude_sensor_ids) ? [...new Set(f.exclude_sensor_ids.map(v => String(v).trim()).filter(Boolean))].sort() : [];
+    }
+
+    function sameStringList(a, b) {
+      if (a.length !== b.length) return false;
+      return a.every((item, idx) => item === b[idx]);
+    }
+
+    function describeEffectiveSensorFilters(filters) {
+      const ids = effectiveSensorFilterIds(filters);
+      return ids.length ? ids.join(', ') : '未启用';
+    }
+
+    function sensorFilterWarningText() {
+      const trainIds = effectiveSensorFilterIds(TRAINING_FILTERS);
+      const inferIds = effectiveSensorFilterIds(INFERENCE_FILTERS);
+      if (sameStringList(trainIds, inferIds)) return '';
+      return `训练侧与推理侧传感器排除不一致：训练=${describeEffectiveSensorFilters(TRAINING_FILTERS)}；推理=${describeEffectiveSensorFilters(INFERENCE_FILTERS)}。请确认两侧显式声明是否符合本轮实验设计。`;
+    }
+
+    function updateSensorFilterConsistencyUi() {
+      const warning = sensorFilterWarningText();
+      const badge = document.getElementById('filterConsistencyBadge');
+      if (badge) {
+        badge.textContent = warning ? '排除不一致' : '排除一致';
+        badge.title = warning || `训练=${describeEffectiveSensorFilters(TRAINING_FILTERS)}；推理=${describeEffectiveSensorFilters(INFERENCE_FILTERS)}`;
+        badge.classList.toggle('warning', Boolean(warning));
+      }
+      ['trainingFilterWarning', 'inferFilterWarning'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = warning;
+        el.classList.toggle('open', Boolean(warning));
+      });
+    }
+
+    function inferenceFilterStatsText(filters) {
+      const f = filters || {};
+      const parts = [];
+      if (Number.isFinite(Number(f.raw_record_total))) {
+        parts.push(`raw=${Number(f.raw_record_total)}`);
+      }
+      if (Number.isFinite(Number(f.kept_record_total))) {
+        parts.push(`kept=${Number(f.kept_record_total)}`);
+      }
+      if (Number.isFinite(Number(f.excluded_sensor_removed_total))) {
+        parts.push(`sensor_removed=${Number(f.excluded_sensor_removed_total)}`);
+      }
+      if (Number.isFinite(Number(f.excluded_annotation_removed_total))) {
+        parts.push(`annotation_removed=${Number(f.excluded_annotation_removed_total)}`);
+      }
+      if (Number.isFinite(Number(f.excluded_gold_removed_total))) {
+        parts.push(`gold_removed=${Number(f.excluded_gold_removed_total)}`);
+      }
+      if (Number.isFinite(Number(f.excluded_manual_removed_total))) {
+        parts.push(`manual_removed=${Number(f.excluded_manual_removed_total)}`);
+      }
+      return parts.join(' · ');
+    }
+
+    function updateInferenceFilterBadge() {
+      const inferFilterBadge = document.getElementById('inferFilterBadge');
+      if (inferFilterBadge) {
+        inferFilterBadge.textContent = `识别过滤: ${inferenceFilterText(INFERENCE_FILTERS)}`;
+        inferFilterBadge.title = JSON.stringify(INFERENCE_FILTERS);
+      }
+      const status = document.getElementById('inferFilterStatus');
+      if (status) {
+        const sensors = Array.isArray(INFERENCE_FILTERS.exclude_sensor_ids)
+          ? INFERENCE_FILTERS.exclude_sensor_ids.join(', ')
+          : '';
+        status.textContent = `当前过滤：${inferenceFilterText(INFERENCE_FILTERS)}${sensors ? ` · ${sensors}` : ''}`;
+      }
+      updateSensorFilterConsistencyUi();
+    }
+
+    function renderInferenceFilterControls(filters = INFERENCE_FILTERS) {
+      const f = filters || {};
+      const sensorIds = Array.isArray(f.exclude_sensor_ids) ? f.exclude_sensor_ids : [];
+      const enableSensor = document.getElementById('inferFilterEnableSensor');
+      const excludeGold = document.getElementById('inferFilterExcludeGold');
+      const excludeManual = document.getElementById('inferFilterExcludeManual');
+      const sensorInput = document.getElementById('inferFilterSensorIds');
+      if (enableSensor) enableSensor.checked = !!f.enable_sensor_exclusion;
+      if (excludeGold) excludeGold.checked = !!f.exclude_gold_annotations;
+      if (excludeManual) excludeManual.checked = !!f.exclude_manual_annotations;
+      if (sensorInput) sensorInput.value = sensorIds.join(', ');
+      updateInferenceFilterBadge();
+    }
+
+    function collectInferenceFilterControls() {
+      return {
+        enable_sensor_exclusion: !!document.getElementById('inferFilterEnableSensor')?.checked,
+        exclude_sensor_ids: parseSensorIdText(document.getElementById('inferFilterSensorIds')?.value || ''),
+        exclude_gold_annotations: !!document.getElementById('inferFilterExcludeGold')?.checked,
+        exclude_manual_annotations: !!document.getElementById('inferFilterExcludeManual')?.checked,
+      };
+    }
+
+    async function reloadInferenceFilters() {
+      const res = await fetch('/api/config/inference_filters');
+      if (!res.ok) {
+        alert('重载识别过滤设置失败');
+        return null;
+      }
+      INFERENCE_FILTERS = await res.json();
+      renderInferenceFilterControls(INFERENCE_FILTERS);
+      return INFERENCE_FILTERS;
+    }
+
+    async function saveInferenceFilters() {
+      const payload = collectInferenceFilterControls();
+      const res = await fetch('/api/config/inference_filters', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.detail || '保存识别过滤设置失败');
+        return false;
+      }
+      INFERENCE_FILTERS = data;
+      renderInferenceFilterControls(INFERENCE_FILTERS);
+      document.getElementById('inferFilterStatus').textContent =
+        `已保存：${inferenceFilterText(INFERENCE_FILTERS)}。下次全量重新识别生效。`;
+      updateSensorFilterConsistencyUi();
+      return true;
+    }
+
     function setQueueClassFilter(csv) {
       queueClassFilterCsv = csv || '1,2,3';
       document.querySelectorAll('.queue-filter-btn').forEach(btn => {
@@ -1481,6 +1910,8 @@
       }
       const cfg = await res.json();
       CLASS_NAMES = cfg.label_names || CLASS_NAMES;
+      INFERENCE_FILTERS = cfg.inference_filters || {};
+      TRAINING_FILTERS = cfg.training_filters || {};
       const layoutProtocol = cfg.figure_layout_protocol || null;
       LAYOUT_PROFILE = layoutProtocol?.layout_profile || cfg.webui_layout_profile || LAYOUT_PROFILE;
       applyFigureLayoutProtocol(layoutProtocol);
@@ -1493,6 +1924,10 @@
         const datasetTag = cfg.wind_dataset_tag || '--';
         windModeBadge.textContent = `风: ${modeLabel} · ${datasetTag}`;
       }
+      const inferFilterBadge = document.getElementById('inferFilterBadge');
+      if (inferFilterBadge) updateInferenceFilterBadge();
+      renderInferenceFilterControls(INFERENCE_FILTERS);
+      updateSensorFilterConsistencyUi();
       console.info('[augment] wind runtime mode:', cfg.wind_runtime_mode, cfg.wind_runtime_mode_label);
       renderLabelButtons();
       updateRoundUi();
@@ -2237,6 +2672,8 @@
       const prevIdx = currentIdx;
       currentIdx = i;
       selectToken += 1;
+      buffer.abortPendingRequests();
+      if (bundleStatusController) bundleStatusController.abort();
       const myToken = selectToken;
       contextDirection = 'inplane';
       document.getElementById('tabIn').classList.add('active');
@@ -2476,7 +2913,7 @@
       const keys = [
         'model_type', 'context_mode', 'enable_long_context', 'context_input_size', 'context_total_seconds', 'context_allow_cross_file',
         'enable_wind_features', 'wind_feature_dim',
-        'train_val_ratio', 'require_bidirectional_labels', 'enable_gold_fill', 'prediction_fill_mode', 'min_pairs_without_prediction',
+        'train_val_ratio', 'enable_sensor_exclusion', 'require_bidirectional_labels', 'enable_gold_fill', 'prediction_fill_mode', 'min_pairs_without_prediction',
         'enable_legacy_regularization', 'legacy_reg_lambda', 'legacy_reg_temperature', 'legacy_teacher_checkpoint',
         'enable_same_structure_regularization', 'same_structure_reg_lambda', 'same_structure_reg_temperature', 'same_structure_lr_scale',
         'inplane_loss_weight', 'outplane_loss_weight', 'fusion_hidden_dim', 'fusion_dropout', 'cross_attn_heads',
@@ -2484,6 +2921,7 @@
       ];
       const payload = {};
       keys.forEach(key => { payload[key] = profileValue(key); });
+      payload.exclude_sensor_ids = parseSensorIdText(profileValue('exclude_sensor_ids'));
       return payload;
     }
 
@@ -2542,6 +2980,12 @@
         minPairs.disabled = disabled;
         minPairs.closest('.profile-field')?.classList.toggle('disabled', disabled);
       }
+      const sensorIds = profileField('exclude_sensor_ids');
+      if (sensorIds) {
+        const disabled = !profileBool('enable_sensor_exclusion');
+        sensorIds.disabled = disabled;
+        sensorIds.closest('.profile-field')?.classList.toggle('disabled', disabled);
+      }
       const longToggle = profileField('enable_long_context');
       if (longToggle && isContext) longToggle.checked = isShortLong;
       ['enable_long_context', 'context_input_size', 'context_total_seconds', 'context_allow_cross_file'].forEach(key => {
@@ -2573,10 +3017,24 @@
       return `<div class="profile-field"><label>${label}</label><input data-profile-field="${key}" type="${type}" ${val} ${checked} ${attrs}></div>`;
     }
 
+    function profileTextareaHtml(key, label, values, rows = 3) {
+      const text = Array.isArray(values) ? values.join(', ') : String(values || '');
+      return `<div class="profile-field wide"><label>${label}</label><textarea data-profile-field="${key}" rows="${rows}" placeholder="ST-VIC-...">${text}</textarea></div>`;
+    }
+
+    function syncTrainingFiltersFromForm() {
+      TRAINING_FILTERS = {
+        enable_sensor_exclusion: profileBool('enable_sensor_exclusion'),
+        exclude_sensor_ids: parseSensorIdText(profileValue('exclude_sensor_ids')),
+      };
+      updateSensorFilterConsistencyUi();
+    }
+
     function renderTrainingProfile(payload) {
       trainingProfilePayload = payload;
       trainingProfileDirty = false;
       const p = payload.profile || {};
+      TRAINING_FILTERS = trainingFiltersFromProfile(p);
       const options = payload.options || {};
       const modelOptions = (options.model_types || []).map(opt => (
         `<option value="${opt.value}" ${p.model_type === opt.value ? 'selected' : ''}>${opt.label}</option>`
@@ -2588,7 +3046,7 @@
         `<option value="${opt.value}" ${p.prediction_fill_mode === opt.value ? 'selected' : ''}>${opt.label}</option>`
       )).join('');
       document.getElementById('trainingProfileSource').textContent = `profile: ${payload.metadata?.source || 'default'} · R${payload.metadata?.round_idx || currentRound}`;
-      document.getElementById('trainingProfileStatus').textContent = `路径：${payload.metadata?.path || '-'}`;
+      document.getElementById('trainingProfileStatus').textContent = `路径：${payload.metadata?.path || '-'} · workflow v${payload.metadata?.workflow_config_version || '--'} · 来源：${(payload.metadata?.override_sources || []).join(' → ') || 'global_default'}`;
       document.getElementById('trainingProfileForm').innerHTML = `
         <div class="dataset-section">
           <h4>模型选择</h4>
@@ -2612,11 +3070,14 @@
           <h4>训练集构建</h4>
           <div class="profile-grid">
             ${profileInputHtml('train_val_ratio', '训练集比例', p.train_val_ratio, 'number', 'min="0.05" max="0.95" step="0.05"')}
+            ${profileInputHtml('enable_sensor_exclusion', '排除指定传感器', p.enable_sensor_exclusion, 'checkbox')}
             ${profileInputHtml('require_bidirectional_labels', '仅使用全双向标注', p.require_bidirectional_labels, 'checkbox')}
             ${profileInputHtml('enable_gold_fill', '允许金标镜像补全缺失方向', p.enable_gold_fill, 'checkbox')}
             <div class="profile-field"><label>Prediction 补全</label><select data-profile-field="prediction_fill_mode">${predictionFillOptions}</select></div>
             ${profileInputHtml('min_pairs_without_prediction', '无 prediction 最小 pair 数', p.min_pairs_without_prediction)}
+            ${profileTextareaHtml('exclude_sensor_ids', '训练排除传感器 ID（逗号或换行分隔）', p.exclude_sensor_ids || [])}
           </div>
+          <div class="dataset-meta">这些传感器会从训练集构建中移除；推理侧需在“过滤设置”里显式声明同一组传感器。</div>
         </div>
         <div class="dataset-section">
           <h4>短窗风特征</h4>
@@ -2657,10 +3118,15 @@
         el.addEventListener('change', () => {
           trainingProfileDirty = true;
           updateTrainingProfileFieldStates();
+          syncTrainingFiltersFromForm();
         });
-        el.addEventListener('input', () => { trainingProfileDirty = true; });
+        el.addEventListener('input', () => {
+          trainingProfileDirty = true;
+          syncTrainingFiltersFromForm();
+        });
       });
       updateTrainingProfileFieldStates();
+      updateSensorFilterConsistencyUi();
     }
 
     async function loadTrainingProfile(roundIdx = currentRound) {
@@ -2687,8 +3153,208 @@
         return false;
       }
       renderTrainingProfile(data);
+      TRAINING_FILTERS = trainingFiltersFromProfile(data.profile || {});
+      updateSensorFilterConsistencyUi();
       document.getElementById('trainingProfileStatus').textContent = '已保存训练配置';
       return true;
+    }
+
+    function workflowFieldHtml(section, key, label, value, type = 'text', extra = '') {
+      if (type === 'checkbox') {
+        const checked = value ? 'checked' : '';
+        return `<div class="profile-field"><label>${label}</label><input data-workflow-section="${section}" data-workflow-field="${key}" type="checkbox" ${checked}></div>`;
+      }
+      return `<div class="profile-field"><label>${label}</label><input data-workflow-section="${section}" data-workflow-field="${key}" type="${type}" value="${value ?? ''}" ${extra}></div>`;
+    }
+
+    function workflowTextareaHtml(section, key, label, values, rows = 3) {
+      const text = Array.isArray(values) ? values.join(', ') : String(values || '');
+      return `<div class="profile-field wide"><label>${label}</label><textarea data-workflow-section="${section}" data-workflow-field="${key}" rows="${rows}">${text}</textarea></div>`;
+    }
+
+    function workflowBool(section, key) {
+      const el = document.querySelector(`[data-workflow-section="${section}"][data-workflow-field="${key}"]`);
+      return Boolean(el?.checked);
+    }
+
+    function workflowValue(section, key) {
+      const el = document.querySelector(`[data-workflow-section="${section}"][data-workflow-field="${key}"]`);
+      return el ? el.value : '';
+    }
+
+    function renderWorkflowConfig(payload, resolvedPayload = null) {
+      workflowConfigPayload = payload;
+      workflowConfigDirty = false;
+      const defaults = payload.workflow_defaults || {};
+      const dataset = defaults.dataset || {};
+      const training = defaults.training || {};
+      const inference = defaults.inference || {};
+      const finalize = defaults.finalize || {};
+      const chapter4 = defaults.chapter4 || {};
+      document.getElementById('workflowConfigSource').textContent = `workflow v${payload.workflow_config_version || 1} · ${payload.metadata?.source || 'saved'}`;
+      document.getElementById('workflowConfigStatus').textContent = `路径：${payload.metadata?.path || '-'}`;
+      const resolved = resolvedPayload || {};
+      const resolvedSources = (resolved.metadata?.override_sources || payload.resolved_example_override_sources || []).join(' → ') || 'global_default';
+      document.getElementById('workflowResolvedPanel').innerHTML = `
+        <div class="dataset-section">
+          <h4>当前 Round Resolved（R${resolved.round_idx || currentRound}）</h4>
+          <div class="dataset-meta">override 来源：${resolvedSources}</div>
+          <div class="dataset-meta">snapshot：${resolved.metadata?.snapshot_path || '-'}</div>
+        </div>`;
+      document.getElementById('workflowConfigForm').innerHTML = `
+        <div class="dataset-section">
+          <h4>Dataset</h4>
+          <div class="profile-grid">
+            ${workflowFieldHtml('dataset', 'use_pair_key_training_dataset', 'Pair Key 训练集', dataset.use_pair_key_training_dataset, 'checkbox')}
+            ${workflowFieldHtml('dataset', 'train_val_ratio', 'Train/Val 比例', dataset.train_val_ratio, 'number', 'min="0.05" max="0.95" step="0.05"')}
+            ${workflowFieldHtml('dataset', 'enable_sensor_exclusion', '排除传感器', dataset.enable_sensor_exclusion, 'checkbox')}
+            ${workflowFieldHtml('dataset', 'enable_wind_features', '启用风特征', dataset.enable_wind_features, 'checkbox')}
+            ${workflowFieldHtml('dataset', 'require_bidirectional_labels', '仅双向标注', dataset.require_bidirectional_labels, 'checkbox')}
+            ${workflowTextareaHtml('dataset', 'exclude_sensor_ids', '排除传感器 ID', dataset.exclude_sensor_ids || [])}
+          </div>
+        </div>
+        <div class="dataset-section">
+          <h4>Training</h4>
+          <div class="profile-grid">
+            ${workflowFieldHtml('training', 'model_type', '模型类型', training.model_type || '', 'text')}
+            ${workflowFieldHtml('training', 'context_mode', 'Context 模式', training.context_mode || '', 'text')}
+            ${workflowFieldHtml('training', 'epochs', 'Epochs', training.epochs, 'number')}
+            ${workflowFieldHtml('training', 'batch_size', 'Batch Size', training.batch_size, 'number')}
+            ${workflowFieldHtml('training', 'learning_rate', 'Learning Rate', training.learning_rate, 'number', 'step="0.00001"')}
+            ${workflowFieldHtml('training', 'enable_same_structure_regularization', '同结构正则', training.enable_same_structure_regularization, 'checkbox')}
+          </div>
+        </div>
+        <div class="dataset-section">
+          <h4>Inference</h4>
+          <div class="profile-grid">
+            ${workflowFieldHtml('inference', 'infer_batch_size', 'Batch Size', inference.infer_batch_size, 'number')}
+            ${workflowFieldHtml('inference', 'infer_cache_max_mb', 'Cache MB', inference.infer_cache_max_mb, 'number')}
+            ${workflowFieldHtml('inference', 'infer_prefetch_files', 'Prefetch Files', inference.infer_prefetch_files, 'number')}
+            ${workflowFieldHtml('inference', 'infer_context_workers', 'Context Workers', inference.infer_context_workers, 'number')}
+            ${workflowFieldHtml('inference', 'infer_context_cache_entries', 'Context Cache Entries', inference.infer_context_cache_entries, 'number')}
+            ${workflowFieldHtml('inference', 'infer_enable_sensor_exclusion', '排除传感器', inference.infer_enable_sensor_exclusion, 'checkbox')}
+            ${workflowTextareaHtml('inference', 'infer_exclude_sensor_ids', '推理排除传感器 ID', inference.infer_exclude_sensor_ids || [])}
+          </div>
+        </div>
+        <div class="dataset-section">
+          <h4>Finalize / Chapter4</h4>
+          <div class="profile-grid">
+            ${workflowFieldHtml('finalize', 'canonical_round', 'Canonical Round', finalize.canonical_round, 'number')}
+            ${workflowFieldHtml('chapter4', 'identifier_checkpoint_round', 'Checkpoint Round', chapter4.identifier_checkpoint_round, 'number')}
+            ${workflowFieldHtml('chapter4', 'chapter4_output_dir', 'Chapter4 输出目录', chapter4.chapter4_output_dir || '', 'text')}
+            ${workflowFieldHtml('chapter4', 'inference_dataset_config', '2023 数据集配置', chapter4.inference_dataset_config || '', 'text')}
+          </div>
+        </div>`;
+      document.querySelectorAll('#workflowConfigForm [data-workflow-field]').forEach(el => {
+        el.addEventListener('change', () => { workflowConfigDirty = true; });
+        el.addEventListener('input', () => { workflowConfigDirty = true; });
+      });
+    }
+
+    function collectWorkflowConfig() {
+      const base = workflowConfigPayload || {};
+      const defaults = JSON.parse(JSON.stringify(base.workflow_defaults || {}));
+      const parseIds = (text) => parseSensorIdText(text);
+      defaults.dataset = {
+        ...(defaults.dataset || {}),
+        use_pair_key_training_dataset: workflowBool('dataset', 'use_pair_key_training_dataset'),
+        train_val_ratio: Number(workflowValue('dataset', 'train_val_ratio')),
+        enable_sensor_exclusion: workflowBool('dataset', 'enable_sensor_exclusion'),
+        enable_wind_features: workflowBool('dataset', 'enable_wind_features'),
+        require_bidirectional_labels: workflowBool('dataset', 'require_bidirectional_labels'),
+        exclude_sensor_ids: parseIds(workflowValue('dataset', 'exclude_sensor_ids')),
+      };
+      defaults.training = {
+        ...(defaults.training || {}),
+        model_type: workflowValue('training', 'model_type'),
+        context_mode: workflowValue('training', 'context_mode'),
+        epochs: Number(workflowValue('training', 'epochs')),
+        batch_size: Number(workflowValue('training', 'batch_size')),
+        learning_rate: Number(workflowValue('training', 'learning_rate')),
+        enable_same_structure_regularization: workflowBool('training', 'enable_same_structure_regularization'),
+      };
+      defaults.inference = {
+        ...(defaults.inference || {}),
+        infer_batch_size: Number(workflowValue('inference', 'infer_batch_size')),
+        infer_cache_max_mb: Number(workflowValue('inference', 'infer_cache_max_mb')),
+        infer_prefetch_files: Number(workflowValue('inference', 'infer_prefetch_files')),
+        infer_context_workers: Number(workflowValue('inference', 'infer_context_workers')),
+        infer_context_cache_entries: Number(workflowValue('inference', 'infer_context_cache_entries')),
+        infer_enable_sensor_exclusion: workflowBool('inference', 'infer_enable_sensor_exclusion'),
+        infer_exclude_sensor_ids: parseIds(workflowValue('inference', 'infer_exclude_sensor_ids')),
+      };
+      defaults.finalize = {
+        ...(defaults.finalize || {}),
+        canonical_round: Number(workflowValue('finalize', 'canonical_round')),
+      };
+      defaults.chapter4 = {
+        ...(defaults.chapter4 || {}),
+        identifier_checkpoint_round: Number(workflowValue('chapter4', 'identifier_checkpoint_round')),
+        chapter4_output_dir: workflowValue('chapter4', 'chapter4_output_dir'),
+        inference_dataset_config: workflowValue('chapter4', 'inference_dataset_config'),
+      };
+      return {
+        workflow_config_version: Number(base.workflow_config_version || 1),
+        workflow_defaults: defaults,
+        round_overrides: base.round_overrides || {},
+      };
+    }
+
+    async function loadWorkflowConfig() {
+      const [configRes, resolvedRes] = await Promise.all([
+        fetch('/api/workflow/config'),
+        fetch(`/api/workflow/resolved?round_idx=${currentRound}`),
+      ]);
+      if (!configRes.ok) {
+        alert('加载全局 workflow 配置失败');
+        return;
+      }
+      const payload = await configRes.json();
+      const resolvedPayload = resolvedRes.ok ? await resolvedRes.json() : null;
+      renderWorkflowConfig(payload, resolvedPayload);
+    }
+
+    async function saveWorkflowConfig() {
+      const payload = collectWorkflowConfig();
+      const res = await fetch('/api/workflow/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.detail || '保存 workflow 配置失败');
+        return false;
+      }
+      await loadWorkflowConfig();
+      const filterRes = await fetch('/api/config/inference_filters');
+      if (filterRes.ok) {
+        INFERENCE_FILTERS = await filterRes.json();
+        updateInferFilterUi();
+        updateSensorFilterConsistencyUi();
+      }
+      document.getElementById('workflowConfigStatus').textContent = '已保存全局 workflow 配置';
+      return true;
+    }
+
+    async function openWorkflowConfig() {
+      document.getElementById('workflowConfigBackdrop').classList.add('open');
+      await loadWorkflowConfig();
+    }
+
+    function closeWorkflowConfig() {
+      document.getElementById('workflowConfigBackdrop').classList.remove('open');
+    }
+
+    async function migrateWorkflowConfig() {
+      if (!confirm('从 Round8 + default.yaml 重新生成 workflow_config.json？')) return;
+      const res = await fetch('/api/workflow/migrate?baseline_round=8', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.detail || '迁移 workflow 配置失败');
+        return;
+      }
+      await loadWorkflowConfig();
     }
 
     async function openTrainingProfile(roundIdx = currentRound) {
@@ -2706,23 +3372,27 @@
       return saveTrainingProfile();
     }
 
-    async function startTrainJob() {
+    async function startTrainJob(roundIdx = monitorRound || currentRound) {
       if (!(await ensureTrainingProfileSaved())) return;
-      if (!confirm(`启动 round ${currentRound} 训练？\n训练集构建、划分比例与 prediction 补全策略将使用当前训练配置。`)) return;
-      const res = await fetch(`/api/jobs/train?round_idx=${currentRound}`, { method: 'POST' });
+      if (!confirm(`重新开始 round ${roundIdx} 训练？\n训练集构建、划分比例与 prediction 补全策略将使用当前训练配置；已有本轮训练输出可能被新结果覆盖。`)) return;
+      const res = await fetch(`/api/jobs/train?round_idx=${roundIdx}`, { method: 'POST' });
       if (!res.ok) {
         const err = await res.json();
-        alert(err.detail || '启动训练失败');
+        alert((err.detail || '启动训练失败') + '。若已断电或 Ctrl+C 中断，请先点击训练监控台「释放后台」。');
         return;
       }
-      openTrainMonitor(currentRound);
+      openTrainMonitor(roundIdx);
       pollJob();
     }
 
-    document.getElementById('btnTrainStartInConsole').onclick = startTrainJob;
-    document.getElementById('btnTrainProfileOpen').onclick = () => openTrainingProfile(currentRound);
+    document.getElementById('btnTrainStartInConsole').onclick = () => startTrainJob(monitorRound || currentRound);
+    document.getElementById('btnTrainProfileOpen').onclick = () => openTrainingProfile(monitorRound || currentRound);
     document.getElementById('btnTrainingProfileClose').onclick = closeTrainingProfile;
     document.getElementById('btnTrainingProfileSave').onclick = saveTrainingProfile;
+    document.getElementById('btnWorkflowConfigOpen').onclick = openWorkflowConfig;
+    document.getElementById('btnWorkflowClose').onclick = closeWorkflowConfig;
+    document.getElementById('btnWorkflowSave').onclick = saveWorkflowConfig;
+    document.getElementById('btnWorkflowMigrate').onclick = migrateWorkflowConfig;
     document.getElementById('btnTrainingProfileReset').onclick = async () => {
       if (!confirm(`恢复 round ${trainingProfileRound} 训练配置默认值？`)) return;
       const res = await fetch(`/api/training/profile/reset?round_idx=${trainingProfileRound}`, { method: 'POST' });
@@ -2735,6 +3405,9 @@
     };
     document.getElementById('trainingProfileBackdrop').onclick = (e) => {
       if (e.target.id === 'trainingProfileBackdrop') closeTrainingProfile();
+    };
+    document.getElementById('workflowConfigBackdrop').onclick = (e) => {
+      if (e.target.id === 'workflowConfigBackdrop') closeWorkflowConfig();
     };
     document.getElementById('btnMonitor').onclick = () => openTrainMonitor(currentRound);
     document.getElementById('btnMonitorClose').onclick = closeTrainMonitor;
@@ -2754,6 +3427,7 @@
       monitorRound = roundIdx;
       monitorOpen = true;
       document.getElementById('monitorTitle').textContent = `Round ${roundIdx} 训练监控台`;
+      document.getElementById('btnTrainStartInConsole').textContent = `重新训练 R${roundIdx}`;
       document.getElementById('monitorBackdrop').classList.add('open');
       refreshTrainMonitor(true);
       if (monitorPollTimer) clearInterval(monitorPollTimer);
@@ -3066,6 +3740,8 @@
     document.getElementById('btnInferMonitor').onclick = () => openInferMonitor(currentRound);
     document.getElementById('btnInferMonitorClose').onclick = closeInferMonitor;
     document.getElementById('btnInferMonitorRefresh').onclick = () => refreshInferMonitor(true);
+    document.getElementById('btnInferFilterSave').onclick = saveInferenceFilters;
+    document.getElementById('btnInferFilterReload').onclick = reloadInferenceFilters;
     document.getElementById('btnJobReset').onclick = async () => {
       if (!confirm('释放后台任务占用？若任务仍在运行，请先确认已中断。')) return;
       await fetch('/api/jobs/reset', { method: 'POST' });
@@ -3081,6 +3757,8 @@
       inferMonitorRound = roundIdx;
       inferMonitorOpen = true;
       document.getElementById('inferMonitorTitle').textContent = `Round ${roundIdx} 识别监控台`;
+      document.getElementById('btnInferStartInConsole').textContent = `重新识别 R${roundIdx}`;
+      renderInferenceFilterControls(INFERENCE_FILTERS);
       document.getElementById('inferMonitorBackdrop').classList.add('open');
       refreshInferMonitor(true);
       if (inferMonitorPollTimer) clearInterval(inferMonitorPollTimer);
@@ -3287,6 +3965,22 @@
 
     let inferMonitorBusy = false;
 
+    function inferFrontendSignalText(job) {
+      if ((job.status || 'idle') !== 'running') {
+        return '前端已连接；当前无运行中的识别子进程';
+      }
+      const pidText = job.pid ? `PID ${job.pid}` : '独立子进程';
+      return `前端已连接，仅轮询监控；后台 ${pidText} 独立运行，关闭窗口不影响识别`;
+    }
+
+    function updateInferFrontendSignal(job) {
+      const el = document.getElementById('inferFrontendSignal');
+      const running = (job.status || 'idle') === 'running';
+      el.textContent = running ? '前端在线 · 后台独立运行' : '前端在线 · 后台空闲';
+      el.className = 'frontend-signal' + (running ? '' : ' idle');
+      return inferFrontendSignalText(job);
+    }
+
     async function refreshInferMonitor(forceStatus) {
       if (inferMonitorBusy) return;
       inferMonitorBusy = true;
@@ -3297,6 +3991,7 @@
         const data = await res.json();
         const job = data.job || {};
         const status = job.status || 'idle';
+        const frontendSignalText = updateInferFrontendSignal(job);
         const pill = document.getElementById('inferStatusPill');
         let pillText = status + (job.phase ? ` · ${job.phase}` : '');
         if (data.infer_progress && status === 'running') {
@@ -3310,9 +4005,17 @@
             `推理进行中：${data.infer_progress.direction} ${data.infer_progress.percent}%`;
         }
         renderInferDistribution(data.distribution || [], data.total_records || 0);
+        if (data.inference_ready) {
+          const statsText = inferenceFilterStatsText(data.filters || {});
+          document.getElementById('inferSummary').textContent =
+            `识别记录 ${data.total_records || 0} 条 · 过滤=${inferenceFilterText(data.filters || INFERENCE_FILTERS)}${statsText ? ` · ${statsText}` : ''}`;
+        } else if (!data.infer_progress) {
+          document.getElementById('inferSummary').textContent =
+            `待识别 · 当前过滤=${inferenceFilterText(INFERENCE_FILTERS)}`;
+        }
         renderAnnotationConsistency(data.annotation_consistency || null);
         renderTypicalSamples(data.typical_samples || {}, data.label_names || CLASS_NAMES, inferMonitorRound);
-        document.getElementById('inferMonitorLog').textContent = data.log_tail || '(日志为空，识别可能尚未输出)';
+        document.getElementById('inferMonitorLog').textContent = `[前端信号] ${frontendSignalText}\n\n${data.log_tail || '(日志为空，识别可能尚未输出)'}`;
         const stopPoll = status === 'error' || ((status === 'done' || status === 'idle') && data.inference_ready);
         if (inferMonitorOpen && stopPoll && inferMonitorPollTimer) {
           clearInterval(inferMonitorPollTimer);
@@ -3327,24 +4030,183 @@
       }
     }
 
-    async function startInferJob() {
-      if (!confirm(`对 round ${currentRound} 执行全量重新识别？完成后队列会刷新。`)) return;
+    async function startInferJob(roundIdx = inferMonitorRound || currentRound) {
+      if (!confirm(`重新开始 round ${roundIdx} 全量识别？\n完成后队列会刷新；已有本轮 inference 输出可能被新结果覆盖。`)) return;
       inferQueueReloadPending = true;
-      let res = await fetch(`/api/jobs/infer?round_idx=${currentRound}`, { method: 'POST' });
+      let res = await fetch(`/api/jobs/infer?round_idx=${roundIdx}`, { method: 'POST' });
       if (res.status === 409) {
         await refreshJobState();
-        res = await fetch(`/api/jobs/infer?round_idx=${currentRound}`, { method: 'POST' });
+        res = await fetch(`/api/jobs/infer?round_idx=${roundIdx}`, { method: 'POST' });
       }
       if (!res.ok) {
         const err = await res.json();
         alert((err.detail || '启动推理失败') + '。若已 Ctrl+C 中断，请点击识别监控台「释放后台」。');
         return;
       }
-      openInferMonitor(currentRound);
+      openInferMonitor(roundIdx);
       pollJob();
     }
 
-    document.getElementById('btnInferStartInConsole').onclick = startInferJob;
+    document.getElementById('btnInferStartInConsole').onclick = () => startInferJob(inferMonitorRound || currentRound);
+
+    function collectFinalizeParams() {
+      const fromRound = Number(document.getElementById('finalizeFromRound').value || 1);
+      const toRaw = String(document.getElementById('finalizeToRound').value || '').trim();
+      const canonicalRaw = String(document.getElementById('finalizeCanonicalRound').value || '').trim();
+      return {
+        from_round: Number.isFinite(fromRound) && fromRound >= 1 ? fromRound : 1,
+        to_round: toRaw ? Number(toRaw) : null,
+        canonical_round: canonicalRaw ? Number(canonicalRaw) : null,
+        overwrite_final: !!document.getElementById('finalizeOverwriteFinal').checked,
+      };
+    }
+
+    function renderFinalizeSummary(summary) {
+      const panel = document.getElementById('finalizeSummaryPanel');
+      if (!summary) {
+        panel.textContent = '无法加载整理摘要。';
+        return;
+      }
+      const profile = summary.canonical_profile || {};
+      const manualPlan = (summary.manual_copy_plan || [])
+        .map(row => `R${row.round_idx}:${row.manual_rows}条`)
+        .join(' · ');
+      const warnings = (summary.warnings || []).length
+        ? `<div class="filter-warning open" style="margin-top:8px">${summary.warnings.join('<br/>')}</div>`
+        : '';
+      panel.innerHTML = [
+        `输出目录：<code>${summary.final_root || '-'}</code>`,
+        `源 round：${(summary.source_rounds || []).join(', ') || '-'}`,
+        `整理范围：R${summary.from_round} → R${summary.to_round}`,
+        `canonical round：R${summary.canonical_round} · model=${profile.model_type || '-'}`,
+        `重训 round：${(summary.retrain_rounds || []).map(r => `R${r}`).join(', ') || '无'}`,
+        `manual 元数据：${manualPlan || '无'}`,
+        `round1 checkpoint：${summary.round1_checkpoint_exists ? '可用' : '缺失'}`,
+        `可执行：${summary.ready ? '是' : '否'}`,
+      ].join('<br/>') + warnings;
+    }
+
+    async function loadFinalizeSummary() {
+      const params = collectFinalizeParams();
+      const query = new URLSearchParams({ from_round: String(params.from_round) });
+      if (params.to_round != null) query.set('to_round', String(params.to_round));
+      if (params.canonical_round != null) query.set('canonical_round', String(params.canonical_round));
+      if (params.overwrite_final) query.set('overwrite_final', 'true');
+      const res = await fetch(`/api/jobs/finalize/summary?${query.toString()}`);
+      const data = await res.json();
+      if (!res.ok) {
+        document.getElementById('finalizeSummaryPanel').textContent = data.detail || '加载整理摘要失败';
+        return null;
+      }
+      renderFinalizeSummary(data);
+      return data;
+    }
+
+    function openFinalizeMonitor() {
+      finalizeMonitorOpen = true;
+      document.getElementById('finalizeMonitorBackdrop').classList.add('open');
+      if (!document.getElementById('finalizeToRound').value) {
+        document.getElementById('finalizeToRound').value = String(currentRound);
+      }
+      if (!document.getElementById('finalizeCanonicalRound').value) {
+        document.getElementById('finalizeCanonicalRound').value = String(currentRound);
+      }
+      loadFinalizeSummary();
+      refreshFinalizeMonitor(true);
+      if (finalizeMonitorPollTimer) clearInterval(finalizeMonitorPollTimer);
+      finalizeMonitorPollTimer = setInterval(() => refreshFinalizeMonitor(false), 2000);
+    }
+
+    function closeFinalizeMonitor() {
+      finalizeMonitorOpen = false;
+      document.getElementById('finalizeMonitorBackdrop').classList.remove('open');
+      if (finalizeMonitorPollTimer) {
+        clearInterval(finalizeMonitorPollTimer);
+        finalizeMonitorPollTimer = null;
+      }
+    }
+
+    let finalizeMonitorBusy = false;
+
+    async function refreshFinalizeMonitor(forceStatus) {
+      if (finalizeMonitorBusy) return;
+      finalizeMonitorBusy = true;
+      try {
+        if (forceStatus) await refreshJobState();
+        const res = await fetch('/api/jobs/finalize/monitor');
+        if (!res.ok) return;
+        const data = await res.json();
+        const job = data.job || {};
+        const status = job.status || 'idle';
+        const pill = document.getElementById('finalizeStatusPill');
+        let pillText = status + (job.phase ? ` · ${job.phase}` : '');
+        if (job.phase === 'finalize' && status === 'running') {
+          pillText += ' · 后台独立运行';
+        }
+        pill.textContent = pillText;
+        pill.className = 'status-pill ' + (status === 'running' ? 'running' : (status === 'error' ? 'error' : (status === 'done' ? 'done' : '')));
+        document.getElementById('finalizeMonitorLog').textContent =
+          `[前端信号] 终盘整理为独立后台任务；关闭窗口不影响执行\n\n${data.log_tail || '(日志为空，整理可能尚未输出)'}`;
+        if (data.summary) renderFinalizeSummary(data.summary);
+        if (status !== 'running' && finalizeMonitorOpen && finalizeMonitorPollTimer) {
+          clearInterval(finalizeMonitorPollTimer);
+          finalizeMonitorPollTimer = null;
+        }
+      } finally {
+        finalizeMonitorBusy = false;
+      }
+    }
+
+    async function startFinalizeJob() {
+      const summary = await loadFinalizeSummary();
+      if (!summary) return;
+      if (!summary.ready) {
+        if (summary.final_exists && !summary.overwrite_final) {
+          alert('final 目录已存在。请在当前终盘整理窗口中勾选“覆盖已有 final”，刷新摘要后再启动。');
+        } else {
+          alert('整理前置检查未通过，请查看摘要中的警告。');
+        }
+        return;
+      }
+      const params = collectFinalizeParams();
+      const msg = [
+        `生成 final 目录：${summary.final_root}`,
+        `范围 R${summary.from_round} → R${summary.to_round}`,
+        `canonical R${summary.canonical_round} · ${summary.canonical_profile?.model_type || '-'}`,
+        summary.final_exists && !params.overwrite_final
+          ? 'final 已存在，需勾选覆盖'
+          : '不会覆盖现有迭代 round 目录',
+      ].join('\n');
+      if (!confirm(`开始终盘整理？\n\n${msg}`)) return;
+      const res = await fetch('/api/jobs/finalize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.detail || '启动终盘整理失败');
+        return;
+      }
+      if (finalizeMonitorPollTimer) clearInterval(finalizeMonitorPollTimer);
+      finalizeMonitorPollTimer = setInterval(() => refreshFinalizeMonitor(false), 2000);
+      pollJob();
+    }
+
+    document.getElementById('btnFinalizeMonitor').onclick = openFinalizeMonitor;
+    document.getElementById('btnFinalizeMonitorClose').onclick = closeFinalizeMonitor;
+    document.getElementById('btnFinalizeSummaryRefresh').onclick = loadFinalizeSummary;
+    document.getElementById('btnFinalizeStart').onclick = startFinalizeJob;
+    document.getElementById('finalizeOverwriteFinal').onchange = loadFinalizeSummary;
+    document.getElementById('btnFinalizeJobReset').onclick = async () => {
+      if (!confirm('释放后台任务占用？若任务仍在运行，请先确认已中断。')) return;
+      await fetch('/api/jobs/reset', { method: 'POST' });
+      await refreshJobState();
+      refreshFinalizeMonitor(false);
+    };
+    document.getElementById('finalizeMonitorBackdrop').onclick = (e) => {
+      if (e.target.id === 'finalizeMonitorBackdrop') closeFinalizeMonitor();
+    };
 
     async function refreshJobState() {
       const res = await fetch('/api/jobs/status');
@@ -3367,6 +4229,7 @@
       const s = await refreshJobState();
       if (monitorOpen) refreshTrainMonitor(false);
       if (inferMonitorOpen && !inferMonitorPollTimer) refreshInferMonitor(false);
+      if (finalizeMonitorOpen && !finalizeMonitorPollTimer) refreshFinalizeMonitor(false);
       if (s.status === 'running') setTimeout(pollJob, 2000);
       if (s.status === 'done' && inferQueueReloadPending) loadQueue();
     }
@@ -3388,6 +4251,11 @@
         const datasetSummaryBackdrop = document.getElementById('datasetSummaryBackdrop');
         if (datasetSummaryBackdrop?.classList.contains('open')) {
           datasetSummaryBackdrop.classList.remove('open');
+          return;
+        }
+        const finalizeMonitorBackdrop = document.getElementById('finalizeMonitorBackdrop');
+        if (finalizeMonitorBackdrop?.classList.contains('open')) {
+          closeFinalizeMonitor();
           return;
         }
       }

@@ -10,7 +10,7 @@ from src.chapter3_identifier.augment.loop.job_state import read_job_state, write
 from src.chapter3_identifier.augment.webui.jobs.log_tail import read_log_tail_text
 
 STILL_ACTIVE = 259
-_SUCCESS_MARKERS = ("训练完成", "推理完成")
+_SUCCESS_MARKERS = ("训练完成", "推理完成", "终盘整理完成")
 
 
 class JobManager:
@@ -134,6 +134,7 @@ class JobManager:
         config_path: Optional[str],
         profile_path: Optional[str] = None,
         profile_summary: Optional[dict] = None,
+        workflow_snapshot_path: Optional[str] = None,
     ) -> dict:
         self.reconcile_running_job()
         state = read_job_state(str(self.job_state_path))
@@ -184,6 +185,7 @@ class JobManager:
                 "error": None,
                 "profile_path": profile_path,
                 "training_profile": profile_summary,
+                "workflow_resolved_path": workflow_snapshot_path,
             },
         )
         return {
@@ -194,6 +196,7 @@ class JobManager:
             "python": self.python_executable,
             "profile_path": profile_path,
             "training_profile": profile_summary,
+            "workflow_resolved_path": workflow_snapshot_path,
         }
 
     def start_train(
@@ -202,11 +205,96 @@ class JobManager:
         config_path: Optional[str] = None,
         profile_path: Optional[str] = None,
         profile_summary: Optional[dict] = None,
+        workflow_snapshot_path: Optional[str] = None,
     ) -> dict:
-        return self._launch("train", round_idx, config_path, profile_path=profile_path, profile_summary=profile_summary)
+        return self._launch(
+            "train",
+            round_idx,
+            config_path,
+            profile_path=profile_path,
+            profile_summary=profile_summary,
+            workflow_snapshot_path=workflow_snapshot_path,
+        )
 
     def start_infer(self, round_idx: int, config_path: Optional[str] = None) -> dict:
         return self._launch("infer", round_idx, config_path)
+
+    def start_finalize(
+        self,
+        config_path: Optional[str] = None,
+        from_round: int = 1,
+        to_round: Optional[int] = None,
+        canonical_round: Optional[int] = None,
+        overwrite_final: bool = False,
+    ) -> dict:
+        self.reconcile_running_job()
+        state = read_job_state(str(self.job_state_path))
+        if state.get("status") == "running":
+            raise RuntimeError("已有任务在运行，请等待完成或在监控台点击「释放后台」")
+
+        cmd = [
+            self.python_executable,
+            "-m",
+            "src.chapter3_identifier.augment",
+            "finalize",
+            "--from-round",
+            str(from_round),
+        ]
+        if to_round is not None:
+            cmd.extend(["--to-round", str(to_round)])
+        if canonical_round is not None:
+            cmd.extend(["--canonical-round", str(canonical_round)])
+        if overwrite_final:
+            cmd.append("--overwrite-final")
+        if config_path:
+            cmd.extend(["--config", config_path])
+
+        log_path = self.log_dir / "finalize.log"
+        log_handle = open(log_path, "w", encoding="utf-8")
+        import os
+
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONUNBUFFERED"] = "1"
+        env["AUGMENT_PLAIN_LOG"] = "1"
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(project_root()),
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+        )
+        self._processes[proc.pid] = proc
+        self._log_handles[proc.pid] = log_handle
+
+        write_job_state(
+            str(self.job_state_path),
+            {
+                "status": "running",
+                "phase": "finalize",
+                "round": to_round or from_round,
+                "pid": proc.pid,
+                "log_path": str(log_path),
+                "error": None,
+                "finalize_from_round": from_round,
+                "finalize_to_round": to_round,
+                "finalize_canonical_round": canonical_round,
+                "finalize_overwrite_final": overwrite_final,
+            },
+        )
+        return {
+            "pid": proc.pid,
+            "phase": "finalize",
+            "round": to_round or from_round,
+            "log_path": str(log_path),
+            "python": self.python_executable,
+            "from_round": from_round,
+            "to_round": to_round,
+            "canonical_round": canonical_round,
+            "overwrite_final": overwrite_final,
+        }
 
     def _process_exit_code(self, pid: int) -> Optional[int]:
         proc = self._processes.get(int(pid))
@@ -264,5 +352,8 @@ class JobManager:
         return self._finalize_job(state, pid, exit_code, err or f"进程异常退出，退出码 {exit_code}")
 
     def read_log_tail(self, round_idx: int, phase: str = "train", max_chars: int = 6000) -> str:
-        log_path = self.log_dir / f"{phase}_round_{round_idx:02d}.log"
+        if phase == "finalize":
+            log_path = self.log_dir / "finalize.log"
+        else:
+            log_path = self.log_dir / f"{phase}_round_{round_idx:02d}.log"
         return self._read_log_tail(str(log_path), max_chars=max_chars)

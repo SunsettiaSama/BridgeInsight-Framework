@@ -7,17 +7,35 @@ from typing import Hashable, List, Tuple
 
 from src.chapter3_identifier.augment._bootstrap import resolve_path
 from src.chapter3_identifier.augment.annotation.gold_index import annotation_key
+from src.chapter3_identifier.augment.annotation.sample_key import pair_key_from_list
+
+PATH_KEY_SCHEMA_VERSION = 1
+PAIR_KEY_SCHEMA_VERSION = 2
+
+
+def _entry_pair_key(entry: dict) -> tuple | None:
+    pair_key = entry.get("pair_key")
+    if pair_key is None:
+        return None
+    return pair_key_from_list(pair_key)
 
 
 def _entry_key(entry: dict):
+    pair_key = _entry_pair_key(entry)
+    if pair_key is not None:
+        return pair_key
     file_path = (
         entry.get("file_path")
         or entry.get("inplane_file_path")
         or entry.get("outplane_file_path")
     )
     if not file_path:
-        raise ValueError("split entry 缺少 file_path/inplane_file_path/outplane_file_path")
+        raise ValueError("split entry 缺少 file_path/inplane_file_path/outplane_file_path/pair_key")
     return annotation_key(file_path, entry.get("window_index", 0))
+
+
+def _uses_pair_key(entries: List[dict]) -> bool:
+    return any(_entry_pair_key(entry) is not None for entry in entries)
 
 
 def _entry_label(entry: dict) -> Hashable:
@@ -42,6 +60,10 @@ def _label_strategy(entries: List[dict]) -> str:
 
 def _to_key_pairs(keys: list[tuple[str, int]]) -> list[list[object]]:
     return [[k[0], int(k[1])] for k in keys]
+
+
+def _to_pair_key_lists(keys: list[tuple]) -> list[list[object]]:
+    return [list(k) for k in keys]
 
 
 def _stratified_split_indices(
@@ -75,12 +97,16 @@ def _stratified_split_indices(
     return sorted(train_idx), sorted(val_idx)
 
 
-def load_saved_split_key_sets(split_path: str) -> tuple[set[tuple[str, int]], set[tuple[str, int]]]:
+def load_saved_split_key_sets(split_path: str) -> tuple[set, set]:
     path = resolve_path(split_path)
     if not path.exists():
         return set(), set()
     with open(path, "r", encoding="utf-8") as f:
         saved = json.load(f)
+    if "train_pair_keys" in saved or "val_pair_keys" in saved:
+        train_keys = {tuple(row) for row in saved.get("train_pair_keys", [])}
+        val_keys = {tuple(row) for row in saved.get("val_pair_keys", [])}
+        return train_keys, val_keys
     train_keys = {annotation_key(k[0], k[1]) for k in saved.get("train_keys", [])}
     val_keys = {annotation_key(k[0], k[1]) for k in saved.get("val_keys", [])}
     return train_keys, val_keys
@@ -104,17 +130,19 @@ def load_or_create_split(
     path.parent.mkdir(parents=True, exist_ok=True)
     train_keys = [keys[i] for i in train_idx]
     val_keys = [keys[i] for i in val_idx]
+    payload = {
+        "random_seed": random_seed,
+        "strategy": "stratified_resample",
+        "label_strategy": _label_strategy(entries),
+    }
+    if _uses_pair_key(entries):
+        payload["schema_version"] = PAIR_KEY_SCHEMA_VERSION
+        payload["train_pair_keys"] = _to_pair_key_lists(train_keys)
+        payload["val_pair_keys"] = _to_pair_key_lists(val_keys)
+    else:
+        payload["schema_version"] = PATH_KEY_SCHEMA_VERSION
+        payload["train_keys"] = _to_key_pairs(train_keys)
+        payload["val_keys"] = _to_key_pairs(val_keys)
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "train_keys": _to_key_pairs(train_keys),
-                "val_keys": _to_key_pairs(val_keys),
-                "random_seed": random_seed,
-                "strategy": "stratified_resample",
-                "label_strategy": _label_strategy(entries),
-            },
-            f,
-            ensure_ascii=False,
-            indent=2,
-        )
+        json.dump(payload, f, ensure_ascii=False, indent=2)
     return train_idx, val_idx

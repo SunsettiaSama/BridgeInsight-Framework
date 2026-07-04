@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Callable, Deque, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -107,4 +109,59 @@ class AsyncPsdPipeline:
         return time_batch, psd_batch
 
     def close(self) -> None:
+        self._executor.shutdown(wait=True)
+
+
+@dataclass
+class PreparedJointBatch:
+    idx_batch: List[int]
+    in_time_batch: torch.Tensor
+    out_time_batch: torch.Tensor
+    in_psd_batch: torch.Tensor
+    out_psd_batch: torch.Tensor
+    in_context_batch: Optional[torch.Tensor] = None
+    out_context_batch: Optional[torch.Tensor] = None
+    wind_features_batch: Optional[torch.Tensor] = None
+    window_slice_time_s: float = 0.0
+    context_load_time_s: float = 0.0
+    psd_time_s: float = 0.0
+
+
+class AsyncJointBatchPipeline:
+    """
+    异步联合 batch 准备：short window + long context + PSD 在后台线程计算，
+    主线程与 GPU forward 重叠下一 batch 的数据准备。
+    """
+
+    def __init__(
+        self,
+        prepare_fn: Callable[[List[int]], PreparedJointBatch],
+        workers: int = 2,
+        queue_depth: int = 2,
+    ):
+        self._prepare_fn = prepare_fn
+        self._executor = ThreadPoolExecutor(
+            max_workers=max(1, int(workers)),
+            thread_name_prefix="infer-joint-batch",
+        )
+        self._queue: Deque[Future] = deque()
+        self._max_depth = max(1, int(queue_depth))
+
+    def submit(self, ds_indices: List[int]) -> None:
+        if len(self._queue) >= self._max_depth:
+            raise RuntimeError(f"AsyncJointBatchPipeline 队列已满：depth={self._max_depth}")
+        self._queue.append(self._executor.submit(self._prepare_fn, list(ds_indices)))
+
+    def has_pending(self) -> bool:
+        return len(self._queue) > 0
+
+    def consume(self) -> PreparedJointBatch:
+        if not self._queue:
+            raise RuntimeError("AsyncJointBatchPipeline 无待处理 batch")
+        batch = self._queue.popleft().result()
+        return batch
+
+    def close(self) -> None:
+        while self._queue:
+            self._queue.popleft().result()
         self._executor.shutdown(wait=True)

@@ -13,7 +13,6 @@ from src.data_processer.signals.wavelets import denoise
 from src.chapter4_characteristics._bootstrap import ensure_paths
 
 ensure_paths()
-from src.chapter3_identifier.identifier.dl.runner import FullDatasetRunner
 from src.visualize_tools.web_dashboard import push as web_push
 from src.figure_paintings.figs_for_thesis.config import (
     ENG_FONT, CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE, VIV_VIB_COLOR,
@@ -24,7 +23,8 @@ _chapter4_dir = str(Path(__file__).parent)
 if _chapter4_dir not in sys.path:
     sys.path.insert(0, _chapter4_dir)
 from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import (
-    load_latest_result,
+    load_dl_result,
+    load_mecc_result,
     get_viv_samples as _pipeline_get_viv_samples,
 )
 
@@ -60,9 +60,6 @@ class Config:
     SPECTROGRAM_SEGMENT_S = 2   # 每段时长（秒）用于时频谱
 
     VIV_CLASS_ID = 1            # 涡激共振对应的类别编号
-
-    DL_RESULT_GLOB   = project_root / "results" / "identification_result"        / "res_cnn_full_dataset_*.json"
-    MECC_RESULT_GLOB = project_root / "results" / "identification_result_mecc_viv" / "mecc_viv_only_*.json"
 
 
 # ==================== 数据获取 ====================
@@ -365,13 +362,13 @@ def main():
     print("=" * 80)
 
     print("\n[步骤1] 加载 DL 识别结果...")
-    dl_result   = load_latest_result(Config.DL_RESULT_GLOB)
+    dl_result   = load_dl_result()
     dl_samples  = _pipeline_get_viv_samples(dl_result)
     print(f"✓ DL VIV 样本：{len(dl_samples)} 个")
     dl_plot = random_sample(dl_samples)
 
     print("\n[步骤2] 加载 MECC 识别结果...")
-    mecc_result  = load_latest_result(Config.MECC_RESULT_GLOB)
+    mecc_result  = load_mecc_result()
     mecc_samples = _pipeline_get_viv_samples(mecc_result)
     print(f"✓ MECC VIV 样本：{len(mecc_samples)} 个")
     mecc_plot = random_sample(mecc_samples)

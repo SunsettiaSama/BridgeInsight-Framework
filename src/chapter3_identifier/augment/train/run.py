@@ -25,6 +25,11 @@ from src.chapter3_identifier.augment.datasets.dual_stream_dataset import (
 )
 from src.chapter3_identifier.augment.features.spectrum import psd_bin_count
 from src.chapter3_identifier.augment.features.wind_features import WIND_FEATURE_DIM
+from src.chapter3_identifier.augment.filters import filter_excluded_sensors
+from src.chapter3_identifier.augment.migrate.build_pair_key_dataset import (
+    build_pair_key_entries,
+    validate_pair_key_entries,
+)
 from src.chapter3_identifier.augment.models.dual_stream_res_cnn import DualStreamResCNN
 from src.chapter3_identifier.augment.models.quad_stream_dual_head_res_cnn import (
     QuadStreamDualHeadContextResCNN,
@@ -37,7 +42,9 @@ from src.chapter3_identifier.augment.settings import (
     DualStreamResCNNConfig,
     get_round_dir,
     get_round_inference_path,
+    get_round_merged_training_pair_key_path,
     get_round_merged_training_path,
+    get_round_pair_key_migration_report_path,
     load_config,
     load_dual_stream_model_config,
 )
@@ -46,6 +53,12 @@ from src.chapter3_identifier.augment.train.trainer import (
     QuadStreamDualHeadTrainer,
 )
 from src.chapter3_identifier.augment.train.profile import load_training_profile
+from src.chapter3_identifier.augment.workflow_config import (
+    apply_workflow_to_runtime_cfg,
+    ensure_workflow_config,
+    resolve_round_workflow,
+    save_round_workflow_snapshot,
+)
 from src.chapter3_identifier.augment.train.warm_start import (
     create_frozen_teacher,
     load_dual_stream_checkpoint,
@@ -102,10 +115,141 @@ def _load_pair_hints_from_inference(cfg: dict, round_idx: int) -> dict[tuple[str
     return hints
 
 
+def _write_json_list(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(rows, f, ensure_ascii=False, indent=2)
+
+
 def _update_split_dataset_info(dataset_info: dict, cfg: dict, gold_keys: set[tuple[str, int]]) -> None:
     _, split_val_keys = load_saved_split_key_sets(cfg["split_indices_path"])
     dataset_info["gold_val_total"] = int(len(gold_keys & split_val_keys))
     dataset_info["split_val_total"] = int(len(split_val_keys))
+
+
+def _load_json_list(path: Path) -> list[dict]:
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    if isinstance(payload, list):
+        return payload
+    for key in ("records", "entries", "annotations"):
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            return rows
+    raise ValueError(f"{path} 缺少 list/records/entries/annotations")
+
+
+def _resolve_pair_key_training_path(cfg: dict, round_idx: int) -> Path:
+    configured = cfg.get("pair_key_training_path")
+    if configured:
+        return resolve_path(str(configured))
+    return get_round_merged_training_pair_key_path(cfg, round_idx)
+
+
+def _resolve_pair_key_prediction_fill(
+    cfg: dict,
+    round_idx: int,
+    merged_entries: list[dict],
+    train_profile: dict,
+    num_classes: int,
+) -> tuple[bool, str, dict[tuple[str, int], dict], dict, list[dict] | None]:
+    prediction_fill_mode = str(train_profile.get("prediction_fill_mode", "auto"))
+    enable_gold_fill = bool(train_profile.get("enable_gold_fill", False))
+    require_bidirectional_labels = bool(train_profile.get("require_bidirectional_labels", False))
+    min_pairs = int(train_profile.get("min_pairs_without_prediction", 1000))
+    base_pair_hints = _load_pair_hints_from_inference(cfg, round_idx) if enable_gold_fill else {}
+    base_entries, base_stats = build_pair_key_entries(
+        merged_entries,
+        pair_hints=base_pair_hints,
+        num_classes=num_classes,
+        enable_prediction_fill=False,
+        enable_gold_fill=enable_gold_fill,
+    )
+    use_prediction_fill = False
+    reason = "disabled"
+    if require_bidirectional_labels:
+        reason = "require_bidirectional_labels"
+    elif prediction_fill_mode == "always":
+        use_prediction_fill = True
+        reason = "always"
+    elif prediction_fill_mode == "auto":
+        use_prediction_fill = len(base_entries) < min_pairs
+        reason = "auto_insufficient_pairs" if use_prediction_fill else "auto_enough_pairs"
+
+    if not use_prediction_fill:
+        if not base_entries:
+            raise ValueError("pair_key 训练需要双向标注 pair；当前配置关闭了 prediction 补全且无可用 pair")
+        return False, reason, base_pair_hints, {
+            **base_stats,
+            "base_pair_total_without_prediction": int(len(base_entries)),
+            "pair_hints_total": int(len(base_pair_hints)),
+            "prediction_fill_mode": prediction_fill_mode,
+            "prediction_fill_used": False,
+            "prediction_fill_reason": reason,
+            "min_pairs_without_prediction": int(min_pairs),
+        }, base_entries
+
+    pair_hints = base_pair_hints if base_pair_hints else _load_pair_hints_from_inference(cfg, round_idx)
+    return True, reason, pair_hints, {
+        "base_pair_total_without_prediction": int(len(base_entries)),
+        "pair_hints_total": int(len(pair_hints)),
+        "prediction_fill_mode": prediction_fill_mode,
+        "prediction_fill_used": True,
+        "prediction_fill_reason": reason,
+        "min_pairs_without_prediction": int(min_pairs),
+    }, None
+
+
+def _load_or_build_pair_key_entries(
+    cfg: dict,
+    round_idx: int,
+    merged_entries: list[dict],
+    train_profile: dict,
+    num_classes: int,
+) -> tuple[list[dict], dict]:
+    pair_key_path = _resolve_pair_key_training_path(cfg, round_idx)
+    report_path = get_round_pair_key_migration_report_path(cfg, round_idx)
+    use_prediction_fill, _, pair_hints, selection_stats, cached_entries = _resolve_pair_key_prediction_fill(
+        cfg=cfg,
+        round_idx=round_idx,
+        merged_entries=merged_entries,
+        train_profile=train_profile,
+        num_classes=num_classes,
+    )
+    if cached_entries is not None:
+        pair_entries = cached_entries
+        build_stats = dict(selection_stats)
+    else:
+        pair_entries, build_stats = build_pair_key_entries(
+            merged_entries,
+            pair_hints=pair_hints,
+            num_classes=num_classes,
+            enable_prediction_fill=True,
+            enable_gold_fill=bool(train_profile.get("enable_gold_fill", False)),
+        )
+        build_stats = {**build_stats, **selection_stats}
+    validation = validate_pair_key_entries(pair_entries)
+    if not validation["valid"]:
+        raise ValueError(f"pair_key 数据集派生校验失败：{validation}")
+    report = {
+        "schema_version": 2,
+        "source_merged_training_path": str(get_round_merged_training_path(cfg, round_idx)),
+        "output_path": str(pair_key_path),
+        "build_stats": build_stats,
+        "validation": validation,
+    }
+    _write_json_list(pair_key_path, pair_entries)
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+    stats = {
+        **build_stats,
+        "pair_key_training_path": str(pair_key_path),
+        "pair_key_migration_report_path": str(report_path),
+        "pair_key_schema_version": 2,
+        "pair_key_validation": validation,
+        "pair_total": int(len(pair_entries)),
+    }
+    return pair_entries, stats
 
 
 def _select_pair_entries(
@@ -222,6 +366,10 @@ def run_training(
     profile_path: str | None = None,
 ) -> dict:
     cfg = load_config(config_path)
+    ensure_workflow_config(cfg)
+    resolved = resolve_round_workflow(cfg, round_idx)
+    snapshot_path = save_round_workflow_snapshot(cfg, round_idx, resolved)
+    cfg = apply_workflow_to_runtime_cfg(cfg, resolved)
     profile_payload = load_training_profile(cfg, round_idx, profile_path)
     train_profile = profile_payload["profile"]
     profile_meta = profile_payload["metadata"]
@@ -237,10 +385,35 @@ def run_training(
         f"round {round_idx} 训练数据：{'仅金标' if use_gold_only else '金标+人工'}，"
         f"共 {len(entries)} 条（prior_manual={len(prior_manual)}）"
     )
+    raw_entry_total = len(entries)
+    sensor_exclusion_enabled = bool(train_profile.get("enable_sensor_exclusion", False))
+    entries, exclude_stats = filter_excluded_sensors(
+        entries,
+        list(train_profile.get("exclude_sensor_ids", [])),
+        enabled=sensor_exclusion_enabled,
+    )
+    if sensor_exclusion_enabled and exclude_stats["exclude_sensor_ids"]:
+        logger.info(
+            "round %s 数据集传感器排除：exclude=%s，removed=%s，kept=%s，hits=%s",
+            round_idx,
+            exclude_stats["exclude_sensor_ids"],
+            exclude_stats["excluded_sensor_removed_total"],
+            len(entries),
+            exclude_stats["excluded_sensor_hit_counts"],
+        )
+    elif train_profile.get("exclude_sensor_ids"):
+        logger.info(
+            "round %s 数据集传感器排除已关闭：configured=%s，kept=%s",
+            round_idx,
+            list(train_profile.get("exclude_sensor_ids", [])),
+            len(entries),
+        )
     logger.info(
-        "round %s 训练集配置：train_val_ratio=%.3f, require_bidirectional=%s, gold_fill=%s, prediction_fill_mode=%s, min_no_pred_pairs=%s",
+        "round %s 训练集配置：train_val_ratio=%.3f, sensor_exclusion=%s, exclude_sensors=%s, require_bidirectional=%s, gold_fill=%s, prediction_fill_mode=%s, min_no_pred_pairs=%s",
         round_idx,
         float(train_profile["train_val_ratio"]),
+        sensor_exclusion_enabled,
+        list(train_profile.get("exclude_sensor_ids", [])),
         bool(train_profile["require_bidirectional_labels"]),
         bool(train_profile["enable_gold_fill"]),
         str(train_profile["prediction_fill_mode"]),
@@ -252,6 +425,10 @@ def run_training(
     model_cfg_dict = load_dual_stream_model_config(cfg.get("dual_stream_config"))
     psd_bins = psd_bin_count(cfg["fs"], cfg["nfft"], cfg["freq_max_hz"])
     model_cfg_dict.setdefault("spec_branch", {})["input_size"] = psd_bins
+    branch_dropout = float(train_profile["branch_dropout_prob"])
+    model_cfg_dict["dropout_prob"] = branch_dropout
+    model_cfg_dict.setdefault("time_branch", {})["dropout_prob"] = branch_dropout
+    model_cfg_dict.setdefault("spec_branch", {})["dropout_prob"] = branch_dropout
     model_cfg = DualStreamResCNNConfig.from_dict(model_cfg_dict)
 
     batch_size = int(train_profile["batch_size"])
@@ -264,10 +441,16 @@ def run_training(
     num_classes = int(cfg.get("num_classes", len(label_names)))
     dataset_info: dict = {
         "round_idx": int(round_idx),
+        "merged_total_before_sensor_filter": int(raw_entry_total),
         "merged_total": int(len(entries)),
+        **exclude_stats,
         "training_profile": profile_meta["summary"],
         "training_profile_source": profile_meta["source"],
         "training_profile_path": profile_meta["path"],
+        "workflow_config_version": int(resolved.get("workflow_config_version", 0)),
+        "workflow_resolved_path": str(snapshot_path),
+        "workflow_config_path": resolved["metadata"]["workflow_config_path"],
+        "workflow_override_sources": list(resolved["metadata"].get("override_sources", [])),
     }
     gold_keys = set(build_gold_index(store.load_gold()).keys())
     dataset_info["gold_total"] = int(len(gold_keys))
@@ -275,6 +458,10 @@ def run_training(
     dataset_info["split_seed"] = int(split_seed)
     train_val_ratio = float(train_profile["train_val_ratio"])
     dataset_info["train_val_ratio"] = float(train_val_ratio)
+    dataset_info["branch_dropout_prob"] = float(branch_dropout)
+    dataset_info["weight_decay"] = float(train_profile["weight_decay"])
+    dataset_info["early_stopping_patience"] = int(train_profile["early_stopping_patience"])
+    dataset_info["early_stopping_min_delta"] = float(train_profile["early_stopping_min_delta"])
 
     model_type = str(train_profile["model_type"])
 
@@ -298,19 +485,41 @@ def run_training(
         wind_feature_dim = int(train_profile.get("wind_feature_dim", WIND_FEATURE_DIM)) if enable_wind_features else 0
         dataset_info["enable_wind_features"] = bool(enable_wind_features)
         dataset_info["wind_feature_dim"] = int(wind_feature_dim)
-        pair_entries, pair_stats = _select_pair_entries(
-            cfg=cfg,
-            entries=entries,
-            round_idx=round_idx,
-            train_profile=train_profile,
-            num_classes=num_classes,
-        )
-        dataset_info.update(pair_stats)
+        use_pair_key_dataset = bool(cfg.get("use_pair_key_training_dataset", False))
+        dataset_info["use_pair_key_training_dataset"] = bool(use_pair_key_dataset)
+        if use_pair_key_dataset:
+            pair_entries, pair_stats = _load_or_build_pair_key_entries(
+                cfg=cfg,
+                round_idx=round_idx,
+                merged_entries=entries,
+                train_profile=train_profile,
+                num_classes=num_classes,
+            )
+            pair_entries, pair_exclude_stats = filter_excluded_sensors(
+                pair_entries,
+                list(train_profile.get("exclude_sensor_ids", [])),
+                enabled=sensor_exclusion_enabled,
+            )
+            pair_stats.update(pair_exclude_stats)
+            pair_stats["pair_total_after_sensor_filter"] = int(len(pair_entries))
+            if not pair_entries:
+                raise ValueError("pair_key 训练集在传感器排除后为空")
+            dataset_info.update(pair_stats)
+        else:
+            pair_entries, pair_stats = _select_pair_entries(
+                cfg=cfg,
+                entries=entries,
+                round_idx=round_idx,
+                train_profile=train_profile,
+                num_classes=num_classes,
+            )
+            dataset_info.update(pair_stats)
         logger.info(
-            "round %s 配对样本：pair_total=%s，base_no_pred=%s，hint_total=%s，prediction_fill=%s(%s)，"
+            "round %s 配对样本：pair_total=%s，pair_key=%s，base_no_pred=%s，hint_total=%s，prediction_fill=%s(%s)，"
             "in(source m/g/gf/p)=%s/%s/%s/%s，out(source m/g/gf/p)=%s/%s/%s/%s",
             round_idx,
             dataset_info.get("pair_total", 0),
+            use_pair_key_dataset,
             dataset_info.get("base_pair_total_without_prediction", 0),
             dataset_info.get("pair_hints_total", 0),
             dataset_info.get("prediction_fill_used", False),
@@ -354,10 +563,14 @@ def run_training(
         dataset_info["round2_bad_train_rate"] = float(getattr(train_ds, "round2_bad_rate", 0.0))
         dataset_info["round2_bad_train_reasons"] = dict(getattr(train_ds, "round2_bad_reason_counts", {}))
         dataset_info["round2_bad_train_examples"] = list(getattr(train_ds, "round2_bad_examples", []))
+        dataset_info["round2_feature_cache_train_hits"] = int(getattr(train_ds, "round2_feature_cache_hits", 0))
+        dataset_info["round2_feature_cache_train_computed"] = int(getattr(train_ds, "round2_feature_cache_computed", 0))
         dataset_info["round2_bad_val_total"] = int(getattr(val_ds, "round2_bad_total", 0))
         dataset_info["round2_bad_val_rate"] = float(getattr(val_ds, "round2_bad_rate", 0.0))
         dataset_info["round2_bad_val_reasons"] = dict(getattr(val_ds, "round2_bad_reason_counts", {}))
         dataset_info["round2_bad_val_examples"] = list(getattr(val_ds, "round2_bad_examples", []))
+        dataset_info["round2_feature_cache_val_hits"] = int(getattr(val_ds, "round2_feature_cache_hits", 0))
+        dataset_info["round2_feature_cache_val_computed"] = int(getattr(val_ds, "round2_feature_cache_computed", 0))
         model_kwargs = {
             "time_branch_cfg": model_cfg.time_branch,
             "spec_branch_cfg": model_cfg.spec_branch,
@@ -484,6 +697,8 @@ def run_training(
             same_structure_teacher=same_structure_teacher,
             same_structure_reg_lambda=same_structure_reg_lambda,
             same_structure_reg_temperature=same_structure_reg_temperature,
+            early_stopping_patience=int(train_profile["early_stopping_patience"]),
+            early_stopping_min_delta=float(train_profile["early_stopping_min_delta"]),
             device=str(device),
             label_names=label_names,
             num_classes=num_classes,
@@ -548,6 +763,8 @@ def run_training(
         teacher_model=teacher,
         teacher_reg_lambda=teacher_reg_lambda,
         teacher_reg_temperature=float(cfg.get("teacher_reg_temperature", 2.0)),
+        early_stopping_patience=int(train_profile["early_stopping_patience"]),
+        early_stopping_min_delta=float(train_profile["early_stopping_min_delta"]),
         device=str(device),
         label_names=label_names,
         num_classes=num_classes,

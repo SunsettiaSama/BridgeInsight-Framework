@@ -25,6 +25,103 @@ def _make_extractor(enable_denoise: bool = False, freq_threshold=None):
     return VICWindowExtractor(enable_denoise=enable_denoise, freq_threshold=freq_threshold)
 
 
+def _project_root() -> Path:
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "src").exists() and (parent / "config").exists():
+            return parent
+    return Path.cwd()
+
+
+def _file_length_snapshot_path() -> Path:
+    return _project_root() / "results" / "full_vib_metadata" / "vic_file_length_snapshot.json"
+
+
+def _load_file_length_snapshot() -> dict:
+    path = _file_length_snapshot_path()
+    if not path.exists():
+        return {"version": 1, "files": {}}
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f) or {}
+    if not isinstance(payload.get("files"), dict):
+        payload["files"] = {}
+    payload["version"] = int(payload.get("version", 1))
+    return payload
+
+
+def _save_file_length_snapshot(snapshot: dict) -> None:
+    path = _file_length_snapshot_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(snapshot, f, ensure_ascii=False)
+    tmp_path.replace(path)
+
+
+def _snapshot_key(file_path: str) -> str:
+    return str(Path(file_path).resolve())
+
+
+def _cached_file_length(snapshot: dict, file_path: str) -> int | None:
+    path = Path(file_path)
+    if not path.exists():
+        return None
+    stat = path.stat()
+    item = snapshot.get("files", {}).get(_snapshot_key(file_path))
+    if not isinstance(item, dict):
+        return None
+    if int(item.get("mtime_ns", -1)) != int(stat.st_mtime_ns):
+        return None
+    if int(item.get("size", -1)) != int(stat.st_size):
+        return None
+    length = int(item.get("length", 0))
+    return length if length > 0 else None
+
+
+def _store_file_length(snapshot: dict, file_path: str, length: int) -> None:
+    path = Path(file_path)
+    stat = path.stat()
+    snapshot.setdefault("files", {})[_snapshot_key(file_path)] = {
+        "mtime_ns": int(stat.st_mtime_ns),
+        "size": int(stat.st_size),
+        "length": int(length),
+    }
+
+
+def _load_file_lengths_with_snapshot(
+    file_paths: list[str],
+    extractor,
+    desc: str,
+) -> Dict[str, int]:
+    snapshot = _load_file_length_snapshot()
+    lengths: Dict[str, int] = {}
+    missing: list[str] = []
+    for fp in file_paths:
+        cached = _cached_file_length(snapshot, fp)
+        if cached is None:
+            missing.append(fp)
+        else:
+            lengths[fp] = int(cached)
+
+    for fp in iter_progress(missing, desc=desc, unit="file"):
+        vic_data = extractor.unpacker.VIC_DATA_Unpack(str(fp))
+        length = len(vic_data)
+        lengths[fp] = int(length)
+        _store_file_length(snapshot, fp, int(length))
+        del vic_data
+
+    if missing:
+        _save_file_length_snapshot(snapshot)
+    logger.info(
+        "%s：文件长度快照命中 %s/%s，新增读取 %s 个",
+        desc,
+        len(file_paths) - len(missing),
+        len(file_paths),
+        len(missing),
+    )
+    return lengths
+
+
 # ---------------------------------------------------------------------------
 # 轻量推理数据集（必须在模块顶层定义，保证 Windows spawn 多进程可 pickle）
 # ---------------------------------------------------------------------------
@@ -456,8 +553,6 @@ class FullDatasetRunner:
         """
         if extractor is None:
             extractor = _make_extractor(enable_denoise=False)
-        file_length_cache: Dict[str, int] = {}
-
         seen: set = set()
         unique_fps_dedup = []
         for rec in records:
@@ -466,12 +561,11 @@ class FullDatasetRunner:
                 seen.add(fp)
                 unique_fps_dedup.append(fp)
 
-        for fp in iter_progress(
-            unique_fps_dedup, desc="[面内] 预验证文件长度", unit="file"
-        ):
-            vic_data = extractor.unpacker.VIC_DATA_Unpack(str(fp))
-            file_length_cache[fp] = len(vic_data)
-            del vic_data
+        file_length_cache = _load_file_lengths_with_snapshot(
+            unique_fps_dedup,
+            extractor,
+            "[面内] 预验证文件长度",
+        )
 
         valid_records: list = []
         valid_orig_indices: List[int] = []
@@ -505,8 +599,6 @@ class FullDatasetRunner:
         """
         if extractor is None:
             extractor = _make_extractor(enable_denoise=False)
-        file_length_cache: Dict[str, int] = {}
-
         seen: set = set()
         unique_fps_dedup = []
         for rec in records:
@@ -515,12 +607,11 @@ class FullDatasetRunner:
                 seen.add(fp)
                 unique_fps_dedup.append(fp)
 
-        for fp in iter_progress(
-            unique_fps_dedup, desc="[面外] 预验证文件长度", unit="file"
-        ):
-            vic_data = extractor.unpacker.VIC_DATA_Unpack(str(fp))
-            file_length_cache[fp] = len(vic_data)
-            del vic_data
+        file_length_cache = _load_file_lengths_with_snapshot(
+            unique_fps_dedup,
+            extractor,
+            "[面外] 预验证文件长度",
+        )
 
         valid_records: list = []
         valid_orig_indices: List[int] = []

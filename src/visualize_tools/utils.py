@@ -15,6 +15,7 @@ import matplotlib.animation as animation
 from pathlib import Path
 from tkinter import Tk, Label, Button, Entry, StringVar, filedialog, messagebox
 from PIL import Image, ImageTk
+from src.visualize_tools.web_dashboard import DEFAULT_PORT
 
 GLOBAL_FONT_SIZE = 10
 plt.style.use('default')

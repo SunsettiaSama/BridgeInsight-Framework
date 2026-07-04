@@ -11,7 +11,6 @@ from src.chapter3_identifier.augment.datasets.dual_stream_dataset import (
 )
 from src.chapter3_identifier.augment.features.wind_features import WIND_FEATURE_DIM
 from src.chapter3_identifier.augment.settings import (
-    get_round_train_profile_path,
     load_best_params,
     resolve_path,
 )
@@ -88,6 +87,21 @@ def _ratio_float(value: Any, name: str) -> float:
     return out
 
 
+def _dropout_float(value: Any, name: str) -> float:
+    out = float(value)
+    if not 0.0 <= out < 1.0:
+        raise ValueError(f"{name} 必须在 [0, 1) 之间")
+    return out
+
+
+def _string_list(value: Any, name: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{name} 必须是字符串列表")
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
 def default_training_profile(cfg: dict, round_idx: int) -> dict:
     best = _best_params(cfg)
     model_type = _default_model_type(round_idx)
@@ -100,9 +114,11 @@ def default_training_profile(cfg: dict, round_idx: int) -> dict:
         "context_input_size": int(cfg.get("context_input_size", DEFAULT_CONTEXT_INPUT_SIZE)),
         "context_total_seconds": float(cfg.get("context_total_seconds", DEFAULT_CONTEXT_TOTAL_SECONDS)),
         "context_allow_cross_file": bool(cfg.get("context_allow_cross_file", DEFAULT_CONTEXT_ALLOW_CROSS_FILE)),
-        "enable_wind_features": bool(cfg.get("enable_wind_features", True)),
-        "wind_feature_dim": int(cfg.get("wind_feature_dim", 5)),
+        "enable_wind_features": bool(cfg.get("enable_wind_features", False)),
+        "wind_feature_dim": int(cfg.get("wind_feature_dim", 0)),
         "train_val_ratio": float(cfg.get("train_val_ratio", 0.8)),
+        "enable_sensor_exclusion": bool(cfg.get("enable_sensor_exclusion", False)),
+        "exclude_sensor_ids": list(cfg.get("exclude_sensor_ids", [])),
         "require_bidirectional_labels": False,
         "enable_gold_fill": False,
         "prediction_fill_mode": str(cfg.get("prediction_fill_mode", "auto")),
@@ -117,15 +133,18 @@ def default_training_profile(cfg: dict, round_idx: int) -> dict:
         "same_structure_lr_scale": float(cfg.get("same_structure_lr_scale", 0.3)),
         "inplane_loss_weight": float(cfg.get("round2_inplane_loss_weight", 1.0)),
         "outplane_loss_weight": float(cfg.get("round2_outplane_loss_weight", 1.0)),
+        "branch_dropout_prob": float(cfg.get("branch_dropout_prob", cfg.get("dropout_prob", 0.2))),
         "fusion_hidden_dim": int(cfg.get("round2_fusion_hidden_dim", 128)),
-        "fusion_dropout": float(cfg.get("round2_fusion_dropout", 0.1)),
+        "fusion_dropout": float(cfg.get("round2_fusion_dropout", 0.25)),
         "cross_attn_heads": int(cfg.get("round2_cross_attn_heads", 4)),
         "epochs": int(cfg.get("epochs", 25)),
         "batch_size": int(best.get("batch_size", cfg.get("batch_size", 16))),
         "learning_rate": float(best.get("learning_rate", cfg.get("learning_rate", 1e-4))),
-        "weight_decay": float(best.get("weight_decay", cfg.get("weight_decay", 1e-5))),
+        "weight_decay": float(cfg.get("weight_decay", best.get("weight_decay", 1e-5))),
         "gradient_clip_norm": float(best.get("gradient_clip_norm", cfg.get("gradient_clip_norm", 0.5))),
         "focal_gamma": float(cfg.get("focal_gamma", 2.0)),
+        "early_stopping_patience": int(cfg.get("early_stopping_patience", 5)),
+        "early_stopping_min_delta": float(cfg.get("early_stopping_min_delta", 0.0)),
     }
 
 
@@ -169,6 +188,8 @@ def normalize_training_profile(payload: dict, cfg: dict, round_idx: int) -> dict
         "enable_wind_features": _as_bool(merged["enable_wind_features"]),
         "wind_feature_dim": int(merged["wind_feature_dim"]),
         "train_val_ratio": _ratio_float(merged["train_val_ratio"], "train_val_ratio"),
+        "enable_sensor_exclusion": _as_bool(merged["enable_sensor_exclusion"]),
+        "exclude_sensor_ids": _string_list(merged.get("exclude_sensor_ids"), "exclude_sensor_ids"),
         "require_bidirectional_labels": _as_bool(merged["require_bidirectional_labels"]),
         "enable_gold_fill": _as_bool(merged["enable_gold_fill"]),
         "prediction_fill_mode": prediction_fill_mode,
@@ -189,8 +210,9 @@ def normalize_training_profile(payload: dict, cfg: dict, round_idx: int) -> dict
         "same_structure_lr_scale": _positive_float(merged["same_structure_lr_scale"], "same_structure_lr_scale"),
         "inplane_loss_weight": _positive_float(merged["inplane_loss_weight"], "inplane_loss_weight"),
         "outplane_loss_weight": _positive_float(merged["outplane_loss_weight"], "outplane_loss_weight"),
+        "branch_dropout_prob": _dropout_float(merged["branch_dropout_prob"], "branch_dropout_prob"),
         "fusion_hidden_dim": _positive_int(merged["fusion_hidden_dim"], "fusion_hidden_dim"),
-        "fusion_dropout": _nonnegative_float(merged["fusion_dropout"], "fusion_dropout"),
+        "fusion_dropout": _dropout_float(merged["fusion_dropout"], "fusion_dropout"),
         "cross_attn_heads": _positive_int(merged["cross_attn_heads"], "cross_attn_heads"),
         "epochs": _positive_int(merged["epochs"], "epochs"),
         "batch_size": _positive_int(merged["batch_size"], "batch_size"),
@@ -198,9 +220,16 @@ def normalize_training_profile(payload: dict, cfg: dict, round_idx: int) -> dict
         "weight_decay": _nonnegative_float(merged["weight_decay"], "weight_decay"),
         "gradient_clip_norm": _nonnegative_float(merged["gradient_clip_norm"], "gradient_clip_norm"),
         "focal_gamma": _nonnegative_float(merged["focal_gamma"], "focal_gamma"),
+        "early_stopping_patience": int(merged["early_stopping_patience"]),
+        "early_stopping_min_delta": _nonnegative_float(
+            merged["early_stopping_min_delta"],
+            "early_stopping_min_delta",
+        ),
     }
-    if normalized["fusion_dropout"] >= 1.0:
-        raise ValueError("fusion_dropout 必须小于 1")
+    if normalized["early_stopping_patience"] < 0:
+        raise ValueError("early_stopping_patience 不能小于 0")
+    normalized["enable_wind_features"] = False
+    normalized["wind_feature_dim"] = 0
     if normalized["wind_feature_dim"] < 0:
         raise ValueError("wind_feature_dim 不能小于 0")
     if normalized["enable_wind_features"] and normalized["wind_feature_dim"] != WIND_FEATURE_DIM:
@@ -231,6 +260,8 @@ def profile_summary(profile: dict) -> dict:
         "enable_wind_features": bool(profile["enable_wind_features"]),
         "wind_feature_dim": int(profile["wind_feature_dim"]),
         "train_val_ratio": float(profile["train_val_ratio"]),
+        "enable_sensor_exclusion": bool(profile["enable_sensor_exclusion"]),
+        "exclude_sensor_ids": list(profile.get("exclude_sensor_ids", [])),
         "require_bidirectional_labels": bool(profile["require_bidirectional_labels"]),
         "enable_gold_fill": bool(profile["enable_gold_fill"]),
         "prediction_fill_mode": str(profile["prediction_fill_mode"]),
@@ -240,6 +271,11 @@ def profile_summary(profile: dict) -> dict:
         "enable_same_structure_regularization": bool(profile["enable_same_structure_regularization"]),
         "same_structure_reg_lambda": float(profile["same_structure_reg_lambda"]),
         "same_structure_lr_scale": float(profile["same_structure_lr_scale"]),
+        "branch_dropout_prob": float(profile["branch_dropout_prob"]),
+        "fusion_dropout": float(profile["fusion_dropout"]),
+        "weight_decay": float(profile["weight_decay"]),
+        "early_stopping_patience": int(profile["early_stopping_patience"]),
+        "early_stopping_min_delta": float(profile["early_stopping_min_delta"]),
         "epochs": int(profile["epochs"]),
         "batch_size": int(profile["batch_size"]),
         "learning_rate": float(profile["learning_rate"]),
@@ -248,47 +284,47 @@ def profile_summary(profile: dict) -> dict:
     }
 
 
-def _profile_path(cfg: dict, round_idx: int, profile_path: str | None = None) -> Path:
-    if profile_path:
-        return resolve_path(profile_path)
-    return get_round_train_profile_path(cfg, round_idx)
-
 
 def load_training_profile(cfg: dict, round_idx: int, profile_path: str | None = None) -> dict:
-    path = _profile_path(cfg, round_idx, profile_path)
-    source = "default"
-    payload: dict = {}
-    if path.exists():
+    from src.chapter3_identifier.augment.workflow_config import (
+        ensure_workflow_config,
+        resolve_round_workflow,
+        save_round_workflow_snapshot,
+        training_profile_from_workflow,
+    )
+
+    if profile_path:
+        path = resolve_path(profile_path)
         with open(path, "r", encoding="utf-8") as f:
             payload = json.load(f) or {}
-        source = "saved"
-    profile = normalize_training_profile(payload, cfg, round_idx)
-    return {
-        "profile": profile,
-        "metadata": {
-            "source": source,
-            "path": str(path),
-            "round_idx": int(round_idx),
-            "schema_version": SCHEMA_VERSION,
-            "summary": profile_summary(profile),
-        },
-    }
+        profile = normalize_training_profile(payload, cfg, round_idx)
+        return {
+            "profile": profile,
+            "metadata": {
+                "source": "explicit_profile_path",
+                "path": str(path),
+                "round_idx": int(round_idx),
+                "schema_version": SCHEMA_VERSION,
+                "summary": profile_summary(profile),
+            },
+        }
+
+    ensure_workflow_config(cfg)
+    resolved = resolve_round_workflow(cfg, round_idx)
+    save_round_workflow_snapshot(cfg, round_idx, resolved)
+    return training_profile_from_workflow(resolved, cfg, round_idx)
 
 
 def save_training_profile(cfg: dict, round_idx: int, payload: dict) -> dict:
-    path = get_round_train_profile_path(cfg, round_idx)
-    profile = normalize_training_profile(payload, cfg, round_idx)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(profile, f, ensure_ascii=False, indent=2)
-    return load_training_profile(cfg, round_idx, str(path))
+    from src.chapter3_identifier.augment.workflow_config import save_round_training_override
+
+    return save_round_training_override(cfg, round_idx, payload)
 
 
 def reset_training_profile(cfg: dict, round_idx: int) -> dict:
-    path = get_round_train_profile_path(cfg, round_idx)
-    if path.exists():
-        path.unlink()
-    return load_training_profile(cfg, round_idx)
+    from src.chapter3_identifier.augment.workflow_config import reset_round_training_override
+
+    return reset_round_training_override(cfg, round_idx)
 
 
 def training_profile_options() -> dict:

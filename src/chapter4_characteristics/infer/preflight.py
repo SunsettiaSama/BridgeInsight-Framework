@@ -1,7 +1,6 @@
 ﻿from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import torch
 import yaml
@@ -13,8 +12,8 @@ ensure_paths()
 logger = logging.getLogger(__name__)
 
 
-def run_preflight(config_path: str | None = None) -> dict:
-    cfg = load_config(config_path)
+def run_preflight(config_path: str | None = None, cfg: dict | None = None) -> dict:
+    cfg = cfg if cfg is not None else load_config(config_path)
     issues: list[str] = []
     ok_items: list[str] = []
 
@@ -37,11 +36,13 @@ def run_preflight(config_path: str | None = None) -> dict:
     else:
         ok_items.append(f"checkpoint: {ckpt}")
 
-    wind_path = resolve_path(cfg["wind_metadata_path"])
-    if not wind_path.exists():
-        issues.append(f"风元数据不存在（enrich 需要）：{wind_path}")
-    else:
-        ok_items.append(f"wind metadata: {wind_path.name}")
+    wind_metadata_path = cfg.get("wind_metadata_path")
+    if wind_metadata_path:
+        wind_path = resolve_path(wind_metadata_path)
+        if not wind_path.exists():
+            issues.append(f"风元数据不存在（enrich 需要）：{wind_path}")
+        else:
+            ok_items.append(f"wind metadata: {wind_path.name}")
 
     cuda_ok = torch.cuda.is_available()
     ok_items.append(f"cuda: {cuda_ok}")

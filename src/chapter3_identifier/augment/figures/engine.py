@@ -42,6 +42,7 @@ class FigureRenderEngine:
         self._mpl_lock = threading.Lock()
         self._pending: Dict[str, Future] = {}
         self._pending_ctx: Dict[str, Future] = {}
+        self._pending_wind: Dict[str, Future] = {}
         self._wind_stats: Dict[str, dict] = {}
 
     def shutdown(self) -> None:
@@ -52,16 +53,23 @@ class FigureRenderEngine:
         with self._lock:
             pending = list(self._pending.values())
             pending_ctx = list(self._pending_ctx.values())
+            pending_wind = list(self._pending_wind.values())
             self._pending.clear()
             self._pending_ctx.clear()
-        for fut in pending + pending_ctx:
+            self._pending_wind.clear()
+        for fut in pending + pending_ctx + pending_wind:
             fut.cancel()
 
     def reset_inflight(self) -> None:
         with self._lock:
-            futures = list(self._pending.values()) + list(self._pending_ctx.values())
+            futures = (
+                list(self._pending.values())
+                + list(self._pending_ctx.values())
+                + list(self._pending_wind.values())
+            )
             self._pending.clear()
             self._pending_ctx.clear()
+            self._pending_wind.clear()
         for fut in futures:
             fut.cancel()
 
@@ -189,6 +197,14 @@ class FigureRenderEngine:
 
     def sample_ready(self, round_idx: int, sample_idx: int, layout_profile: str = "wide_fill_v3") -> bool:
         return self._cache.has_all(self._sample_keys(round_idx, sample_idx, layout_profile))
+
+    def wind_ready(self, round_idx: int, sample_idx: int, layout_profile: str = "wide_fill_v3") -> bool:
+        return self._cache.has_all(
+            [
+                self._sample_key(round_idx, sample_idx, name, layout_profile)
+                for name in _WIND_FIGURE_NAMES
+            ]
+        )
 
     def context_ready(
         self,
@@ -454,6 +470,20 @@ class FigureRenderEngine:
             lambda: self._store_context_bundle(record, direction, ctx),
         )
 
+    def preload_wind(self, record: dict, layout_profile: str = "wide_fill_v3", round_idx: int = 1) -> None:
+        sample_idx = int(record["sample_idx"])
+        if self.wind_ready(round_idx, sample_idx, layout_profile):
+            return
+        wind_key = f"{round_idx}:{sample_idx}:{layout_profile}:wind"
+        with self._lock:
+            if wind_key in self._pending_wind:
+                return
+        self._submit(
+            self._pending_wind,
+            wind_key,
+            lambda: self._store_wind_figure(record, layout_profile=layout_profile, round_idx=round_idx),
+        )
+
     def preload_bundle(self, record: dict, ctx: ContextParams) -> None:
         self.preload_context(record, ctx)
         self.preload_sample(record, layout_profile=ctx.layout_profile, round_idx=ctx.round_idx)
@@ -488,8 +518,8 @@ class FigureRenderEngine:
             png = self._cache.get(key)
             if png is not None:
                 return png
-            self._store_wind_figure(record, layout_profile=layout_profile, round_idx=round_idx)
-            return self._cache.get(key)
+            self.preload_wind(record, layout_profile=layout_profile, round_idx=round_idx)
+            return None
         png = self._cache.get(
             self._sample_key(round_idx, sample_idx, figure_name, layout_profile, prediction_direction)
         )

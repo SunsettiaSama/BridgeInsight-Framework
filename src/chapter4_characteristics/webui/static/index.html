@@ -560,8 +560,9 @@ const TABS = [
   { id: 'stats-3', label: '其他', section: '类别统计' },
   { id: 'others', label: 'Others 调查', section: '调查' },
 ];
-const CLASS_NAMES = ['随机振动', 'VIV', 'RWIV', '其他'];
-let state = { tab: 'infer', othersPage: 0, selectedOthers: null, jobPoll: null, useDemo: false };
+const DEFAULT_CLASS_NAMES = ['随机振动', 'VIV', 'RWIV', '其他'];
+let CLASS_NAMES = [...DEFAULT_CLASS_NAMES];
+let state = { tab: 'infer', othersPage: 0, selectedOthers: null, jobPoll: null, useDemo: false, appConfig: null };
 
 function $(id) { return document.getElementById(id); }
 function withMode(path) {
@@ -571,6 +572,7 @@ function withMode(path) {
 
 function initTabs() {
   const nav = $('sidebarNav');
+  nav.innerHTML = '';
   let lastSection = '';
   TABS.forEach(t => {
     if (t.section !== lastSection) {
@@ -670,9 +672,39 @@ async function api(path, opts) {
   return r.blob();
 }
 
+function applyAppConfig(cfg) {
+  const labels = Array.isArray(cfg.label_names) && cfg.label_names.length ? cfg.label_names : DEFAULT_CLASS_NAMES;
+  CLASS_NAMES = DEFAULT_CLASS_NAMES.map((fallback, i) => labels[i] || fallback);
+  for (let i = 0; i < 4; i++) {
+    const tab = TABS.find(t => t.id === `stats-${i}`);
+    if (tab) tab.label = CLASS_NAMES[i];
+  }
+  state.appConfig = cfg;
+  renderConfigSummary();
+}
+
+async function loadAppConfig() {
+  const cfg = await api('/api/config');
+  applyAppConfig(cfg);
+}
+
+function renderConfigSummary() {
+  const cfg = state.appConfig;
+  const el = $('statusLine');
+  if (!cfg) {
+    el.hidden = true;
+    return;
+  }
+  const round = cfg.canonical_round ?? 'custom';
+  const checkpoint = cfg.identifier_checkpoint_path || '未配置';
+  const checkpointState = cfg.identifier_checkpoint_exists ? 'exists' : 'missing';
+  el.hidden = false;
+  el.textContent = `mode: ${state.useDemo ? 'demo' : 'default'} | config: ${cfg.config_path || 'workflow snapshot'} | round: ${round} | checkpoint: ${checkpointState} | batch: ${cfg.infer_batch_size} | ${checkpoint}`;
+}
+
 async function refreshStatus() {
   const st = await api('/api/status');
-  $('statusLine').textContent = `mode: ${state.useDemo ? 'demo' : 'default'} | inference: ${st.inference_ready} | enrich: ${st.enrich_ready}`;
+  renderConfigSummary();
   setReady($('stInfer'), st.inference_ready);
   setReady($('stEnrich'), st.enrich_ready);
   if (st.class_counts) renderDist(st.class_counts);
@@ -815,6 +847,8 @@ $('useDemo').onchange = async () => {
   if (state.useDemo) {
     await api('/api/demo/setup', { method: 'POST' });
   }
+  await loadAppConfig();
+  initTabs();
   state.othersPage = 0;
   state.selectedOthers = null;
   refreshStatus();
@@ -827,11 +861,20 @@ $('useDemo').onchange = async () => {
   if (state.tab === 'others') loadOthersQueue();
 };
 
-initTabs();
-state.useDemo = localStorage.getItem('chapter4_use_demo') === '1';
-$('useDemo').checked = state.useDemo;
-refreshStatus();
-setInterval(refreshStatus, 8000);
+async function boot() {
+  state.useDemo = localStorage.getItem('chapter4_use_demo') === '1';
+  $('useDemo').checked = state.useDemo;
+  if (state.useDemo) {
+    await api('/api/demo/setup', { method: 'POST' });
+  }
+  await loadAppConfig();
+  initTabs();
+  refreshStatus();
+  pollInferMonitor();
+  setInterval(refreshStatus, 8000);
+}
+
+boot();
 </script>
 </body>
 </html>

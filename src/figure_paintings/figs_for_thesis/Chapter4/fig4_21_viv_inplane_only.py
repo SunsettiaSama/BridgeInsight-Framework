@@ -17,7 +17,7 @@ from src.figure_paintings.figs_for_thesis.config import (
 _chapter4_dir = str(Path(__file__).parent)
 if _chapter4_dir not in sys.path:
     sys.path.insert(0, _chapter4_dir)
-from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import load_latest_result
+from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import load_dl_result
 
 
 # ==================== 常量配置 ====================
@@ -45,8 +45,6 @@ class Config:
     GRID_LINESTYLE = '--'
 
     APPLY_DENOISE = False
-
-    DL_RESULT_GLOB = project_root / "results" / "identification_result" / "res_cnn_full_dataset_*.json"
 
 
 # ==================== 数据筛选 ====================
@@ -202,7 +200,7 @@ def main():
     print("=" * 80)
 
     print("\n[步骤1] 加载 DL 识别结果...")
-    dl_result = load_latest_result(Config.DL_RESULT_GLOB)
+    dl_result = load_dl_result()
 
     print("\n[步骤2] 筛选仅面内 VIV 样本...")
     inplane_only = get_inplane_only_samples(dl_result)

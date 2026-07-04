@@ -142,6 +142,14 @@ body{display:flex;height:100vh;background:var(--bg);color:var(--text);
 .col-btn:hover{background:var(--btn-hover);color:var(--text)}
 .col-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 
+.sort-group{display:flex;gap:3px}
+.sort-btn{
+  background:var(--btn-bg);border:1px solid var(--border);
+  color:var(--dim);border-radius:4px;padding:3px 9px;
+  cursor:pointer;font-size:11px;transition:all .12s;user-select:none}
+.sort-btn:hover{background:var(--btn-hover);color:var(--text)}
+.sort-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+
 #page-count{font-size:11px;color:var(--dim);white-space:nowrap}
 
 #grid-wrap{flex:1;overflow-y:auto;padding:12px}
@@ -224,6 +232,10 @@ body{display:flex;height:100vh;background:var(--bg);color:var(--text);
     <span id="page-title">—</span>
     <button class="nav-btn" id="btn-next" onclick="nextPage()" disabled>下一页 &#8594;</button>
     <button class="nav-btn dl-btn" onclick="downloadPage()">&#8595; 下载</button>
+    <div class="sort-group">
+      <button class="sort-btn active" data-sort="newest" onclick="setPageSort('newest')">最新</button>
+      <button class="sort-btn" data-sort="oldest" onclick="setPageSort('oldest')">最早</button>
+    </div>
     <div class="cols-group">
       <button class="col-btn" onclick="setColsOverride(1)">1</button>
       <button class="col-btn" onclick="setColsOverride(2)">2</button>
@@ -255,10 +267,15 @@ body{display:flex;height:100vh;background:var(--bg);color:var(--text);
 const DEFAULT_COLS = COLS_VALUE;
 let currentPage  = null;
 let colsOverride = null;   // null = 使用页面自身 cols
+let pageSort     = 'newest';
+let nextPageSeq  = 0;
 
-const pagesList = [];      // newest-first 插入顺序
+const pagesList = [];      // 当前排序后的页面列表
 const pageCols  = {};      // {name: cols}
+const pageMeta  = {};      // {name: {created_at, ...}}
+const pageSeq   = {};      // {name: 初始加载顺序}，无时间时作为稳定排序依据
 const pageSlots = {};      // {name: {slot: {image, title}}} — 本地缓存
+const dirtyPages = new Set();
 
 let lbSlots = [];          // 灯箱当前页所有 slot
 let lbIdx   = 0;
@@ -317,6 +334,7 @@ function switchPage(name) {
   if (currentPage === name) return;
   currentPage  = name;
   colsOverride = null;   // 切页时重置列数覆盖
+  dirtyPages.delete(name);
 
   document.querySelectorAll('.page-item').forEach(el => {
     const active = el.dataset.page === name;
@@ -325,11 +343,7 @@ function switchPage(name) {
   });
 
   document.getElementById('page-title').textContent = name;
-  const idx = pagesList.indexOf(name);
-  document.getElementById('page-count').textContent =
-    (idx + 1) + ' / ' + pagesList.length;
-  document.getElementById('btn-prev').disabled = (idx >= pagesList.length - 1);
-  document.getElementById('btn-next').disabled = (idx <= 0);
+  updatePageStatus();
 
   const grid = document.getElementById('grid');
   grid.innerHTML = '';
@@ -361,32 +375,78 @@ function nextPage() {
 }
 
 // ── 侧边栏 ───────────────────────────────────────────────
-function addPage(name, cols, isNew) {
-  if (pagesList.includes(name)) return;
-  pagesList.unshift(name);
-  pageCols[name] = cols || DEFAULT_COLS;
+function pageTimeValue(name) {
+  const raw = pageMeta[name] && pageMeta[name].created_at;
+  const value = Date.parse(raw || '');
+  return Number.isNaN(value) ? null : value;
+}
 
+function sortPages() {
+  pagesList.sort((a, b) => {
+    const ta = pageTimeValue(a);
+    const tb = pageTimeValue(b);
+    if (ta !== null && tb !== null && ta !== tb)
+      return pageSort === 'newest' ? tb - ta : ta - tb;
+    if (ta !== null && tb === null) return -1;
+    if (ta === null && tb !== null) return 1;
+    const seqDelta = (pageSeq[a] || 0) - (pageSeq[b] || 0);
+    return pageSort === 'newest' ? -seqDelta : seqDelta;
+  });
+}
+
+function updatePageStatus() {
+  if (!currentPage) return;
+  const idx = pagesList.indexOf(currentPage);
+  document.getElementById('page-count').textContent =
+    (idx + 1) + ' / ' + pagesList.length;
+  document.getElementById('btn-prev').disabled = (idx >= pagesList.length - 1);
+  document.getElementById('btn-next').disabled = (idx <= 0);
+}
+
+function renderPagesList() {
+  sortPages();
   const list = document.getElementById('pages-list');
-  const item = document.createElement('div');
-  item.className = 'page-item';
-  item.dataset.page = name;
-  item.innerHTML = name + (isNew && currentPage ? '<span class="new-dot"></span>' : '');
-  item.onclick = () => switchPage(name);
-  list.insertBefore(item, list.firstChild);
+  list.innerHTML = '';
+  pagesList.forEach(name => {
+    const item = document.createElement('div');
+    item.className = 'page-item';
+    item.dataset.page = name;
+    item.innerHTML = name + (dirtyPages.has(name) ? '<span class="new-dot"></span>' : '');
+    item.onclick = () => switchPage(name);
+    item.classList.toggle('active', name === currentPage);
+    list.appendChild(item);
+  });
+  updatePageStatus();
+  filterPages(document.getElementById('sb-search').value);
+}
 
-  // 更新所有页面的 Prev/Next 状态
-  if (currentPage) {
-    const idx = pagesList.indexOf(currentPage);
-    document.getElementById('btn-prev').disabled = (idx >= pagesList.length - 1);
+function updateSortButtons() {
+  document.querySelectorAll('.sort-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.sort === pageSort));
+}
+
+function setPageSort(mode) {
+  pageSort = mode;
+  updateSortButtons();
+  renderPagesList();
+}
+
+function addPage(name, cols, isNew, meta) {
+  if (!pagesList.includes(name)) {
+    pagesList.push(name);
+    pageSeq[name] = nextPageSeq++;
   }
-  if (!currentPage) switchPage(name);
+  pageCols[name] = cols || DEFAULT_COLS;
+  pageMeta[name] = Object.assign({}, pageMeta[name] || {}, meta || {});
+  if (isNew && currentPage) dirtyPages.add(name);
+  renderPagesList();
+  if (!currentPage) switchPage(pagesList[0]);
 }
 
 function markDirty(page) {
   if (page === currentPage) return;
-  const item = document.querySelector('[data-page="' + page + '"]');
-  if (item && !item.querySelector('.new-dot'))
-    item.insertAdjacentHTML('beforeend', '<span class="new-dot"></span>');
+  dirtyPages.add(page);
+  renderPagesList();
 }
 
 function filterPages(q) {
@@ -508,6 +568,10 @@ const es = new EventSource('/stream');
 
 es.addEventListener('update', e => {
   const d = JSON.parse(e.data);   // {page, slot, title} — 不含图像
+  if (d.created_at) {
+    pageMeta[d.page] = Object.assign({}, pageMeta[d.page] || {}, {created_at: d.created_at});
+    renderPagesList();
+  }
   if (d.page === currentPage) {
     // 当前页：立即 fetch 图像并渲染
     fetch('/api/image/' + encodeURIComponent(d.page) + '/' + encodeURIComponent(d.slot))
@@ -526,7 +590,7 @@ es.addEventListener('update', e => {
 
 es.addEventListener('new_page', e => {
   const d = JSON.parse(e.data);
-  addPage(d.page, d.cols, true);
+  addPage(d.page, d.cols, true, {created_at: d.created_at});
 });
 
 es.onopen = () => {
@@ -542,11 +606,20 @@ es.onerror = () => {
 fetch('/api/pages')
   .then(r => r.json())
   .then(ps => {
-    // ps newest-first；逆序 addPage 使最新的最终在顶
-    [...ps].reverse().forEach(name => {
+    Promise.all(ps.map((name, idx) =>
       fetch('/api/meta/' + encodeURIComponent(name))
         .then(r => r.json())
-        .then(meta => addPage(name, meta.cols, false));
+        .then(meta => ({name, idx, meta}))
+    )).then(entries => {
+      entries.forEach(({name, idx, meta}) => {
+        if (!pagesList.includes(name)) pagesList.push(name);
+        pageSeq[name] = idx;
+        nextPageSeq = Math.max(nextPageSeq, idx + 1);
+        pageCols[name] = meta.cols || DEFAULT_COLS;
+        pageMeta[name] = meta;
+      });
+      renderPagesList();
+      if (!currentPage && pagesList.length) switchPage(pagesList[0]);
     });
   });
 </script>
@@ -855,7 +928,10 @@ class WebDashboard:
                 meta = json.load(f)
 
             self._pages[page] = {}
-            self._meta[page]  = {'cols': cols}
+            self._meta[page]  = {
+                'cols': cols,
+                'created_at': entry.get('created_at'),
+            }
             for slot_str, slot_info in meta.get('slots', {}).items():
                 png_p = page_dir / f'{slot_str}.png'
                 if not png_p.exists():
@@ -888,7 +964,7 @@ class WebDashboard:
         meta['slots'][slot] = {'title': title}
         meta_p.write_text(json.dumps(meta, ensure_ascii=False), encoding='utf-8')
 
-    def _update_index_file(self, page: str, cols: int) -> List[str]:
+    def _update_index_file(self, page: str, cols: int, created_at: str) -> List[str]:
         """维护全局 _index.json，返回被淘汰的页面名列表。
 
         同一 page 重复 push 时，移动到最新位置而不新增条目，
@@ -908,7 +984,7 @@ class WebDashboard:
             index.insert(0, {
                 'page'      : page,
                 'cols'      : cols,
-                'created_at': datetime.datetime.now().isoformat(timespec='seconds'),
+                'created_at': created_at,
             })
 
             # 淘汰超出 max_rounds 的最旧条目
@@ -970,25 +1046,31 @@ class WebDashboard:
         image     = payload['image']
         title     = payload.get('title', f'slot {slot}')
         page_cols = payload.get('page_cols')
+        created_at = datetime.datetime.now().isoformat(timespec='seconds')
 
         with self._lock:
             is_new = page not in self._pages
             if is_new:
                 self._pages[page] = {}
-                self._meta[page]  = {'cols': page_cols if page_cols is not None else self._cols}
+                self._meta[page]  = {
+                    'cols': page_cols if page_cols is not None else self._cols,
+                    'created_at': created_at,
+                }
+            else:
+                self._meta[page]['created_at'] = created_at
             self._pages[page][slot] = {'image': image, 'title': title}
             cols = self._meta[page]['cols']
 
         # SSE 广播（先广播，让浏览器尽早知晓，磁盘 I/O 在后面异步完成）
         if is_new:
-            self._broadcast('new_page', {'page': page, 'cols': cols})
+            self._broadcast('new_page', {'page': page, 'cols': cols, 'created_at': created_at})
         # update 事件只携带元信息，图像通过 /api/image/ 按需拉取
-        self._broadcast('update', {'page': page, 'slot': slot, 'title': title})
+        self._broadcast('update', {'page': page, 'slot': slot, 'title': title, 'created_at': created_at})
 
         # ── 磁盘持久化（在 _lock 外执行，不阻塞其他请求）────────────────
         if self._cache_dir is not None:
             self._save_slot(page, slot, image, title)
-            evicted = self._update_index_file(page, cols)
+            evicted = self._update_index_file(page, cols, created_at)
             if evicted:
                 # 将被淘汰的页面同步从内存移除
                 with self._lock:
@@ -1113,13 +1195,10 @@ def _get_or_start_dashboard(
     return _global_dashboard
 
 
-# ---------------------------------------------------------------------------
-# 独立服务器入口（python -m src.visualize_tools.web_dashboard）
-# ---------------------------------------------------------------------------
-
-if __name__ == '__main__':
+def main(argv: Optional[list[str]] = None) -> None:
+    """启动 VibDash 独立服务器。"""
     parser = argparse.ArgumentParser(
-        description='VibDash 独立服务器 — 启动后任意脚本可通过 push() 注入图像',
+        description='VibDash 独立服务器 - 启动后任意脚本可通过 push() 注入图像',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument('--port',       type=int,  default=DEFAULT_PORT, help='监听端口')
@@ -1127,7 +1206,7 @@ if __name__ == '__main__':
     parser.add_argument('--no-browser', action='store_true',           help='不自动打开浏览器')
     parser.add_argument('--cache-dir',  type=str,  default='.webui_img', help='本地图像缓存目录（留空则禁用）')
     parser.add_argument('--max-rounds', type=int,  default=20,         help='最多保留的历史页面数（0=无限制）')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     dash = WebDashboard(
         port=args.port,
@@ -1138,3 +1217,11 @@ if __name__ == '__main__':
     )
     dash.start()
     dash.wait()
+
+
+# ---------------------------------------------------------------------------
+# 独立服务器入口（python -m src.visualize_tools.web_dashboard）
+# ---------------------------------------------------------------------------
+
+if __name__ == '__main__':
+    main()

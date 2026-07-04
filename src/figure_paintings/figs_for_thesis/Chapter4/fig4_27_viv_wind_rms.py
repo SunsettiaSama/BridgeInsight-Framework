@@ -17,8 +17,9 @@ from src.figure_paintings.figs_for_thesis.config import (
 _chapter4_dir = str(Path(__file__).parent)
 if _chapter4_dir not in sys.path:
     sys.path.insert(0, _chapter4_dir)
+from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import get_enriched_class_dir
 from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import (
-    load_latest_result, get_viv_samples,
+    load_mecc_result, get_viv_samples,
     build_enriched_lookup, load_mecc_wind_by_sensor,
     MECC_INPLANE_COLOR, MECC_OUTPLANE_COLOR,
 )
@@ -36,9 +37,7 @@ class Config:
     INPLANE_COLOR  = VIV_INPLANE_COLOR
     OUTPLANE_COLOR = VIV_OUTPLANE_COLOR
 
-    ENRICHED_STATS_DIR = (
-        project_root / "results" / "enriched_stats" / "class_1_viv"
-    )
+    ENRICHED_STATS_DIR = get_enriched_class_dir(1)
 
     SENSOR_GROUPS = {
         'C18 边跨': 'ST-VIC-C18-101-01.json',
@@ -46,8 +45,6 @@ class Config:
         'C34 跨中': 'ST-VIC-C34-201-01.json',
         'C34 辅跨': 'ST-VIC-C34-301-01.json',
     }
-
-    MECC_RESULT_GLOB = project_root / "results" / "identification_result_mecc_viv" / "mecc_viv_only_*.json"
 
 
 # ==================== 数据加载 ====================
@@ -146,7 +143,7 @@ def main():
     print("=" * 80)
 
     print("\n[步骤1] 加载 MECC 识别结果并构建风数据查找表...")
-    mecc_result  = load_latest_result(Config.MECC_RESULT_GLOB)
+    mecc_result  = load_mecc_result()
     mecc_samples = get_viv_samples(mecc_result)
     print(f"  MECC VIV 样本：{len(mecc_samples)} 个")
     wind_lookup   = build_enriched_lookup(Config.ENRICHED_STATS_DIR)

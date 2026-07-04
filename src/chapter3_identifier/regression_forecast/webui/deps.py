@@ -10,23 +10,33 @@ from src.chapter3_identifier.regression_forecast.settings import (
     read_json,
     resolve_python_executable,
 )
+from src.chapter3_identifier.regression_forecast.warning.policy import WarningPolicy
 from src.chapter3_identifier.regression_forecast.webui.jobs.manager import JobManager
 
 
 class ForecastCache:
     def __init__(self, cfg: dict[str, Any]) -> None:
         self.cfg = cfg
-        self._payload_by_path: dict[str, dict[str, Any]] = {}
+        self._payload_by_path: dict[str, tuple[float, dict[str, Any]]] = {}
+
+    def _mtime(self, path: Path) -> float:
+        if not path.exists():
+            return -1.0
+        return float(path.stat().st_mtime)
 
     def payload(self, round_idx: int) -> dict[str, Any]:
         path = get_round_forecast_path(self.cfg, round_idx)
         key = str(path)
-        if key not in self._payload_by_path:
-            if path.exists():
-                self._payload_by_path[key] = read_json(path)
-            else:
-                self._payload_by_path[key] = {"records": [], "record_count": 0}
-        return self._payload_by_path[key]
+        mtime = self._mtime(path)
+        cached = self._payload_by_path.get(key)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+        if path.exists():
+            payload = read_json(path)
+        else:
+            payload = {"records": [], "record_count": 0}
+        self._payload_by_path[key] = (mtime, payload)
+        return payload
 
     def invalidate(self) -> None:
         self._payload_by_path.clear()
@@ -48,16 +58,19 @@ class AppDeps:
     forecasts: ForecastCache
     figures: FigureService
     jobs: JobManager
+    policy: WarningPolicy
 
     def forecast_path(self, round_idx: int) -> str:
         return str(get_round_forecast_path(self.cfg, round_idx))
 
     def data_status(self, round_idx: int) -> dict[str, Any]:
         path = Path(self.forecast_path(round_idx))
+        exists = path.exists()
         return {
-            "forecast_exists": path.exists(),
+            "forecast_exists": exists,
             "forecast_path": str(path),
-            "record_count": len(self.forecasts.records(round_idx)) if path.exists() else 0,
+            "record_count": len(self.forecasts.records(round_idx)) if exists else 0,
+            "feature_cache_mode": str(self.cfg.get("feature_cache_mode", "real")),
         }
 
 
@@ -73,5 +86,5 @@ def build_deps(cfg: dict[str, Any], config_path: Optional[str] = None) -> AppDep
         forecasts=ForecastCache(cfg),
         figures=FigureService(),
         jobs=jobs,
+        policy=WarningPolicy.from_config(cfg),
     )
-

@@ -90,6 +90,14 @@ def get_round_merged_training_path(cfg: dict, round_idx: int) -> Path:
     return get_round_dir(cfg, round_idx) / "merged_training.json"
 
 
+def get_round_merged_training_pair_key_path(cfg: dict, round_idx: int) -> Path:
+    return get_round_dir(cfg, round_idx) / "merged_training_pair_key.json"
+
+
+def get_round_pair_key_migration_report_path(cfg: dict, round_idx: int) -> Path:
+    return get_round_dir(cfg, round_idx) / "pair_key_migration_report.json"
+
+
 def get_round_inference_path(cfg: dict, round_idx: int) -> Path:
     return get_round_dir(cfg, round_idx) / "inference.json"
 
@@ -118,6 +126,21 @@ def get_round_checkpoint_path(cfg: dict, round_idx: int) -> Path:
 
 def get_round_train_profile_path(cfg: dict, round_idx: int) -> Path:
     return get_round_dir(cfg, round_idx) / "train_profile.json"
+
+
+def get_workflow_config_path(cfg: dict) -> Path:
+    configured = cfg.get("workflow_config_path")
+    if configured:
+        return resolve_path(str(configured))
+    return get_rounds_root(cfg).parent / "workflow_config.json"
+
+
+def get_round_workflow_resolved_path(cfg: dict, round_idx: int) -> Path:
+    return get_round_dir(cfg, round_idx) / "workflow_resolved.json"
+
+
+def get_round_workflow_override_path(cfg: dict, round_idx: int) -> Path:
+    return get_round_dir(cfg, round_idx) / "workflow_override.json"
 
 
 def check_inference_metadata(cfg: dict) -> Path:

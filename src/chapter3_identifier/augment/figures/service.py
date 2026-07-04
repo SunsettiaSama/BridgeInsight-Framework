@@ -107,6 +107,30 @@ class FigureService:
             return png
         if self._engine.is_wind_figure(figure_name):
             sample_idx = int(record["sample_idx"])
+            if wait_ms > 0:
+                self._engine.preload_wind(
+                    record,
+                    layout_profile=layout_profile,
+                    round_idx=round_idx,
+                )
+                key = self._engine.sample_cache_key(
+                    round_idx,
+                    sample_idx,
+                    figure_name,
+                    layout_profile=layout_profile,
+                    prediction_direction=prediction_direction,
+                )
+                expected_epoch = self._dispatch.epoch()
+                self._dispatch.wait_for_keys([key], wait_ms, expected_epoch=expected_epoch)
+                png = self._engine.get_sample_png(
+                    record,
+                    figure_name,
+                    layout_profile=layout_profile,
+                    prediction_direction=prediction_direction,
+                    round_idx=round_idx,
+                )
+                if png is not None:
+                    return png
             raise FigureNotReadyError(
                 f"wind figure rendering: {figure_name} sample={sample_idx} layout={layout_profile}"
             )

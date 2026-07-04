@@ -27,6 +27,7 @@ from src.chapter4_characteristics.analysis.plots import copula_viz, common as pl
 from src.chapter4_characteristics.analysis.plots.copula_viz import load_copula_result
 from src.chapter4_characteristics.infer.preflight import run_preflight
 from src.chapter4_characteristics.settings import (
+    get_identifier_checkpoint,
     get_exports_dir,
     load_config,
     resolve_python_executable,
@@ -78,11 +79,25 @@ def create_app(config_path: str | None = None) -> FastAPI:
     @app.get("/api/config")
     def app_config(use_demo: bool = False):
         cfg, _, _ = runtime(use_demo)
+        checkpoint_path = get_identifier_checkpoint(cfg)
         return {
             "num_classes": int(cfg.get("num_classes", 4)),
             "label_names": cfg.get("label_names", []),
             "use_demo": use_demo,
             "demo_available": DEMO_CONFIG_PATH.exists(),
+            "config_path": str(cfg.get("_config_path", "")),
+            "chapter4_output_dir": str(cfg.get("chapter4_output_dir", "")),
+            "inference_dataset_config": str(cfg.get("inference_dataset_config", "")),
+            "identifier_checkpoint_path": str(checkpoint_path),
+            "identifier_checkpoint_exists": checkpoint_path.exists(),
+            "canonical_round": cfg.get("canonical_round"),
+            "workflow_config_version": int(cfg.get("workflow_config_version", 0)),
+            "workflow_resolved_path": str(cfg.get("workflow_resolved_path", "")),
+            "infer_batch_size": int(cfg.get("infer_batch_size", 256)),
+            "infer_dataloader_workers": int(cfg.get("infer_dataloader_workers", 4)),
+            "infer_prefetch_files": int(cfg.get("infer_prefetch_files", 4)),
+            "infer_prefetch_workers": int(cfg.get("infer_prefetch_workers", 2)),
+            "infer_context_workers": int(cfg.get("infer_context_workers", 2)),
         }
 
     @app.get("/api/status")

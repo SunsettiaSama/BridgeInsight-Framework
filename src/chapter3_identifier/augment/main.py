@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -45,6 +46,27 @@ def main(argv: list[str] | None = None) -> None:
     p_loop.add_argument("--max-rounds", type=int, default=10)
     p_loop.add_argument("--config", type=str, default=None)
 
+    p_finalize = sub.add_parser("finalize", help="终盘整理：生成论文用 final rounds")
+    p_finalize.add_argument("--from-round", type=int, default=1)
+    p_finalize.add_argument("--to-round", type=int, default=None)
+    p_finalize.add_argument("--canonical-round", type=int, default=None)
+    p_finalize.add_argument("--overwrite-final", action="store_true")
+    p_finalize.add_argument("--dry-run", action="store_true")
+    p_finalize.add_argument("--config", type=str, default=None)
+
+    p_workflow = sub.add_parser("workflow", help="全局 workflow 配置")
+    workflow_sub = p_workflow.add_subparsers(dest="workflow_command", required=True)
+    p_workflow_migrate = workflow_sub.add_parser("migrate", help="从 round 基准与 default.yaml 生成 workflow_config.json")
+    p_workflow_migrate.add_argument("--baseline-round", type=int, default=8)
+    p_workflow_migrate.add_argument("--config", type=str, default=None)
+    p_workflow_diff = workflow_sub.add_parser("diff", help="比较两个 round 的 resolved workflow")
+    p_workflow_diff.add_argument("--round-a", type=int, required=True)
+    p_workflow_diff.add_argument("--round-b", type=int, required=True)
+    p_workflow_diff.add_argument("--config", type=str, default=None)
+    p_workflow_validate = workflow_sub.add_parser("validate", help="验证 round workflow 快照可复现")
+    p_workflow_validate.add_argument("--round", type=int, required=True)
+    p_workflow_validate.add_argument("--config", type=str, default=None)
+
     p_check = sub.add_parser("check-metadata", help="检查 202409 metadata")
     p_check.add_argument("--config", type=str, default=None)
 
@@ -80,6 +102,38 @@ def main(argv: list[str] | None = None) -> None:
         from src.chapter3_identifier.augment.loop.orchestrator import run_loop
 
         run_loop(max_rounds=args.max_rounds, config_path=args.config)
+    elif args.command == "finalize":
+        from src.chapter3_identifier.augment.finalize.run import run_finalize
+
+        result = run_finalize(
+            config_path=args.config,
+            from_round=args.from_round,
+            to_round=args.to_round,
+            canonical_round=args.canonical_round,
+            overwrite_final=args.overwrite_final,
+            dry_run=args.dry_run,
+        )
+        logging.getLogger(__name__).info("终盘整理完成：%s", result.get("manifest_path", result))
+    elif args.command == "workflow":
+        from src.chapter3_identifier.augment.settings import load_config
+        from src.chapter3_identifier.augment.workflow_config import (
+            bootstrap_workflow_config,
+            diff_round_snapshots,
+            validate_round_reproducibility,
+        )
+
+        cfg = load_config(args.config)
+        if args.workflow_command == "migrate":
+            saved = bootstrap_workflow_config(cfg, baseline_round=args.baseline_round, write=True)
+            print(json.dumps({"path": saved.get("_path"), "workflow_config_version": saved.get("workflow_config_version")}, ensure_ascii=False, indent=2))
+        elif args.workflow_command == "diff":
+            result = diff_round_snapshots(cfg, args.round_a, args.round_b)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        elif args.workflow_command == "validate":
+            result = validate_round_reproducibility(cfg, args.round)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            if not result["checks"]["reproducible"]:
+                raise SystemExit(1)
     elif args.command == "check-metadata":
         from src.chapter3_identifier.augment.settings import check_inference_metadata, load_config
 

@@ -19,6 +19,7 @@ from src.chapter3_identifier.augment.webui.routes.jobs import build_jobs_router
 from src.chapter3_identifier.augment.webui.routes.pages import build_pages_router
 from src.chapter3_identifier.augment.webui.routes.queue import build_queue_router
 from src.chapter3_identifier.augment.webui.routes.training_profiles import build_training_profiles_router
+from src.chapter3_identifier.augment.webui.routes.workflow import build_workflow_router
 from src.data_infra.bootstrap import ensure_docker_mysql, ensure_mysql_metadata_cache
 
 ensure_paths()
@@ -72,6 +73,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
     app.include_router(build_figures_router(deps))
     app.include_router(build_jobs_router(deps))
     app.include_router(build_training_profiles_router(deps))
+    app.include_router(build_workflow_router(deps))
 
     @app.websocket("/ws/ws")
     async def ide_live_stub(websocket: WebSocket):

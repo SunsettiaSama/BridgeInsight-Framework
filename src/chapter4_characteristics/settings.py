@@ -14,6 +14,7 @@ _DEFAULT_CONFIG = Path(__file__).resolve().parent / "config" / "default.yaml"
 
 CLASS_LABELS = {0: "normal", 1: "viv", 2: "rwiv", 3: "transition"}
 CLASS_DIRS = {0: "class_0_normal", 1: "class_1_viv", 2: "class_2_rwiv", 3: "class_3_transition"}
+DEFAULT_LABEL_NAMES = ["随机振动", "VIV", "RWIV", "其他"]
 
 
 def load_yaml(path: Path) -> dict:
@@ -21,13 +22,51 @@ def load_yaml(path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
+def _apply_runtime_defaults(cfg: dict) -> dict:
+    root = resolve_path(cfg.get("chapter4_output_dir", "results/chapter4_characteristics"))
+    cfg["chapter4_output_dir"] = str(root)
+    cfg.setdefault("num_classes", len(DEFAULT_LABEL_NAMES))
+    cfg.setdefault("label_names", DEFAULT_LABEL_NAMES)
+    cfg.setdefault("job_state_path", str(root / "job_state.json"))
+    cfg.setdefault("enriched_stats_dir", str(root / "enriched"))
+    cfg.setdefault("feature_analysis_config", None)
+    cfg.setdefault("webui_host", "127.0.0.1")
+    cfg.setdefault("webui_port", 8766)
+    cfg.setdefault("reference_feature_keys", [])
+    cfg.setdefault("others_queue_page_size", 30)
+    cfg.setdefault("others_neighbor_topk", 3)
+    cfg.setdefault("context_windows_before", 5)
+    cfg.setdefault("context_windows_after", 5)
+    cfg.setdefault("copula_n_modes", 8)
+    cfg.setdefault("copula_max_samples", 5000)
+
+    dataset_config = cfg.get("inference_dataset_config")
+    if dataset_config and not cfg.get("wind_metadata_path"):
+        dataset_path = resolve_path(str(dataset_config))
+        if dataset_path.exists():
+            dataset_cfg = load_yaml(dataset_path)
+            if dataset_cfg.get("wind_metadata_path"):
+                cfg["wind_metadata_path"] = str(resolve_path(str(dataset_cfg["wind_metadata_path"])))
+            if dataset_cfg.get("window_size") is not None:
+                cfg.setdefault("window_size", dataset_cfg["window_size"])
+    return cfg
+
+
 def load_config(config_path: Optional[str] = None) -> dict:
-    path = resolve_path(config_path) if config_path else _DEFAULT_CONFIG
-    if not path.exists():
+    if config_path:
+        path = resolve_path(config_path)
+    elif _DEFAULT_CONFIG.exists():
         path = _DEFAULT_CONFIG
+    else:
+        from src.chapter3_identifier.augment.settings import load_config as load_augment_config
+        from src.chapter3_identifier.augment.workflow_config import load_chapter4_runtime_config
+
+        return _apply_runtime_defaults(load_chapter4_runtime_config(load_augment_config(None)))
+    if not path.exists():
+        raise FileNotFoundError(f"chapter4 配置不存在：{path}")
     cfg = load_yaml(path)
     cfg["_config_path"] = str(path)
-    return cfg
+    return _apply_runtime_defaults(cfg)
 
 
 def resolve_python_executable(cfg: dict) -> str:

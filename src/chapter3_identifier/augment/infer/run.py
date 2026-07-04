@@ -17,14 +17,26 @@ from src.chapter3_identifier.augment.annotation.store import (
     AnnotationStore,
     load_cumulative_manual_edits,
 )
+from src.chapter3_identifier.augment.filters import (
+    filter_annotated_records,
+    filter_excluded_sensors,
+    normalize_inference_filter_config,
+)
 from src.chapter3_identifier.augment.infer.dataset_loader import ensure_inference_ready, load_staycable_dataset
 from src.chapter3_identifier.augment.infer.identifier import DualStreamIdentifier
+from src.chapter3_identifier.augment.infer.profile_hooks import StageTimer
 from src.chapter3_identifier.augment.infer.runner import DualStreamInferenceRunner
 from src.chapter3_identifier.augment.settings import (
     get_round_checkpoint_path,
     get_round_dir,
     get_round_inference_path,
     load_config,
+)
+from src.chapter3_identifier.augment.workflow_config import (
+    apply_workflow_to_runtime_cfg,
+    ensure_workflow_config,
+    resolve_round_workflow,
+    save_round_workflow_snapshot,
 )
 
 ensure_paths()
@@ -194,6 +206,7 @@ def _stream_write_inference_json(
         f.write(f'  "generated_at": {json.dumps(header["generated_at"], ensure_ascii=False)},\n')
         f.write(f'  "checkpoint": {json.dumps(header["checkpoint"], ensure_ascii=False)},\n')
         f.write(f'  "projection_mode": {json.dumps(header["projection_mode"], ensure_ascii=False)},\n')
+        f.write(f'  "filters": {json.dumps(header.get("filters", {}), ensure_ascii=False)},\n')
         f.write(f'  "record_count": {total},\n')
         f.write('  "records": [\n')
         for i, record in enumerate(records):
@@ -209,8 +222,14 @@ def _stream_write_inference_json(
 
 
 def run_inference(round_idx: int = 1, config_path: str | None = None) -> str:
+    timer = StageTimer()
     cfg = load_config(config_path)
-    ensure_inference_ready(cfg)
+    ensure_workflow_config(cfg)
+    resolved = resolve_round_workflow(cfg, round_idx)
+    snapshot_path = save_round_workflow_snapshot(cfg, round_idx, resolved)
+    cfg = apply_workflow_to_runtime_cfg(cfg, resolved)
+    with timer.stage("preflight"):
+        ensure_inference_ready(cfg)
 
     round_dir = get_round_dir(cfg, round_idx)
     ckpt_path = get_round_checkpoint_path(cfg, round_idx)
@@ -220,15 +239,21 @@ def run_inference(round_idx: int = 1, config_path: str | None = None) -> str:
     chunk_size = int(cfg.get("infer_record_chunk_size", 4096))
     record_workers = int(cfg.get("infer_record_workers", 8))
 
-    dataset = load_staycable_dataset(cfg["inference_dataset_config"])
-    identifier = DualStreamIdentifier.from_checkpoint(
-        str(ckpt_path),
-        model_config_path=cfg.get("dual_stream_config"),
-        fs=float(cfg["fs"]),
-        nfft=int(cfg["nfft"]),
-        freq_max_hz=float(cfg["freq_max_hz"]),
-        wind_config=cfg,
-    )
+    with timer.stage("dataset"):
+        dataset = load_staycable_dataset(cfg["inference_dataset_config"])
+        timer.timings.extra["sample_count"] = int(len(getattr(dataset, "_samples", [])))
+    with timer.stage("checkpoint"):
+        identifier = DualStreamIdentifier.from_checkpoint(
+            str(ckpt_path),
+            model_config_path=cfg.get("dual_stream_config"),
+            fs=float(cfg["fs"]),
+            nfft=int(cfg["nfft"]),
+            freq_max_hz=float(cfg["freq_max_hz"]),
+            wind_config=cfg,
+        )
+        timer.timings.extra["model_type"] = str(identifier.model_type)
+        timer.timings.extra["context_mode"] = str(getattr(identifier, "context_mode", "short_only"))
+        timer.timings.extra["wind_feature_dim"] = int(getattr(identifier, "wind_feature_dim", 0))
     runner = DualStreamInferenceRunner(
         identifier,
         batch_size=int(cfg.get("infer_batch_size", 256)),
@@ -237,6 +262,35 @@ def run_inference(round_idx: int = 1, config_path: str | None = None) -> str:
         fs=float(cfg["fs"]),
         nfft=int(cfg["nfft"]),
         freq_max_hz=float(cfg["freq_max_hz"]),
+        wind_config=cfg,
+        cache_max_mb=float(cfg.get("infer_cache_max_mb", 512)),
+        prefetch_files=int(cfg.get("infer_prefetch_files", 4)),
+        prefetch_batches=int(cfg.get("infer_prefetch_batches", 2)),
+        prefetch_workers=int(cfg.get("infer_prefetch_workers", 2)),
+        context_workers=int(cfg.get("infer_context_workers", 2)),
+        context_cache_entries=int(cfg.get("infer_context_cache_entries", 64)),
+        context_batch_mode=str(cfg.get("infer_context_batch_mode", "time_block")),
+        time_block_producer_workers=int(cfg.get("infer_time_block_producer_workers", 1)),
+        joint_queue_depth=int(cfg.get("infer_joint_queue_depth", 2)),
+        profile_stats=timer.timings.prefetch,
+    )
+    logger.info(
+        "全量识别性能配置：batch=%s dataloader_workers=%s psd_workers=%s "
+        "cache_mb=%s prefetch_files=%s prefetch_batches=%s prefetch_workers=%s "
+        "context_workers=%s context_cache_entries=%s context_batch_mode=%s "
+        "time_block_producer_workers=%s joint_queue_depth=%s",
+        int(cfg.get("infer_batch_size", 256)),
+        int(cfg.get("infer_dataloader_workers", 4)),
+        int(cfg.get("infer_psd_workers", 2)),
+        float(cfg.get("infer_cache_max_mb", 512)),
+        int(cfg.get("infer_prefetch_files", 4)),
+        int(cfg.get("infer_prefetch_batches", 2)),
+        int(cfg.get("infer_prefetch_workers", 2)),
+        int(cfg.get("infer_context_workers", 2)),
+        int(cfg.get("infer_context_cache_entries", 64)),
+        str(cfg.get("infer_context_batch_mode", "time_block")),
+        int(cfg.get("infer_time_block_producer_workers", 1)),
+        int(cfg.get("infer_joint_queue_depth", 2)),
     )
 
     store = AnnotationStore(
@@ -245,16 +299,18 @@ def run_inference(round_idx: int = 1, config_path: str | None = None) -> str:
         merged_output_path=str(get_round_dir(cfg, round_idx) / "merged_training.json"),
     )
 
-    inplane_p, outplane_p = runner.run_with_proba(dataset)
+    with timer.stage("runner"):
+        inplane_p, outplane_p = runner.run_with_proba(dataset)
     logger.info("面内/面外推理完成，正在合并结果并写入 inference.json …")
     projection_mode = str(cfg.get("prediction_projection_mode", "direction"))
     projection_direction = str(cfg.get("prediction_projection_direction", "outplane"))
-    merged = runner.merge_proba_predictions(
-        inplane_p,
-        outplane_p,
-        projection_mode=projection_mode,
-        projection_direction=projection_direction,
-    )
+    with timer.stage("merge"):
+        merged = runner.merge_proba_predictions(
+            inplane_p,
+            outplane_p,
+            projection_mode=projection_mode,
+            projection_direction=projection_direction,
+        )
     projection_label = (
         f"direction:{projection_direction}"
         if projection_mode == "direction"
@@ -267,25 +323,61 @@ def run_inference(round_idx: int = 1, config_path: str | None = None) -> str:
 
     gold_keys, _ = store.build_lookup_keys()
     cumulative_manual = load_cumulative_manual_edits(cfg, round_idx)
+    manual_keys: Set[Tuple[str, int]] = set()
     annotated_keys = set(gold_keys)
     for entry in cumulative_manual:
-        annotated_keys.add(annotation_key(entry["file_path"], entry.get("window_index", 0)))
+        key = annotation_key(entry["file_path"], entry.get("window_index", 0))
+        manual_keys.add(key)
+        annotated_keys.add(key)
     logger.info(
         f"标注索引就绪：gold={len(gold_keys)} manual(<=round{round_idx})={len(cumulative_manual)} "
         f"annotated={len(annotated_keys)}"
     )
 
-    records = _assemble_records_parallel(
-        merged_indices=merged_indices,
-        samples=dataset._samples,
-        merged=merged,
-        inplane_p=inplane_p,
-        outplane_p=outplane_p,
+    with timer.stage("records"):
+        records = _assemble_records_parallel(
+            merged_indices=merged_indices,
+            samples=dataset._samples,
+            merged=merged,
+            inplane_p=inplane_p,
+            outplane_p=outplane_p,
+            gold_keys=gold_keys,
+            annotated_keys=annotated_keys,
+            chunk_size=chunk_size,
+            workers=record_workers,
+            projection_mode=projection_label,
+        )
+
+    filter_cfg = normalize_inference_filter_config(cfg)
+    raw_record_total = len(records)
+    records, sensor_filter_stats = filter_excluded_sensors(
+        records,
+        filter_cfg["exclude_sensor_ids"],
+        enabled=filter_cfg["enable_sensor_exclusion"],
+    )
+    records, annotation_filter_stats = filter_annotated_records(
+        records,
         gold_keys=gold_keys,
-        annotated_keys=annotated_keys,
-        chunk_size=chunk_size,
-        workers=record_workers,
-        projection_mode=projection_label,
+        manual_keys=manual_keys,
+        exclude_gold=filter_cfg["exclude_gold_annotations"],
+        exclude_manual=filter_cfg["exclude_manual_annotations"],
+    )
+    filter_stats = {
+        "raw_record_total": int(raw_record_total),
+        **sensor_filter_stats,
+        **annotation_filter_stats,
+        "kept_record_total": int(len(records)),
+    }
+    logger.info(
+        "全量识别过滤：raw=%s kept=%s sensor_removed=%s annotation_removed=%s "
+        "exclude_sensors=%s exclude_gold=%s exclude_manual=%s",
+        raw_record_total,
+        len(records),
+        sensor_filter_stats["excluded_sensor_removed_total"],
+        annotation_filter_stats["excluded_annotation_removed_total"],
+        sensor_filter_stats["exclude_sensor_ids"],
+        annotation_filter_stats["exclude_gold_annotations"],
+        annotation_filter_stats["exclude_manual_annotations"],
     )
 
     logger.info("记录排序 …")
@@ -310,12 +402,14 @@ def run_inference(round_idx: int = 1, config_path: str | None = None) -> str:
         "generated_at": ts,
         "checkpoint": ckpt_path.name,
         "projection_mode": projection_label,
+        "filters": filter_stats,
     }
-    _stream_write_inference_json(archive_path, header, records, chunk_size)
-    shutil.copy2(archive_path, stable_path)
-    logger.info(f"复制归档 → {stable_path}")
-    shutil.copy2(ckpt_path, model_snapshot_path)
-    logger.info(f"模型快照 → {model_snapshot_path}")
+    with timer.stage("inference_json"):
+        _stream_write_inference_json(archive_path, header, records, chunk_size)
+        shutil.copy2(archive_path, stable_path)
+        logger.info(f"复制归档 → {stable_path}")
+        shutil.copy2(ckpt_path, model_snapshot_path)
+        logger.info(f"模型快照 → {model_snapshot_path}")
 
     manifest = {
         "round_idx": round_idx,
@@ -326,9 +420,35 @@ def run_inference(round_idx: int = 1, config_path: str | None = None) -> str:
         "inference_archive": archive_path.name,
         "projection_mode": projection_label,
         "record_count": len(records),
+        "filters": filter_stats,
+        "workflow_config_version": int(resolved.get("workflow_config_version", 0)),
+        "workflow_resolved_path": str(snapshot_path),
+        "workflow_config_path": resolved["metadata"]["workflow_config_path"],
     }
     with open(round_dir / "round_manifest.json", "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
+
+    profile_report = timer.timings.to_dict()
+    profile_report["config"] = {
+        "infer_batch_size": int(cfg.get("infer_batch_size", 256)),
+        "infer_dataloader_workers": int(cfg.get("infer_dataloader_workers", 4)),
+        "infer_psd_workers": int(cfg.get("infer_psd_workers", 2)),
+        "infer_cache_max_mb": float(cfg.get("infer_cache_max_mb", 512)),
+        "infer_prefetch_files": int(cfg.get("infer_prefetch_files", 4)),
+        "infer_prefetch_batches": int(cfg.get("infer_prefetch_batches", 2)),
+        "infer_prefetch_workers": int(cfg.get("infer_prefetch_workers", 2)),
+        "infer_context_workers": int(cfg.get("infer_context_workers", 2)),
+        "infer_context_cache_entries": int(cfg.get("infer_context_cache_entries", 64)),
+        "infer_context_batch_mode": str(cfg.get("infer_context_batch_mode", "time_block")),
+        "infer_time_block_producer_workers": int(cfg.get("infer_time_block_producer_workers", 1)),
+        "infer_joint_queue_depth": int(cfg.get("infer_joint_queue_depth", 2)),
+        "workflow_config_version": int(resolved.get("workflow_config_version", 0)),
+        "workflow_resolved_path": str(snapshot_path),
+    }
+    profile_path = round_dir / "inference_profile.json"
+    with open(profile_path, "w", encoding="utf-8") as f:
+        json.dump(profile_report, f, ensure_ascii=False, indent=2)
+    logger.info("全量识别性能报告：%s", json.dumps(profile_report, ensure_ascii=False))
 
     logger.info(
         f"Round {round_idx} 推理完成：{len(records)} 条 → {stable_path} "

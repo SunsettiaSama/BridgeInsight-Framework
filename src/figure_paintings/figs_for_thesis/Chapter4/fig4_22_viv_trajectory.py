@@ -13,7 +13,6 @@ from src.data_processer.signals.wavelets import denoise
 from src.chapter4_characteristics._bootstrap import ensure_paths
 
 ensure_paths()
-from src.chapter3_identifier.identifier.dl.runner import FullDatasetRunner
 from src.visualize_tools.web_dashboard import push as web_push
 from src.figure_paintings.figs_for_thesis.config import (
     CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE,
@@ -24,7 +23,7 @@ _chapter4_dir = str(Path(__file__).parent)
 if _chapter4_dir not in sys.path:
     sys.path.insert(0, _chapter4_dir)
 from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import (
-    load_latest_result,
+    load_dl_result,
     get_viv_samples as _pipeline_get_viv_samples,
 )
 
@@ -57,9 +56,6 @@ class Config:
     FREQ_LIMIT = 25.0
 
     SAMPLE_COLORS: list = [VIV_INPLANE_COLOR, VIV_OUTPLANE_COLOR]
-
-    DL_RESULT_GLOB   = project_root / "results" / "identification_result"        / "res_cnn_full_dataset_*.json"
-    MECC_RESULT_GLOB = project_root / "results" / "identification_result_mecc_viv" / "mecc_viv_only_*.json"
 
 
 # ==================== 数据加载 ====================
@@ -237,26 +233,17 @@ def _draw_and_push(samples: list, page_name: str):
 # ==================== 主函数 ====================
 def main():
     print("=" * 80)
-    print("涡激共振振动轨迹云图（DL vs MECC，面内 vs 面外）")
+    print("涡激共振振动轨迹云图（DL，面内 vs 面外）")
     print("=" * 80)
 
     print("\n[步骤1] 加载 DL 识别结果...")
-    dl_result   = load_latest_result(Config.DL_RESULT_GLOB)
+    dl_result   = load_dl_result()
     dl_samples  = _pipeline_get_viv_samples(dl_result)
     print(f"✓ DL VIV 样本：{len(dl_samples)} 个")
     dl_plot = random_sample(dl_samples)
 
-    print("\n[步骤2] 加载 MECC 识别结果...")
-    mecc_result  = load_latest_result(Config.MECC_RESULT_GLOB)
-    mecc_samples = _pipeline_get_viv_samples(mecc_result)
-    print(f"✓ MECC VIV 样本：{len(mecc_samples)} 个")
-    mecc_plot = random_sample(mecc_samples)
-
-    print("\n[步骤3] 绘制 DL 样本轨迹并推送到 WebUI...")
+    print("\n[步骤2] 绘制 DL 样本轨迹并推送到 WebUI...")
     _draw_and_push(dl_plot, "fig4_22 VIV轨迹 DL")
-
-    print("\n[步骤4] 绘制 MECC 样本轨迹并推送到 WebUI...")
-    _draw_and_push(mecc_plot, "fig4_22 VIV轨迹 MECC")
 
     print("\n" + "=" * 80)
     print("全部轨迹图已推送完成")

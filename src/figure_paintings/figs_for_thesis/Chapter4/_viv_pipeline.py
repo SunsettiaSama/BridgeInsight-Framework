@@ -3,9 +3,9 @@
 供 fig4_19 到 fig4_28 统一 import 使用。
 
 数据流：
-  DL 结果 JSON  → load_latest_result → get_viv_samples
-               → load_enriched_stats（从 enriched_stats 加载统计量）
-  MECC 结果 JSON → load_latest_result → get_viv_samples
+  DL 结果 JSON  → load_dl_result → get_viv_samples
+               → load_enriched_stats（从 enriched 目录加载统计量）
+  MECC 结果 JSON → load_mecc_result → get_viv_samples
                → compute_signal_stats（从原始信号实时计算统计量）
 """
 
@@ -24,7 +24,11 @@ from src.data_processer.io_unpacker import UNPACK
 from src.chapter4_characteristics._bootstrap import ensure_paths
 
 ensure_paths()
-from src.chapter3_identifier.identifier.dl.runner import FullDatasetRunner
+from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import (
+    get_enriched_class_dir,
+    load_dl_result,
+    load_mecc_result,
+)
 
 
 # ==================== 颜色常量（供各脚本统一引用） ====================
@@ -45,31 +49,9 @@ _FREQ_LIMIT  = 25.0
 _VIV_CLASS   = 1
 
 
-# ==================== 结果路径 ====================
-def default_dl_result_glob(project_root: Path) -> Path:
-    return project_root / "results" / "identification_result" / "res_cnn_full_dataset_*.json"
-
-
-def default_mecc_result_glob(project_root: Path) -> Path:
-    return project_root / "results" / "identification_result_mecc_viv" / "mecc_viv_only_*.json"
-
-
-def default_enriched_dir(project_root: Path) -> Path:
-    return project_root / "results" / "enriched_stats" / "class_1_viv"
-
-
-# ==================== 结果加载 ====================
-def load_latest_result(full_glob: Path) -> dict:
-    """加载最新结果 JSON（根据 full_glob 中的目录和 glob 模式自动匹配）。"""
-    parent  = full_glob.parent
-    pattern = full_glob.name
-    if not parent.exists():
-        raise FileNotFoundError(f"结果目录不存在：{parent}")
-    files = sorted(parent.glob(pattern))
-    if not files:
-        raise FileNotFoundError(f"在 {parent} 中未找到匹配 {pattern!r} 的文件")
-    print(f"  加载识别结果：{files[-1].name}")
-    return FullDatasetRunner.load_result(str(files[-1]))
+# ==================== 结果路径（委托 data_config） ====================
+def default_enriched_dir(project_root: Path | None = None) -> Path:
+    return get_enriched_class_dir(_VIV_CLASS)
 
 
 def get_viv_samples(result: dict, max_n: int = 0, seed: int = 42) -> list:

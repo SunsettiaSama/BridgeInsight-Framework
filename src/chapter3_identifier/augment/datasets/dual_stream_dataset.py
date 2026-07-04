@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import math
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -416,6 +417,45 @@ def _label_counts(entries: List[dict], indices: List[int], field: str) -> dict[i
     return dict(sorted(counts.items()))
 
 
+_ROUND2_FEATURE_CACHE: dict[tuple, tuple] = {}
+
+
+def _round2_feature_cache_key(
+    entry: dict,
+    window_size: int,
+    fs: float,
+    nfft: int,
+    freq_max_hz: float,
+    enable_denoise: bool,
+    enable_long_context: bool,
+    context_input_size: int,
+    context_total_seconds: float,
+    context_allow_cross_file: bool,
+    enable_wind_features: bool,
+    wind_config: Optional[dict] = None,
+) -> tuple:
+    return (
+        str(entry["inplane_file_path"]),
+        str(entry["outplane_file_path"]),
+        int(entry.get("window_index", 0)),
+        int(window_size),
+        round(float(fs), 6),
+        int(nfft),
+        round(float(freq_max_hz), 6),
+        bool(enable_denoise),
+        bool(enable_long_context),
+        int(context_input_size),
+        round(float(context_total_seconds), 6),
+        bool(context_allow_cross_file),
+        bool(enable_wind_features),
+        json.dumps(wind_config or {}, ensure_ascii=False, sort_keys=True) if enable_wind_features else "",
+    )
+
+
+def clear_round2_feature_cache() -> None:
+    _ROUND2_FEATURE_CACHE.clear()
+
+
 class Round2PairDataset(Dataset):
     def __init__(
         self,
@@ -562,6 +602,8 @@ class Round2PairDataset(Dataset):
         preloaded: List[Optional[tuple]] = [None] * n
         dropped_refs: List[str] = []
         dropped_reason_counts: Dict[str, int] = {}
+        cache_hit_total = 0
+        computed_total = 0
         tasks = [(ds_idx, self.entries[self.indices[ds_idx]]) for ds_idx in range(n)]
 
         if num_workers > 1 and n > 1:
@@ -581,6 +623,10 @@ class Round2PairDataset(Dataset):
                             f"{reason}: in={entry.get('inplane_file_path', '?')} out={entry.get('outplane_file_path', '?')} idx={int(entry.get('window_index', 0))}"
                         )
                         continue
+                    if reason == "cache_hit":
+                        cache_hit_total += 1
+                    elif reason == "computed":
+                        computed_total += 1
                     preloaded[ds_idx] = payload
         else:
             indices = range(n)
@@ -615,11 +661,17 @@ class Round2PairDataset(Dataset):
                         f"{reason}: in={entry.get('inplane_file_path', '?')} out={entry.get('outplane_file_path', '?')} idx={int(entry.get('window_index', 0))}"
                     )
                     continue
+                if reason == "cache_hit":
+                    cache_hit_total += 1
+                elif reason == "computed":
+                    computed_total += 1
                 preloaded[ds_idx] = pair_payload
 
         kept_ds_indices = [i for i, item in enumerate(preloaded) if item is not None]
         bad_total = int(len(dropped_refs))
         self.round2_preload_total = int(n)
+        self.round2_feature_cache_hits = int(cache_hit_total)
+        self.round2_feature_cache_computed = int(computed_total)
         self.round2_bad_total = bad_total
         self.round2_bad_rate = float(bad_total / max(n, 1))
         self.round2_bad_reason_counts = dict(sorted(dropped_reason_counts.items()))
@@ -635,6 +687,13 @@ class Round2PairDataset(Dataset):
             )
         if not kept_ds_indices:
             raise RuntimeError("配对双头预加载失败：无可用样本（窗口提取全部失败）")
+        logger.info(
+            "配对双头特征缓存：hit=%s computed=%s kept=%s hit_rate=%.1f%%",
+            cache_hit_total,
+            computed_total,
+            len(kept_ds_indices),
+            float(cache_hit_total / max(len(kept_ds_indices), 1)) * 100.0,
+        )
         self.indices = [self.indices[i] for i in kept_ds_indices]
         return [preloaded[i] for i in kept_ds_indices if preloaded[i] is not None]
 
@@ -745,6 +804,29 @@ def _load_round2_pair_arrays(
     enable_wind_features: bool = False,
     wind_config: Optional[dict] = None,
 ) -> Tuple[Optional[tuple], str]:
+    cache_entry = {
+        "inplane_file_path": inplane_file_path,
+        "outplane_file_path": outplane_file_path,
+        "window_index": int(window_index),
+    }
+    cache_key = _round2_feature_cache_key(
+        cache_entry,
+        window_size,
+        fs,
+        nfft,
+        freq_max_hz,
+        enable_denoise,
+        enable_long_context,
+        context_input_size,
+        context_total_seconds,
+        context_allow_cross_file,
+        enable_wind_features,
+        wind_config,
+    )
+    cached_features = _ROUND2_FEATURE_CACHE.get(cache_key)
+    if cached_features is not None:
+        return (*cached_features, int(in_label), int(out_label)), "cache_hit"
+
     extractor = VICWindowExtractor(enable_denoise=enable_denoise)
 
     in_data = extractor.load_file(inplane_file_path)
@@ -787,8 +869,11 @@ def _load_round2_pair_arrays(
     )
     if not enable_long_context:
         if enable_wind_features:
-            return (in_time, in_psd, out_time, out_psd, wind_features, int(in_label), int(out_label)), "ok"
-        return (in_time, in_psd, out_time, out_psd, int(in_label), int(out_label)), "ok"
+            features = (in_time, in_psd, out_time, out_psd, wind_features)
+        else:
+            features = (in_time, in_psd, out_time, out_psd)
+        _ROUND2_FEATURE_CACHE[cache_key] = features
+        return (*features, int(in_label), int(out_label)), "computed"
 
     in_context = load_context_array(
         inplane_file_path,
@@ -811,7 +896,7 @@ def _load_round2_pair_arrays(
         extractor=extractor,
     )
     if enable_wind_features:
-        return (
+        features = (
             in_time,
             in_psd,
             in_context,
@@ -819,19 +904,19 @@ def _load_round2_pair_arrays(
             out_psd,
             out_context,
             wind_features,
-            int(in_label),
-            int(out_label),
-        ), "ok"
-    return (
+        )
+        _ROUND2_FEATURE_CACHE[cache_key] = features
+        return (*features, int(in_label), int(out_label)), "computed"
+    features = (
         in_time,
         in_psd,
         in_context,
         out_time,
         out_psd,
         out_context,
-        int(in_label),
-        int(out_label),
-    ), "ok"
+    )
+    _ROUND2_FEATURE_CACHE[cache_key] = features
+    return (*features, int(in_label), int(out_label)), "computed"
 
 
 def _preload_round2_worker(
@@ -950,6 +1035,8 @@ def build_round2_dataloaders(
         context_input_size=context_input_size,
         context_total_seconds=context_total_seconds,
         context_allow_cross_file=context_allow_cross_file,
+        enable_wind_features=enable_wind_features,
+        wind_config=wind_config,
         enable_preload_cache=enable_preload_cache,
         preload_num_workers=preload_num_workers,
         show_preload_progress=False,

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 
 from sklearn.metrics import cohen_kappa_score
 
+from src.chapter3_identifier.augment._bootstrap import resolve_path
 from src.chapter3_identifier.augment.annotation.gold_index import annotation_key
 from src.chapter3_identifier.augment.labels import get_label_names
 from src.chapter3_identifier.augment.queue.inference_cache import parse_infer_progress
@@ -68,6 +69,18 @@ def _manual_round_signature(cfg: dict, round_idx: int) -> tuple:
         history_mtime = history_path.stat().st_mtime if history_path.exists() else -1.0
         parts.append((idx, edits_mtime, history_mtime))
     return tuple(parts)
+
+
+def _load_inference_filters(inference_path: str) -> dict:
+    if not inference_path:
+        return {}
+    path = resolve_path(inference_path)
+    if not path.exists():
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    filters = payload.get("filters", {}) if isinstance(payload, dict) else {}
+    return filters if isinstance(filters, dict) else {}
 
 
 def _kappa_payload(first_labels: List[int], latest_labels: List[int]) -> dict:
@@ -240,6 +253,7 @@ def build_infer_monitor_payload(
         "distribution": distribution,
         "typical_samples": typical,
         "infer_progress": progress,
+        "filters": _load_inference_filters(inference_path),
         "annotation_consistency": build_annotation_consistency_payload(
             cfg,
             round_idx,

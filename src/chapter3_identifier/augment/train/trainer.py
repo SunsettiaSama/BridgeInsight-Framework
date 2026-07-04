@@ -64,6 +64,8 @@ class DualStreamTrainer:
         teacher_model: Optional[DualStreamResCNN] = None,
         teacher_reg_lambda: float = 0.0,
         teacher_reg_temperature: float = 2.0,
+        early_stopping_patience: int = 0,
+        early_stopping_min_delta: float = 0.0,
         device: Optional[str] = None,
         label_names: Optional[List[str]] = None,
         num_classes: int = 4,
@@ -81,6 +83,8 @@ class DualStreamTrainer:
         self.teacher_model = teacher_model
         self.teacher_reg_lambda = float(teacher_reg_lambda)
         self.teacher_reg_temperature = float(teacher_reg_temperature)
+        self.early_stopping_patience = int(early_stopping_patience)
+        self.early_stopping_min_delta = float(early_stopping_min_delta)
         if self.teacher_model is not None:
             self.teacher_model.to(self.device)
             self.teacher_model.eval()
@@ -161,8 +165,15 @@ class DualStreamTrainer:
             if self.teacher_model is not None and self.teacher_reg_lambda > 0
             else "teacher_reg=off"
         )
-        logger.info(f"开始 DualStream 训练，epochs={self.epochs}, device={self.device}, {teacher_note}")
+        early_note = (
+            f"early_stopping patience={self.early_stopping_patience}, min_delta={self.early_stopping_min_delta}"
+            if self.early_stopping_patience > 0
+            else "early_stopping=off"
+        )
+        logger.info(f"开始 DualStream 训练，epochs={self.epochs}, device={self.device}, {teacher_note}, {early_note}")
         last_val_metrics = {}
+        epochs_without_improvement = 0
+        stopped_early = False
 
         for epoch in range(1, self.epochs + 1):
             train_loss, train_reg, train_metrics, _, _ = self._run_epoch(self.train_loader, train=True)
@@ -186,9 +197,11 @@ class DualStreamTrainer:
             )
 
             score = val_metrics["viv_rwiv_mean_f1"]
-            if score > self.best_metric:
+            improved = score > self.best_metric + self.early_stopping_min_delta
+            if improved:
                 self.best_metric = score
                 self.best_epoch = epoch
+                epochs_without_improvement = 0
                 cfg = self.model.cfg
                 ckpt = {
                     "model_state_dict": self.model.state_dict(),
@@ -208,12 +221,24 @@ class DualStreamTrainer:
                     "best_metric": score,
                 }
                 torch.save(ckpt, self.output_dir / "best_checkpoint.pth")
+            else:
+                epochs_without_improvement += 1
 
             last_val_metrics = val_metrics
             logger.info(
                 f"Epoch {epoch}/{self.epochs} | train_loss={train_loss:.4f} "
                 f"train_reg={train_reg:.4f} val_loss={val_loss:.4f} viv_rwiv_f1={score:.4f}"
             )
+            if self.early_stopping_patience > 0 and epochs_without_improvement >= self.early_stopping_patience:
+                stopped_early = True
+                logger.info(
+                    "Early stopping: val viv_rwiv_f1 连续 %s 个 epoch 未提升超过 %.6f，best_epoch=%s best_metric=%.4f",
+                    epochs_without_improvement,
+                    self.early_stopping_min_delta,
+                    self.best_epoch,
+                    self.best_metric,
+                )
+                break
 
         self.visualizer.close()
         return {
@@ -221,6 +246,7 @@ class DualStreamTrainer:
             "best_metric": self.best_metric,
             "val_metrics": last_val_metrics,
             "checkpoint": str(self.output_dir / "best_checkpoint.pth"),
+            "stopped_early": stopped_early,
         }
 
 
@@ -245,6 +271,8 @@ class QuadStreamDualHeadTrainer:
         same_structure_teacher: Optional[nn.Module] = None,
         same_structure_reg_lambda: float = 0.0,
         same_structure_reg_temperature: float = 2.0,
+        early_stopping_patience: int = 0,
+        early_stopping_min_delta: float = 0.0,
         device: Optional[str] = None,
         label_names: Optional[List[str]] = None,
         num_classes: int = 4,
@@ -267,6 +295,8 @@ class QuadStreamDualHeadTrainer:
         self.same_structure_teacher = same_structure_teacher
         self.same_structure_reg_lambda = float(same_structure_reg_lambda)
         self.same_structure_reg_temperature = float(same_structure_reg_temperature)
+        self.early_stopping_patience = int(early_stopping_patience)
+        self.early_stopping_min_delta = float(early_stopping_min_delta)
         if self.legacy_teacher is not None:
             self.legacy_teacher.to(self.device)
             self.legacy_teacher.eval()
@@ -486,11 +516,19 @@ class QuadStreamDualHeadTrainer:
             if self.same_structure_teacher is not None and self.same_structure_reg_lambda > 0
             else "same_structure_reg=off"
         )
+        early_note = (
+            f"early_stopping patience={self.early_stopping_patience}, min_delta={self.early_stopping_min_delta}"
+            if self.early_stopping_patience > 0
+            else "early_stopping=off"
+        )
         logger.info(
             f"开始 round {round_idx} 配对双头联合训练，epochs={self.epochs}, device={self.device}, "
-            f"loss_w(in/out)=({self.inplane_loss_weight:.2f}/{self.outplane_loss_weight:.2f}), {reg_note}, {same_note}"
+            f"loss_w(in/out)=({self.inplane_loss_weight:.2f}/{self.outplane_loss_weight:.2f}), "
+            f"{reg_note}, {same_note}, {early_note}"
         )
         last_val_metrics = {}
+        epochs_without_improvement = 0
+        stopped_early = False
         for epoch in range(1, self.epochs + 1):
             (
                 train_loss,
@@ -539,9 +577,11 @@ class QuadStreamDualHeadTrainer:
             )
 
             score = float(val_metrics["joint_viv_rwiv_mean_f1"])
-            if score > self.best_metric:
+            improved = score > self.best_metric + self.early_stopping_min_delta
+            if improved:
                 self.best_metric = score
                 self.best_epoch = epoch
+                epochs_without_improvement = 0
                 if isinstance(self.model, QuadStreamSerialContextDualHeadResCNN):
                     model_type = "quad_stream_serial_context_dual_head"
                 elif isinstance(self.model, QuadStreamDualHeadContextResCNN):
@@ -586,6 +626,8 @@ class QuadStreamDualHeadTrainer:
                     "best_metric": score,
                 }
                 torch.save(ckpt, self.output_dir / "best_checkpoint.pth")
+            else:
+                epochs_without_improvement += 1
 
             last_val_metrics = val_metrics
             logger.info(
@@ -594,6 +636,16 @@ class QuadStreamDualHeadTrainer:
                 f"val_loss={val_loss:.4f} (in={val_in_loss:.4f}, out={val_out_loss:.4f}, reg={val_reg:.4f}) "
                 f"joint_viv_rwiv_f1={score:.4f}"
             )
+            if self.early_stopping_patience > 0 and epochs_without_improvement >= self.early_stopping_patience:
+                stopped_early = True
+                logger.info(
+                    "Early stopping: val joint_viv_rwiv_f1 连续 %s 个 epoch 未提升超过 %.6f，best_epoch=%s best_metric=%.4f",
+                    epochs_without_improvement,
+                    self.early_stopping_min_delta,
+                    self.best_epoch,
+                    self.best_metric,
+                )
+                break
 
         self.visualizer.close()
         return {
@@ -601,4 +653,5 @@ class QuadStreamDualHeadTrainer:
             "best_metric": self.best_metric,
             "val_metrics": last_val_metrics,
             "checkpoint": str(self.output_dir / "best_checkpoint.pth"),
+            "stopped_early": stopped_early,
         }

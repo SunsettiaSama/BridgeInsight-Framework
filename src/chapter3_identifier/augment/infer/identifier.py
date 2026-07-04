@@ -38,6 +38,7 @@ class DualStreamIdentifier:
         nfft: int = 2048,
         freq_max_hz: float = 25.0,
         label_names: Optional[list[str]] = None,
+        wind_config: Optional[dict] = None,
     ):
         self.model = model
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
@@ -48,6 +49,7 @@ class DualStreamIdentifier:
         self.freq_max_hz = freq_max_hz
         self.label_names = label_names or get_label_names()
         self.num_classes = len(self.label_names)
+        self.wind_config = dict(wind_config or {})
         self.model_type = "dual_stream_single_head"
         if isinstance(self.model, QuadStreamSerialContextDualHeadResCNN):
             self.model_type = "quad_stream_serial_context_dual_head"
@@ -71,6 +73,7 @@ class DualStreamIdentifier:
         nfft: int = 2048,
         freq_max_hz: float = 25.0,
         label_names: Optional[list[str]] = None,
+        wind_config: Optional[dict] = None,
     ) -> "DualStreamIdentifier":
         ckpt = torch.load(checkpoint_path, map_location="cpu")
         cfg_dict = ckpt.get("config")
@@ -122,6 +125,7 @@ class DualStreamIdentifier:
             nfft=nfft,
             freq_max_hz=freq_max_hz,
             label_names=label_names,
+            wind_config=wind_config,
         )
         identifier.context_input_size = int(cfg_dict.get("context_input_size", DEFAULT_CONTEXT_INPUT_SIZE))
         identifier.context_total_seconds = float(cfg_dict.get("context_total_seconds", DEFAULT_CONTEXT_TOTAL_SECONDS))

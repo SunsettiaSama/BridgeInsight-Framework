@@ -12,7 +12,7 @@ from src.data_processer.io_unpacker import UNPACK
 from src.chapter4_characteristics._bootstrap import ensure_paths
 
 ensure_paths()
-from src.chapter3_identifier.identifier.dl.runner import FullDatasetRunner
+from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import load_dl_result, load_mecc_result
 from src.figure_paintings.figs_for_thesis.config import (
     CN_FONT, FONT_SIZE, REC_FIG_SIZE,
     VIV_INPLANE_COLOR, VIV_OUTPLANE_COLOR,
@@ -30,9 +30,6 @@ class Config:
     VIV_CLASS_ID = 1
     MAX_SAMPLES  = 3000         # 每个数据源最多处理样本数
     RANDOM_SEED  = 42
-
-    DL_RESULT_DIR   = project_root / "results" / "identification_result"        / "res_cnn_full_dataset_*.json"
-    MECC_RESULT_DIR = project_root / "results" / "identification_result_mecc_viv" / "mecc_viv_only_*.json"
 
     # DL 数据源颜色（与其他 VIV 图一致）
     DL_COLOR   = VIV_INPLANE_COLOR    # '#8074C8' 深紫
@@ -57,21 +54,6 @@ class Config:
 
 
 # ==================== 数据加载 ====================
-def _load_latest_result(full_glob: Path) -> dict:
-    parent  = full_glob.parent
-    pattern = full_glob.name
-    if not parent.exists():
-        raise FileNotFoundError(f"结果目录不存在：{parent}")
-    files = sorted(parent.glob(pattern))
-    if not files:
-        raise FileNotFoundError(
-            f"在 {parent} 中未找到匹配 {pattern!r} 的文件"
-        )
-    latest = files[-1]
-    print(f"    文件：{latest.name}")
-    return FullDatasetRunner.load_result(str(latest))
-
-
 def _get_viv_samples(result: dict) -> list:
     predictions     = {int(k): int(v) for k, v in result["predictions"].items()}
     sample_metadata = result.get("sample_metadata", {})
@@ -358,9 +340,9 @@ def main():
 
     print("\n[步骤1] 加载识别结果...")
     print("  深度学习结果：")
-    dl_result   = _load_latest_result(Config.DL_RESULT_DIR)
+    dl_result   = load_dl_result()
     print("  MECC 结果：")
-    mecc_result = _load_latest_result(Config.MECC_RESULT_DIR)
+    mecc_result = load_mecc_result()
 
     print("\n[步骤2] 筛选 VIV 样本...")
     dl_samples   = _get_viv_samples(dl_result)
