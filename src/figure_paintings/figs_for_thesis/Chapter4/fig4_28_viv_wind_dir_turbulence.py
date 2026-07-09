@@ -17,6 +17,7 @@ from src.figure_paintings.figs_for_thesis.config import (
 _chapter4_dir = str(Path(__file__).parent)
 if _chapter4_dir not in sys.path:
     sys.path.insert(0, _chapter4_dir)
+from src.figure_paintings.figs_for_thesis.Chapter4 import data_config
 from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import get_enriched_class_dir
 from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import (
     load_mecc_result, get_viv_samples,
@@ -41,12 +42,7 @@ class Config:
 
     ENRICHED_STATS_DIR = get_enriched_class_dir(1)
 
-    SENSOR_GROUPS = {
-        'C18 边跨': 'ST-VIC-C18-101-01.json',
-        'C34 边跨': 'ST-VIC-C34-101-01.json',
-        'C34 跨中': 'ST-VIC-C34-201-01.json',
-        'C34 辅跨': 'ST-VIC-C34-301-01.json',
-    }
+    SENSOR_GROUPS = data_config.SENSOR_GROUPS_WIND
 
 
 # ==================== 数据加载 ====================

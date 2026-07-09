@@ -9,7 +9,8 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
+from src.figure_paintings.figs_for_thesis.Chapter4 import data_config
 from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import get_enriched_class_dir
 from src.figure_paintings.figs_for_thesis.config import (
     CN_FONT, ENG_FONT, FONT_SIZE, REC_FIG_SIZE,
@@ -36,11 +37,7 @@ class Config:
 
     ENRICHED_STATS_DIR = get_enriched_class_dir(0)
 
-    SENSOR_GROUPS = {
-        'C18 边跨': 'ST-VIC-C18-101-01.json',
-        'C34 边跨': 'ST-VIC-C34-101-01.json',
-        'C34 跨中': 'ST-VIC-C34-201-01.json',
-    }
+    SENSOR_GROUPS = data_config.SENSOR_GROUPS_WIND
 
     # 紊流度 x 轴上限（百分比，固定范围）
     TI_X_MAX_PCT = 60.0
@@ -186,16 +183,19 @@ def main():
               f"面外RMS mean={d['rms_out'].mean():.4f}")
 
     print("\n[步骤 2/2] 生成散点图...")
-    ploter = PlotLib()
+    page = "fig3_x RMS-紊流度"
+    slot = 0
 
     for label, d in sensor_data.items():
         fig = plot_ti_vs_rms(d, label)
-        ploter.figs.append(fig)
+        web_push(fig, page=page, slot=slot, title=label,
+                 page_cols=len(sensor_data) if slot == 0 else None)
+        slot += 1
         print(f"  ✓ {label}")
 
-    print(f"\n共生成 {len(ploter.figs)} 张图像")
+    print(f"\n共推送 {slot} 张图像")
     print("=" * 80)
-    ploter.show()
+    print(f"✓ 已推送到 WebUI：{page}")
 
 
 if __name__ == "__main__":

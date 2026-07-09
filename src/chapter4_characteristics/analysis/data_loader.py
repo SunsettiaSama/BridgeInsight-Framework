@@ -4,6 +4,11 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+from src.chapter4_characteristics.feature_analysis._compactor import (
+    ensure_class_dir_compacted,
+    list_batch_json_files,
+    list_canonical_json_files,
+)
 from src.chapter4_characteristics.settings import (
     CLASS_DIRS,
     get_enriched_dir,
@@ -30,23 +35,62 @@ def get_nested(sample: dict, dotted: str) -> Any:
     return cur
 
 
-def _iter_class_json_files(class_dir: Path, class_id: int) -> List[Path]:
+def _iter_class_json_files(class_dir: Path, class_id: int, cfg: dict) -> List[Path]:
     if not class_dir.exists():
         flat = class_dir.parent / f"{CLASS_DIRS[class_id]}.json"
         if flat.exists():
             return [flat]
         return []
-    return sorted(class_dir.glob("*.json"))
+
+    excluded = _excluded_sensor_ids(cfg)
+    if list_batch_json_files(class_dir):
+        ensure_class_dir_compacted(
+            class_dir,
+            cfg=cfg,
+            excluded_sensor_ids=excluded,
+        )
+
+    canonical = list_canonical_json_files(class_dir, excluded_sensor_ids=excluded)
+    if canonical:
+        return canonical
+
+    flat = class_dir.parent / f"{CLASS_DIRS[class_id]}.json"
+    if flat.exists():
+        return [flat]
+
+    if list_batch_json_files(class_dir):
+        raise FileNotFoundError(
+            f"类别目录仅有 batch 文件，未生成 canonical JSON：{class_dir}\n"
+            "请先运行：python -m src.chapter4_characteristics enrich --compact-only"
+        )
+    return []
+
+
+def _excluded_sensor_ids(cfg: dict) -> set[str]:
+    ids = cfg.get("infer_exclude_sensor_ids") or cfg.get("exclude_sensor_ids") or []
+    return {str(sensor_id) for sensor_id in ids}
+
+
+def _is_excluded_sample(sample: dict, excluded: set[str]) -> bool:
+    return (
+        sample.get("inplane_sensor_id") in excluded
+        or sample.get("outplane_sensor_id") in excluded
+        or sample.get("sensor_id") in excluded
+    )
 
 
 def load_class_samples(class_id: int, cfg: dict) -> List[dict]:
     class_dir = get_enriched_dir(cfg) / CLASS_DIRS[class_id]
+    excluded = _excluded_sensor_ids(cfg)
     samples: List[dict] = []
-    for jf in _iter_class_json_files(class_dir, class_id):
+    for jf in _iter_class_json_files(class_dir, class_id, cfg):
+        if jf.stem in excluded:
+            continue
         with open(jf, "r", encoding="utf-8") as f:
             data = json.load(f)
         for s in data.get("samples", []):
-            samples.append(s)
+            if not _is_excluded_sample(s, excluded):
+                samples.append(s)
     return samples
 
 
@@ -56,7 +100,11 @@ def load_inference_records(cfg: dict) -> List[dict]:
         return []
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    return data.get("records", [])
+    excluded = _excluded_sensor_ids(cfg)
+    return [
+        r for r in data.get("records", [])
+        if not _is_excluded_sample(r, excluded)
+    ]
 
 
 def inference_by_idx(cfg: dict) -> Dict[int, dict]:
@@ -73,11 +121,15 @@ def load_others_index(cfg: dict) -> dict:
 
 def get_data_status(cfg: dict) -> dict:
     counts = {}
+    excluded = _excluded_sensor_ids(cfg)
     for cid, cdir in CLASS_DIRS.items():
         n = 0
-        for jf in _iter_class_json_files(get_enriched_dir(cfg) / cdir, cid):
+        for jf in _iter_class_json_files(get_enriched_dir(cfg) / cdir, cid, cfg):
+            if jf.stem in excluded:
+                continue
             with open(jf, "r", encoding="utf-8") as f:
-                n += len(json.load(f).get("samples", []))
+                samples = json.load(f).get("samples", [])
+            n += sum(1 for sample in samples if not _is_excluded_sample(sample, excluded))
         counts[cid] = n
     infer_path = get_inference_path(cfg)
     return {

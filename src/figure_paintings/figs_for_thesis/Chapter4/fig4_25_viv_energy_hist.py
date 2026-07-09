@@ -17,7 +17,7 @@ from src.figure_paintings.figs_for_thesis.config import (
 _chapter4_dir = str(Path(__file__).parent)
 if _chapter4_dir not in sys.path:
     sys.path.insert(0, _chapter4_dir)
-from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import get_enriched_class_dir
+from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import get_enriched_class_dir, iter_enriched_json_files
 from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import (
     load_mecc_result, get_viv_samples, compute_signal_stats, load_enriched_stats,
     MECC_INPLANE_COLOR, MECC_OUTPLANE_COLOR,
@@ -49,7 +49,7 @@ def load_energy_data() -> dict:
     if not stats_dir.exists():
         raise FileNotFoundError(f"enriched_stats 目录不存在：{stats_dir}")
 
-    json_files = sorted(stats_dir.glob("*.json"))
+    json_files = iter_enriched_json_files(stats_dir)
     if not json_files:
         raise FileNotFoundError(f"目录下无 JSON 文件：{stats_dir}")
 

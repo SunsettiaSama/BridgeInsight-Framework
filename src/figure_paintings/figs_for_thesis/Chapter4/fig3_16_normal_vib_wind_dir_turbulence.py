@@ -10,7 +10,8 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
+from src.figure_paintings.figs_for_thesis.Chapter4 import data_config
 from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import get_enriched_class_dir
 from src.figure_paintings.figs_for_thesis.config import (
     CN_FONT, ENG_FONT, SQUARE_FONT_SIZE, get_red_color_map, SQUARE_FIG_SIZE
@@ -47,10 +48,7 @@ class Config:
     ENRICHED_STATS_DIR = get_enriched_class_dir(0)
 
     # 3 个位置 × 2 方向 = 6 张独立图
-    SENSOR_GROUPS = {
-        'C18 边跨': 'ST-VIC-C18-101-01.json',
-        'C34 跨中': 'ST-VIC-C34-201-01.json',
-    }
+    SENSOR_GROUPS = data_config.SENSOR_GROUPS_WIND
 
 
 # ==================== 数据加载 ====================
@@ -255,7 +253,8 @@ def main():
     step   = 360.0 / n_bins
     bins   = np.arange(0, 360 + step, step)
 
-    ploter = PlotLib()
+    page = "fig3_16 风向-RMS"
+    slot = 0
 
     for label, d in sensor_data.items():
         for direction, rms_key in [('面内', 'rms_in'), ('面外', 'rms_out')]:
@@ -264,7 +263,8 @@ def main():
             )
             title = f'{label}  {direction}振动 RMS（m/s²）'
             fig   = make_single_figure(mean_rms, mean_ti, bins, title, vmin, vmax)
-            ploter.figs.append(fig)
+            web_push(fig, page=page, slot=slot, title=title, page_cols=2 if slot == 0 else None)
+            slot += 1
             print(f"  ✓ {title}")
 
     print("\n[补充] 生成整体汇总图（所有传感器合并）...")
@@ -275,12 +275,13 @@ def main():
         )
         title = f'整体汇总  {direction}振动 RMS（m/s²）'
         fig   = make_single_figure(mean_rms, mean_ti, bins, title, vmin, vmax)
-        ploter.figs.append(fig)
+        web_push(fig, page=page, slot=slot, title=title)
+        slot += 1
         print(f"  ✓ {title}")
 
-    print(f"\n共生成 {len(ploter.figs)} 张图像")
+    print(f"\n共推送 {slot} 张图像")
     print("=" * 80)
-    ploter.show()
+    print(f"✓ 已推送到 WebUI：{page}")
 
 
 if __name__ == "__main__":

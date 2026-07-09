@@ -58,6 +58,7 @@ def save_class_results(
     source_result_path: str = "",
     wind_metadata_path: str = "",
     split_by_sensor: bool = True,
+    file_suffix: str = "",
 ) -> Dict[int, Path]:
     """
     将 enriched_samples 按类别（可选再按传感器）分割后保存为独立 JSON 文件。
@@ -102,7 +103,7 @@ def save_class_results(
                 by_sensor[sid].append(s)
 
             for sensor_id, sensor_samples in sorted(by_sensor.items()):
-                sensor_path = cls_dir / f"{sensor_id}.json"
+                sensor_path = cls_dir / f"{sensor_id}{file_suffix}.json"
                 payload = {
                     "metadata": {**file_meta, "sensor_id": sensor_id, "num_samples": len(sensor_samples)},
                     "samples":  sensor_samples,
@@ -113,7 +114,7 @@ def save_class_results(
 
             saved_paths[cls_id] = cls_dir
         else:
-            cls_path = out_dir / f"class_{cls_id}_{label}.json"
+            cls_path = out_dir / f"class_{cls_id}_{label}{file_suffix}.json"
             payload = {
                 "metadata": file_meta,
                 "samples":  samples,

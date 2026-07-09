@@ -37,12 +37,61 @@ import queue
 import shutil
 import socket
 import socketserver
+import sys
 import threading
 import time
+import traceback
 import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+
+# ---------------------------------------------------------------------------
+# 日志
+# ---------------------------------------------------------------------------
+
+_LOG_VERBOSE = False
+
+
+def _client_addr(client_address: Tuple[str, int]) -> str:
+    host, port = client_address
+    return f'{host}:{port}'
+
+
+def _is_client_disconnect(exc: BaseException) -> bool:
+    if isinstance(exc, (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
+        return True
+    if isinstance(exc, OSError):
+        winerr = getattr(exc, 'winerror', None)
+        if winerr in (10053, 10054):
+            return True
+    return False
+
+
+def _log_info(msg: str) -> None:
+    print(f'[VibDash] {msg}')
+
+
+def _log_warn(msg: str) -> None:
+    print(f'[VibDash][WARN] {msg}')
+
+
+def _log_error(msg: str) -> None:
+    print(f'[VibDash][ERROR] {msg}')
+
+
+def _log_debug(msg: str) -> None:
+    if _LOG_VERBOSE:
+        print(f'[VibDash][DEBUG] {msg}')
+
+
+def _log_client_disconnect(client_address: Tuple[str, int], exc: BaseException, context: str) -> None:
+    winerr = getattr(exc, 'winerror', None)
+    detail = f'winerror={winerr}' if winerr is not None else type(exc).__name__
+    _log_debug(
+        f'客户端断开连接 {context} client={_client_addr(client_address)} ({detail})，'
+        '不影响服务运行'
+    )
 
 # ---------------------------------------------------------------------------
 # 内嵌 HTML 模板
@@ -685,14 +734,43 @@ class _ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     """每个请求独立线程，SSE 长连接不阻塞其他请求。"""
     daemon_threads = True
 
+    def handle_error(self, request, client_address):
+        exc_type, exc_value, _exc_tb = sys.exc_info()
+        if exc_value is not None and _is_client_disconnect(exc_value):
+            _log_client_disconnect(client_address, exc_value, '请求处理中')
+            return
+        _log_error(
+            f'请求处理异常 client={_client_addr(client_address)} '
+            f'{exc_type.__name__}: {exc_value}'
+        )
+        if _LOG_VERBOSE and exc_value is not None:
+            traceback.print_exception(exc_type, exc_value, _exc_tb)
+
 
 class _Handler(BaseHTTPRequestHandler):
     """请求处理器，通过类变量 dashboard 引用 WebDashboard 实例。"""
     dashboard: "WebDashboard" = None
 
+    def handle(self):
+        try:
+            super().handle()
+        except Exception as exc:
+            if _is_client_disconnect(exc):
+                _log_client_disconnect(self.client_address, exc, self.path)
+                return
+            raise
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path   = parsed.path
+        client = _client_addr(self.client_address)
+
+        if path == '/stream':
+            _log_debug(f'GET /stream client={client}')
+        elif path == '/':
+            _log_info(f'页面访问 client={client}')
+        elif not path.startswith('/api/image/'):
+            _log_debug(f'GET {path} client={client}')
 
         if path == '/':
             self._html()
@@ -745,13 +823,27 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
+        client = _client_addr(self.client_address)
         if self.path == '/push':
             length = int(self.headers.get('Content-Length', 0))
-            body   = json.loads(self.rfile.read(length))
-            self.dashboard._store_and_broadcast(body)
+            _log_info(f'收到 push 请求 client={client} body={length / 1024:.1f} KB')
+            t0 = time.perf_counter()
+            raw_body = self.rfile.read(length)
+            payload = json.loads(raw_body)
+            page = payload.get('page', '')
+            slot = payload.get('slot', '')
+            title = payload.get('title', '')
+            _log_info(f'push 开始 page={page!r} slot={slot} title={title!r} client={client}')
+            self.dashboard._store_and_broadcast(payload, client=client)
+            elapsed = time.perf_counter() - t0
+            _log_info(f'push 完成 page={page!r} slot={slot} 耗时={elapsed:.2f}s client={client}')
             self._json({'ok': True})
         else:
+            _log_warn(f'未知 POST 路径 {self.path!r} client={client}')
             self.send_error(404)
+
+    def _safe_write(self, data: bytes) -> None:
+        self.wfile.write(data)
 
     # ── 响应工具 ─────────────────────────────────────────────────────────
     def _html(self):
@@ -760,7 +852,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(html)))
         self.end_headers()
-        self.wfile.write(html)
+        self._safe_write(html)
 
     def _json(self, obj):
         data = json.dumps(obj, ensure_ascii=False).encode('utf-8')
@@ -769,7 +861,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(data)))
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        self.wfile.write(data)
+        self._safe_write(data)
 
     def _png(self, data_uri: str, filename: str):
         prefix = 'data:image/png;base64,'
@@ -783,9 +875,10 @@ class _Handler(BaseHTTPRequestHandler):
             f'attachment; filename="{filename}"',
         )
         self.end_headers()
-        self.wfile.write(raw)
+        self._safe_write(raw)
 
     def _sse(self):
+        client = _client_addr(self.client_address)
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
         self.send_header('Cache-Control', 'no-cache')
@@ -795,6 +888,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         q: queue.Queue = queue.Queue()
         self.dashboard._clients.append(q)
+        self.dashboard._sse_client_count += 1
+        _log_info(
+            f'SSE 订阅中 client={client} 当前连接数={self.dashboard._sse_client_count}'
+        )
         try:
             while True:
                 try:
@@ -804,11 +901,16 @@ class _Handler(BaseHTTPRequestHandler):
                 except queue.Empty:
                     self.wfile.write(b': ping\n\n')
                     self.wfile.flush()
-        except Exception:
-            pass
+        except Exception as exc:
+            if not _is_client_disconnect(exc):
+                _log_warn(f'SSE 异常断开 client={client}: {exc}')
         finally:
             if q in self.dashboard._clients:
                 self.dashboard._clients.remove(q)
+            self.dashboard._sse_client_count = max(0, self.dashboard._sse_client_count - 1)
+            _log_info(
+                f'SSE 连接关闭 client={client} 当前连接数={self.dashboard._sse_client_count}'
+            )
 
     def log_message(self, fmt, *args):
         pass
@@ -857,6 +959,9 @@ class WebDashboard:
         self._lock      = threading.Lock()
         self._disk_lock = threading.Lock()   # 保护磁盘读写，与 _lock 解耦
         self._server: Optional[_ThreadedHTTPServer] = None
+        self._server_thread: Optional[threading.Thread] = None
+        self._sse_client_count = 0
+        self._push_count = 0
 
         self._html_cache = _HTML_TEMPLATE.replace('COLS_VALUE', str(cols))
 
@@ -869,27 +974,40 @@ class WebDashboard:
         _Handler.dashboard = self
         self._port = _resolve_listen_port(_BIND_HOST, self._port)
         self._server = _ThreadedHTTPServer((_BIND_HOST, self._port), _Handler)
-        t = threading.Thread(target=self._server.serve_forever, daemon=True)
-        t.start()
+        self._server_thread = threading.Thread(
+            target=self._serve_forever,
+            name='VibDash-HTTP',
+            daemon=True,
+        )
+        self._server_thread.start()
         url = f'http://localhost:{self._port}'
-        print(f'[VibDash] 服务已启动 → {url}')
+        _log_info(f'服务已启动 → {url}')
         if self._auto_open:
             threading.Timer(0.6, lambda: webbrowser.open(url)).start()
         return self
 
-    def stop(self):
+    def _serve_forever(self) -> None:
+        _log_debug('HTTP 服务线程已启动')
+        self._server.serve_forever(poll_interval=0.5)
+        _log_warn('HTTP 服务线程 serve_forever 已返回')
+
+    def stop(self, reason: str = '外部调用 stop()'):
         if self._server:
             self._server.shutdown()
-            print('[VibDash] 服务已停止')
+            self._server = None
+            _log_info(f'服务已停止（原因：{reason}）')
 
     def wait(self):
         """阻塞当前线程（保持进程存活），Ctrl+C 退出。"""
-        print('[VibDash] 按 Ctrl+C 退出…')
+        _log_info('主线程等待中（Ctrl+C 退出）')
         try:
             while True:
+                if self._server_thread is not None and not self._server_thread.is_alive():
+                    self.stop(reason='HTTP 服务线程意外退出')
+                    raise SystemExit(1)
                 time.sleep(1)
         except KeyboardInterrupt:
-            self.stop()
+            self.stop(reason='用户中断 (Ctrl+C)')
 
     # ── 磁盘缓存 ──────────────────────────────────────────────────────────
 
@@ -945,7 +1063,7 @@ class WebDashboard:
             loaded += 1
 
         if loaded:
-            print(f'[VibDash] 从缓存加载了 {loaded} 个历史页面 ← {self._cache_dir}')
+            _log_info(f'从缓存加载了 {loaded} 个历史页面 ← {self._cache_dir}')
 
     def _save_slot(self, page: str, slot: str, image_uri: str, title: str):
         """将单个 slot 的 PNG 写入磁盘，并更新该页面的 _meta.json。"""
@@ -1040,13 +1158,14 @@ class WebDashboard:
 
     # ── 内部 ─────────────────────────────────────────────────────────────
 
-    def _store_and_broadcast(self, payload: dict):
+    def _store_and_broadcast(self, payload: dict, client: str = 'in-process'):
         page      = payload['page']
         slot      = str(payload['slot'])
         image     = payload['image']
         title     = payload.get('title', f'slot {slot}')
         page_cols = payload.get('page_cols')
         created_at = datetime.datetime.now().isoformat(timespec='seconds')
+        image_kb = len(image) / 1024
 
         with self._lock:
             is_new = page not in self._pages
@@ -1060,6 +1179,13 @@ class WebDashboard:
                 self._meta[page]['created_at'] = created_at
             self._pages[page][slot] = {'image': image, 'title': title}
             cols = self._meta[page]['cols']
+            self._push_count += 1
+            push_no = self._push_count
+
+        _log_info(
+            f'广播图像 #{push_no} page={page!r} slot={slot} '
+            f'image={image_kb:.1f}KB sse_clients={self._sse_client_count} client={client}'
+        )
 
         # SSE 广播（先广播，让浏览器尽早知晓，磁盘 I/O 在后面异步完成）
         if is_new:
@@ -1077,7 +1203,7 @@ class WebDashboard:
                     for ep in evicted:
                         self._pages.pop(ep, None)
                         self._meta.pop(ep, None)
-                print(f'[VibDash] 缓存已淘汰 {len(evicted)} 个旧页面：{evicted}')
+                _log_info(f'缓存已淘汰 {len(evicted)} 个旧页面：{evicted}')
 
     def _broadcast(self, event: str, data: dict):
         msg = f'event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n'
@@ -1125,6 +1251,7 @@ def push(
     title    = title or f'slot {slot}'
 
     url = f'http://localhost:{port}/push'
+    _log_debug(f'跨进程 push 请求 → {url} page={page!r} slot={slot}')
     try:
         resp = requests.post(url, json={
             'page'     : page,
@@ -1132,13 +1259,13 @@ def push(
             'image'    : image,
             'title'    : title,
             'page_cols': page_cols,
-        }, timeout=10)
+        }, timeout=30)
         resp.raise_for_status()
-    except requests.exceptions.ConnectionError:
+    except requests.exceptions.ConnectionError as exc:
         raise ConnectionError(
             f'[VibDash] 无法连接到 localhost:{port}，'
             '请先启动服务：python -m src.visualize_tools.web_dashboard'
-        )
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -1206,7 +1333,11 @@ def main(argv: Optional[list[str]] = None) -> None:
     parser.add_argument('--no-browser', action='store_true',           help='不自动打开浏览器')
     parser.add_argument('--cache-dir',  type=str,  default='.webui_img', help='本地图像缓存目录（留空则禁用）')
     parser.add_argument('--max-rounds', type=int,  default=20,         help='最多保留的历史页面数（0=无限制）')
+    parser.add_argument('--verbose',      action='store_true',          help='输出调试日志（含客户端断开详情）')
     args = parser.parse_args(argv)
+
+    global _LOG_VERBOSE
+    _LOG_VERBOSE = args.verbose
 
     dash = WebDashboard(
         port=args.port,

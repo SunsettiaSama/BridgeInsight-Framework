@@ -1,12 +1,14 @@
 """
 识别结果可视化：2023年各月份各类振动占比分布
 
+数据源：Chapter4 全量 DL 识别结果（已排除 C34-201/202），
+见 data_config.CHAPTER4["predictions_enriched"]。
+
 主要功能：
 - 加载识别结果 JSON
 - 按月份聚合各类振动的窗口计数
 - 生成堆积柱状图展示全年分布
-- 支持按拉索对、传感器等维度筛选统计
-- 使用 PlotLib GUI 交互式查看和保存
+- 推送到 WebUI 查看
 """
 
 import sys
@@ -17,16 +19,24 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 import json
 import logging
 import numpy as np
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 from collections import defaultdict
-from typing import Dict, List, Tuple, Optional
+from typing import Dict
 
-from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
 from src.chapter4_characteristics._bootstrap import ensure_paths
 
 ensure_paths()
+from src.figure_paintings.figs_for_thesis.Chapter4 import data_config
 from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import load_dl_result
+
+# 已排除 C34-201/202 的 DL 全量识别结果
+DL_RESULT_PATH = data_config.PROJECT_ROOT / data_config.CHAPTER4["predictions_enriched"]
+PAGE_NAME = "fig3_1 月份分布"
 
 # 从统一配置模块导入图像配置（字体、尺寸、配色）
 from src.figure_paintings.figs_for_thesis.config import ENG_FONT, CN_FONT, FONT_SIZE, REC_FIG_SIZE, get_blue_color_map
@@ -41,10 +51,10 @@ plt.rcParams["font.size"] = FONT_SIZE
 
 # 类别标签映射
 CLASS_LABELS = {
-    0: "随机振动 (Class 0)",
-    1: "涡激共振 (Class 1)", 
-    2: "风雨振 (Class 2)",
-    3: "其他振动 (Class 3)",
+    0: "随机振动",
+    1: "涡激共振", 
+    2: "风雨振 ",
+    3: "其他振动",
 }
 _class_palette = get_blue_color_map(style="discrete", start_map_index=1, end_map_index=5).colors
 CLASS_COLORS = {cls_id: _class_palette[cls_id] for cls_id in range(4)}
@@ -87,7 +97,6 @@ def aggregate_by_month(
 
 def plot_monthly_distribution(
     monthly_counts: Dict[int, Dict[int, int]],
-    output_path: Optional[str] = None,
 ):
     """
     绘制 2023 年各月份各类振动窗口数分布（分组柱状图 + 纵轴对数坐标）。
@@ -96,8 +105,6 @@ def plot_monthly_distribution(
     ----------
     monthly_counts : Dict[int, Dict[int, int]]
         按月份聚合的各类窗口计数
-    output_path : str, optional
-        图片保存路径
     """
     months = sorted(monthly_counts.keys())
 
@@ -156,18 +163,11 @@ def plot_monthly_distribution(
 
     plt.tight_layout()
 
-    if output_path:
-        fig.savefig(output_path, dpi=300, bbox_inches="tight")
-        logger.info(f"图表已保存：{output_path}")
-    else:
-        plt.show()
-
     return fig, ax
 
 
 def plot_monthly_percentage(
     monthly_counts: Dict[int, Dict[int, int]],
-    output_path: Optional[str] = None,
 ):
     """
     绘制 2023 年各月份各类振动百分比堆积柱状图（纵轴为线性 0–100%，便于读占比）。
@@ -176,8 +176,6 @@ def plot_monthly_percentage(
     ----------
     monthly_counts : Dict[int, Dict[int, int]]
         按月份聚合的各类窗口计数
-    output_path : str, optional
-        图片保存路径
     """
     months = sorted(monthly_counts.keys())
 
@@ -234,18 +232,11 @@ def plot_monthly_percentage(
 
     plt.tight_layout()
 
-    if output_path:
-        fig.savefig(output_path, dpi=300, bbox_inches="tight")
-        logger.info(f"图表已保存：{output_path}")
-    else:
-        plt.show()
-
     return fig, ax
 
 
 def plot_monthly_stacked_count(
     monthly_counts: Dict[int, Dict[int, int]],
-    output_path: Optional[str] = None,
 ):
     """
     绘制 2023 年各月份各类振动窗口数堆叠柱状图（线性 y 轴，含全部 4 类）。
@@ -290,18 +281,11 @@ def plot_monthly_stacked_count(
 
     plt.tight_layout()
 
-    if output_path:
-        fig.savefig(output_path, dpi=300, bbox_inches="tight")
-        logger.info(f"图表已保存：{output_path}")
-    else:
-        plt.show()
-
     return fig, ax
 
 
 def plot_monthly_stacked_count_viv_rain(
     monthly_counts: Dict[int, Dict[int, int]],
-    output_path: Optional[str] = None,
 ):
     """
     绘制 2023 年各月份涡激共振（Class 1）与风雨振（Class 2）窗口数堆叠柱状图
@@ -348,12 +332,6 @@ def plot_monthly_stacked_count_viv_rain(
 
     plt.tight_layout()
 
-    if output_path:
-        fig.savefig(output_path, dpi=300, bbox_inches="tight")
-        logger.info(f"图表已保存：{output_path}")
-    else:
-        plt.show()
-
     return fig, ax
 
 
@@ -377,11 +355,13 @@ def print_monthly_statistics(monthly_counts: Dict[int, Dict[int, int]]) -> None:
 
 def main():
     """主函数"""
-    # 识别结果路径（使用最新的结果文件）
-    # fig3_1_all_recognition_result.py 位于 src/figure_paintings/figs_for_thesis/Chapter3/
-    project_root = Path(__file__).parent.parent.parent.parent.parent
+    if not DL_RESULT_PATH.exists():
+        raise FileNotFoundError(
+            f"DL 识别结果不存在：{DL_RESULT_PATH}\n"
+            "请先运行：python scripts/filter_chapter4_predictions.py"
+        )
 
-    logger.info("加载 DL 全量识别结果（data_config.DATA_SOURCE）")
+    logger.info("加载 DL 识别结果（已排除 C34-201/202）：%s", DL_RESULT_PATH.name)
     result = load_dl_result()
     
     # 按月份聚合
@@ -390,33 +370,28 @@ def main():
     # 打印统计信息
     print_monthly_statistics(monthly_counts)
     
-    # 生成图表
-    output_dir = project_root / "results" / "figures"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    plot_lib = PlotLib()
-    
-    # 绝对数量分布图（对数坐标）
-    count_fig_path = output_dir / "fig3_1_monthly_distribution_count.png"
-    fig_count, _ = plot_monthly_distribution(monthly_counts, str(count_fig_path))
-    plot_lib.figs.append(fig_count)
-    
-    # 百分比堆积柱状图
-    percentage_fig_path = output_dir / "fig3_1_monthly_distribution_percentage.png"
-    fig_pct, _ = plot_monthly_percentage(monthly_counts, str(percentage_fig_path))
-    plot_lib.figs.append(fig_pct)
+    # 生成图表并推送到 WebUI
+    fig_count, _ = plot_monthly_distribution(monthly_counts)
+    fig_pct, _ = plot_monthly_percentage(monthly_counts)
+    fig_stacked, _ = plot_monthly_stacked_count(monthly_counts)
+    fig_viv_rain, _ = plot_monthly_stacked_count_viv_rain(monthly_counts)
 
-    # 全类别线性堆叠图
-    stacked_fig_path = output_dir / "fig3_1_monthly_stacked_count.png"
-    fig_stacked, _ = plot_monthly_stacked_count(monthly_counts, str(stacked_fig_path))
-    plot_lib.figs.append(fig_stacked)
+    figures = [
+        (fig_count, "月份分布（对数）"),
+        (fig_pct, "月份占比"),
+        (fig_stacked, "月份分布（堆叠）"),
+        (fig_viv_rain, "涡激+风雨振（堆叠）"),
+    ]
+    for slot, (fig, title) in enumerate(figures):
+        web_push(
+            fig,
+            page=PAGE_NAME,
+            slot=slot,
+            title=title,
+            page_cols=2 if slot == 0 else None,
+        )
 
-    # 仅涡激共振 + 风雨振线性堆叠图
-    viv_rain_fig_path = output_dir / "fig3_1_monthly_stacked_viv_rain.png"
-    fig_viv_rain, _ = plot_monthly_stacked_count_viv_rain(monthly_counts, str(viv_rain_fig_path))
-    plot_lib.figs.append(fig_viv_rain)
-
-    logger.info("图表生成完成！")
-    plot_lib.show()
+    logger.info("图表已推送到 WebUI：%s", PAGE_NAME)
 
 
 if __name__ == "__main__":

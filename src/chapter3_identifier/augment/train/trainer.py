@@ -24,6 +24,21 @@ logger = logging.getLogger(__name__)
 _LONG_CONTEXT_MODEL_CLASSES = (QuadStreamDualHeadContextResCNN, QuadStreamSerialContextDualHeadResCNN)
 
 
+def _pair_joint_accuracy(
+    in_true: List[int],
+    out_true: List[int],
+    in_pred: List[int],
+    out_pred: List[int],
+) -> float:
+    if not in_true:
+        return 0.0
+    correct = [
+        (yt_in == yp_in) and (yt_out == yp_out)
+        for yt_in, yt_out, yp_in, yp_out in zip(in_true, out_true, in_pred, out_pred)
+    ]
+    return float(sum(correct) / len(correct))
+
+
 class FocalLoss(nn.Module):
     def __init__(self, gamma: float = 2.0, weight: Optional[torch.Tensor] = None):
         super().__init__()
@@ -227,12 +242,12 @@ class DualStreamTrainer:
             last_val_metrics = val_metrics
             logger.info(
                 f"Epoch {epoch}/{self.epochs} | train_loss={train_loss:.4f} "
-                f"train_reg={train_reg:.4f} val_loss={val_loss:.4f} viv_rwiv_f1={score:.4f}"
+                f"train_reg={train_reg:.4f} val_loss={val_loss:.4f} direction_viv_rwiv_f1={score:.4f}"
             )
             if self.early_stopping_patience > 0 and epochs_without_improvement >= self.early_stopping_patience:
                 stopped_early = True
                 logger.info(
-                    "Early stopping: val viv_rwiv_f1 连续 %s 个 epoch 未提升超过 %.6f，best_epoch=%s best_metric=%.4f",
+                    "Early stopping: val direction_viv_rwiv_f1 连续 %s 个 epoch 未提升超过 %.6f，best_epoch=%s best_metric=%.4f",
                     epochs_without_improvement,
                     self.early_stopping_min_delta,
                     self.best_epoch,
@@ -493,6 +508,12 @@ class QuadStreamDualHeadTrainer:
         merged_metrics["joint_viv_rwiv_mean_f1"] = (
             in_metrics["viv_rwiv_mean_f1"] + out_metrics["viv_rwiv_mean_f1"]
         ) / 2.0
+        merged_metrics["pair_joint_accuracy"] = _pair_joint_accuracy(
+            in_true,
+            out_true,
+            in_pred,
+            out_pred,
+        )
         return (
             avg_loss,
             avg_in_loss,
@@ -576,7 +597,7 @@ class QuadStreamDualHeadTrainer:
                 }
             )
 
-            score = float(val_metrics["joint_viv_rwiv_mean_f1"])
+            score = float(val_metrics["pair_joint_accuracy"])
             improved = score > self.best_metric + self.early_stopping_min_delta
             if improved:
                 self.best_metric = score
@@ -623,6 +644,7 @@ class QuadStreamDualHeadTrainer:
                     "round_idx": round_idx,
                     "epoch": epoch,
                     "val_metrics": val_metrics,
+                    "best_metric_name": "pair_joint_accuracy",
                     "best_metric": score,
                 }
                 torch.save(ckpt, self.output_dir / "best_checkpoint.pth")
@@ -634,12 +656,12 @@ class QuadStreamDualHeadTrainer:
                 f"Epoch {epoch}/{self.epochs} | train_loss={train_loss:.4f} "
                 f"(in={train_in_loss:.4f}, out={train_out_loss:.4f}, reg={train_reg:.4f}) "
                 f"val_loss={val_loss:.4f} (in={val_in_loss:.4f}, out={val_out_loss:.4f}, reg={val_reg:.4f}) "
-                f"joint_viv_rwiv_f1={score:.4f}"
+                f"pair_joint_acc={score:.4f} direction_viv_rwiv_f1={val_metrics['joint_viv_rwiv_mean_f1']:.4f}"
             )
             if self.early_stopping_patience > 0 and epochs_without_improvement >= self.early_stopping_patience:
                 stopped_early = True
                 logger.info(
-                    "Early stopping: val joint_viv_rwiv_f1 连续 %s 个 epoch 未提升超过 %.6f，best_epoch=%s best_metric=%.4f",
+                    "Early stopping: val pair_joint_accuracy 连续 %s 个 epoch 未提升超过 %.6f，best_epoch=%s best_metric=%.4f",
                     epochs_without_improvement,
                     self.early_stopping_min_delta,
                     self.best_epoch,
@@ -650,6 +672,7 @@ class QuadStreamDualHeadTrainer:
         self.visualizer.close()
         return {
             "best_epoch": self.best_epoch,
+            "best_metric_name": "pair_joint_accuracy",
             "best_metric": self.best_metric,
             "val_metrics": last_val_metrics,
             "checkpoint": str(self.output_dir / "best_checkpoint.pth"),

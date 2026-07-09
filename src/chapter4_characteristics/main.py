@@ -42,6 +42,14 @@ def main(argv: list[str] | None = None) -> None:
     p_enrich = sub.add_parser("enrich", help="特征归档")
     p_enrich.add_argument("--limit", type=int, default=None)
     p_enrich.add_argument("--config", type=str, default=None)
+    p_enrich.add_argument("--result", type=str, default=None)
+    p_enrich.add_argument("--output-dir", type=str, default=None)
+    p_enrich.add_argument("--exclude-c34-anomalies", action="store_true")
+    p_enrich.add_argument("--batch-size", type=int, default=None)
+    p_enrich.add_argument("--skip-artifacts", action="store_true")
+    p_enrich.add_argument("--no-compact", action="store_true", help="跳过 enriched batch 整理")
+    p_enrich.add_argument("--compact-only", action="store_true", help="仅整理已有 batch，不重新计算特征")
+    p_enrich.add_argument("--compact-force", action="store_true", help="强制重建 canonical JSON")
 
     p_copula = sub.add_parser("copula", help="Copula 拟合")
     p_copula.add_argument("--class-id", dest="class_id", type=int, default=0)
@@ -78,7 +86,18 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "enrich":
         from src.chapter4_characteristics.enrich.run import run_enrichment
 
-        run_enrichment(limit=args.limit, config_path=args.config)
+        run_enrichment(
+            limit=args.limit,
+            config_path=args.config,
+            result_path=args.result,
+            output_dir=args.output_dir,
+            exclude_c34_anomalies=args.exclude_c34_anomalies,
+            batch_size=args.batch_size,
+            skip_artifacts=args.skip_artifacts,
+            compact_batches=False if args.no_compact else None,
+            compact_only=args.compact_only,
+            compact_force=True if args.compact_force else None,
+        )
     elif args.command == "copula":
         from src.chapter4_characteristics.analysis.copula_service import run_copula_job
 

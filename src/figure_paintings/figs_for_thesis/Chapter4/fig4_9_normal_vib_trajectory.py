@@ -9,14 +9,18 @@ if str(project_root) not in sys.path:
 
 from src.data_processer.io_unpacker import UNPACK
 from src.data_processer.signals.wavelets import denoise
-from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
 from src.chapter4_characteristics._bootstrap import ensure_paths
 
 ensure_paths()
-from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import load_dl_result
-from src.figure_paintings.figs_for_thesis.Chapter4.fig3_7_normal_vib_timeseries import get_normal_vib_samples
+from src.figure_paintings.figs_for_thesis.Chapter4.fig4_8_normal_vib_timeseries import (
+    Config as SharedSampleConfig,
+    get_normal_vib_samples,
+    load_filtered_dl_result,
+    random_sample,
+)
 from src.figure_paintings.figs_for_thesis.config import (
-    CN_FONT, FONT_SIZE, SQUARE_FIG_SIZE, get_blue_color_map, get_full_color_map,
+    CN_FONT, ENG_FONT, FONT_SIZE,
 )
 
 
@@ -32,24 +36,18 @@ class Config:
 
     NORMAL_VIB_CLASS_ID = 0
 
-    NUM_SAMPLES_TO_PLOT = 2
-    RANDOM_SEED = 50
+    NUM_SAMPLES_TO_PLOT = SharedSampleConfig.NUM_SAMPLES_TO_PLOT
+    RANDOM_SEED = SharedSampleConfig.RANDOM_SEED
 
-    FIG_SIZE = SQUARE_FIG_SIZE
-    SCATTER_SIZE = 10
-    SCATTER_ALPHA = 0.35
+    FIG_SIZE = SharedSampleConfig.FIG_SIZE
+    N_ROWS = SharedSampleConfig.N_ROWS
+    N_COLS = SharedSampleConfig.N_COLS
+    SCATTER_COLOR = "#202020"
+    SCATTER_SIZE = 3
+    SCATTER_ALPHA = 0.28
     GRID_COLOR = 'gray'
-    GRID_ALPHA = 0.3
+    GRID_ALPHA = 0.25
     GRID_LINESTYLE = '--'
-
-    SAMPLE_COLORS: list = []   # 延迟填充，见类定义后
-
-
-_full_palette = get_full_color_map(style='discrete').colors
-Config.SAMPLE_COLORS = [
-    _full_palette[i]
-    for i in np.linspace(0, len(_full_palette) - 1, Config.NUM_SAMPLES_TO_PLOT, dtype=int).tolist()
-]
 
 
 # ==================== 数据加载 ====================
@@ -73,16 +71,6 @@ def _wavelet_denoise(data: np.ndarray) -> np.ndarray:
     )
     return denoised
 
-
-def random_sample(samples: list) -> list:
-    n = len(samples)
-    k = min(Config.NUM_SAMPLES_TO_PLOT, n)
-    rng = np.random.default_rng(Config.RANDOM_SEED)
-    chosen = sorted(rng.choice(n, size=k, replace=False).tolist())
-    print(f"  随机抽取索引：{chosen}（共 {n} 个样本中选 {k} 个，seed={Config.RANDOM_SEED}）")
-    return [samples[i] for i in chosen]
-
-
 def load_sample_pair(sample: dict, unpacker: UNPACK):
     in_raw  = _load_window(sample["inplane_file_path"],  sample["window_idx"], unpacker)
     out_raw = _load_window(sample["outplane_file_path"], sample["window_idx"], unpacker)
@@ -96,26 +84,24 @@ def _apply_grid(ax):
     ax.set_axisbelow(True)
 
 
-def _plot_single_trajectory(sample: dict, color, sample_idx: int, total: int, unpacker: UNPACK) -> plt.Figure:
+def _plot_single_trajectory(ax, sample: dict, sample_idx: int, total: int, unpacker: UNPACK) -> None:
     in_data, out_data = load_sample_pair(sample, unpacker)
 
     ts = sample.get("timestamp", [])
     in_id  = sample.get("inplane_sensor_id",  "未知")
-    out_id = sample.get("outplane_sensor_id", "未知")
-    sensor_line = f"面内: {in_id}  |  面外: {out_id}"
     if ts and len(ts) >= 3:
-        time_line = f"{int(ts[0]):02d}月{int(ts[1]):02d}日  {int(ts[2]):02d}时"
+        time_line = f"{int(ts[0]):02d}-{int(ts[1]):02d} {int(ts[2]):02d}h"
     elif ts and len(ts) >= 2:
-        time_line = f"{int(ts[0]):02d}月{int(ts[1]):02d}日"
+        time_line = f"{int(ts[0]):02d}-{int(ts[1]):02d}"
     else:
         time_line = f"样本{sample_idx + 1}"
-    title = f"{sensor_line}\n{time_line}"
+    cable_id = in_id.replace("ST-VIC-", "").rsplit("-", 1)[0]
+    title = f"{sample_idx + 1}. {cable_id}  {time_line}  win={sample['window_idx']}"
 
-    fig, ax = plt.subplots(figsize=Config.FIG_SIZE)
     ax.scatter(
         out_data, in_data,
         s=Config.SCATTER_SIZE,
-        color=color,
+        color=Config.SCATTER_COLOR,
         alpha=Config.SCATTER_ALPHA,
         linewidths=0,
     )
@@ -126,24 +112,45 @@ def _plot_single_trajectory(sample: dict, color, sample_idx: int, total: int, un
     ax.set_xlim(global_min - margin, global_max + margin)
     ax.set_ylim(global_min - margin, global_max + margin)
 
-    ax.set_xlabel(r'面外加速度 ($m/s^2$)', labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    ax.set_ylabel(r'面内加速度 ($m/s^2$)', labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    ax.set_title(title, fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=14)
-    ax.tick_params(axis='both', which='major', labelsize=FONT_SIZE - 2)
+    ax.set_title(title, fontproperties=ENG_FONT, fontsize=FONT_SIZE - 12, pad=3)
+    ax.tick_params(axis='both', which='major', labelsize=FONT_SIZE - 12)
 
     _apply_grid(ax)
-    plt.tight_layout()
     print(f"  ✓ 样本 {sample_idx + 1}/{total} 已绘制  sensor={sample['inplane_sensor_id']}")
-    return fig
 
 
-def plot_trajectory_cloud(samples: list, unpacker: UNPACK) -> list:
-    figs = []
+def plot_trajectory_cloud_grid(samples: list, unpacker: UNPACK) -> plt.Figure:
+    fig, axes = plt.subplots(
+        Config.N_ROWS,
+        Config.N_COLS,
+        figsize=Config.FIG_SIZE,
+        sharex=False,
+        sharey=False,
+    )
+    axes_flat = axes.ravel()
     for i, sample in enumerate(samples):
-        color = Config.SAMPLE_COLORS[i % len(Config.SAMPLE_COLORS)]
-        fig = _plot_single_trajectory(sample, color, i, len(samples), unpacker)
-        figs.append(fig)
-    return figs
+        _plot_single_trajectory(axes_flat[i], sample, i, len(samples), unpacker)
+
+    for ax in axes_flat[len(samples):]:
+        ax.set_visible(False)
+
+    for ax in axes[-1, :]:
+        ax.set_xlabel(r"面外加速度 ($m/s^2$)", fontproperties=CN_FONT, fontsize=FONT_SIZE - 8)
+    for ax in axes[:, 0]:
+        ax.set_ylabel(r"面内加速度 ($m/s^2$)", fontproperties=CN_FONT, fontsize=FONT_SIZE - 8)
+
+    fig.text(
+        0.99,
+        0.01,
+        f"已剔除 C34-201/202/301；窗口 {Config.WINDOW_SIZE / Config.FS:.0f} s；seed={Config.RANDOM_SEED}",
+        ha="right",
+        va="bottom",
+        fontproperties=CN_FONT,
+        fontsize=FONT_SIZE - 12,
+        color="#404040",
+    )
+    fig.subplots_adjust(left=0.065, right=0.985, bottom=0.07, top=0.91, hspace=0.42, wspace=0.28)
+    return fig
 
 
 # ==================== 主函数 ====================
@@ -152,8 +159,8 @@ def main():
     print("第三章 随机振动轨迹云图（面内 vs 面外散点）")
     print("=" * 80)
 
-    print("\n[步骤1] 加载识别结果（data_config.DATA_SOURCE）...")
-    result = load_dl_result()
+    print("\n[步骤1] 加载识别结果（已剔除版本，与 fig4_8 一致）...")
+    result = load_filtered_dl_result()
 
     print("\n[步骤2] 筛选随机振动（class 0）样本...")
     all_samples = get_normal_vib_samples(result)
@@ -164,15 +171,22 @@ def main():
 
     print(f"\n[步骤4] 加载数据并绘制轨迹云图（{len(samples)} 个样本）...")
     unpacker = UNPACK(init_path=False)
-    figs = plot_trajectory_cloud(samples, unpacker)
+    figure = plot_trajectory_cloud_grid(samples, unpacker)
 
     print("\n" + "=" * 80)
-    print(f"✓ 轨迹云图绘制完成，共 {len(figs)} 张")
+    print(f"✓ 轨迹云图绘制完成，总图 1 张，子图 {len(samples)} 个")
     print("=" * 80)
 
-    ploter = PlotLib()
-    ploter.figs.extend(figs)
-    ploter.show()
+    page = "fig4_9 随机振动轨迹"
+    web_push(
+        figure,
+        page=page,
+        slot=0,
+        title="随机振动轨迹 20 样本总览",
+        page_cols=1,
+    )
+    plt.close(figure)
+    print(f"✓ 已推送到 WebUI：{page}")
 
 
 if __name__ == "__main__":

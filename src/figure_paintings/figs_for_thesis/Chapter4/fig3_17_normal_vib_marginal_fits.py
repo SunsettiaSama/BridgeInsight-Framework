@@ -10,7 +10,7 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
 from src.figure_paintings.figs_for_thesis.config import (
     CN_FONT, ENG_FONT, FONT_SIZE,
     get_blue_color_map,
@@ -21,23 +21,13 @@ from src.config.statistics.config import load_config
 
 # ==================== 常量配置 ====================
 class Config:
-    N_MODES     = 8
-    N_ROWS      = 4
-    N_COLS      = 8
     N_HIST_BINS = 38
     P_CLIP      = (1.0, 99.0)       # 直方图 x 范围百分位裁剪
 
-    FIG_W       = 20.0
-    FIG_H       = 9.0
-    L_MARGIN    = 0.11              # 为行标签留白
-    R_MARGIN    = 0.995
-    T_MARGIN    = 0.975
-    B_MARGIN    = 0.07
-    HSPACE      = 0.38
-    WSPACE      = 0.26
+    FIG_SIZE    = (6.0, 4.6)
 
-    TICK_SIZE   = 5.5
-    PDF_LW      = 1.6
+    TICK_SIZE   = FONT_SIZE - 3
+    PDF_LW      = 1.8
 
     _pal        = get_blue_color_map(
         style='discrete', start_map_index=1, end_map_index=5
@@ -49,11 +39,9 @@ class Config:
         project_root / "results" / "statistics" / "normal_vib_mode_analysis.json"
     )
 
-    ROW_LABELS = [
-        '面内主频（Hz）',
-        '面内能量占比',
-        '面外主频（Hz）',
-        '面外能量占比',
+    TARGETS = [
+        ("freq_in_1", "面内 F1"),
+        ("freq_out_1", "面外 F1"),
     ]
 
 
@@ -114,68 +102,34 @@ def _plot_one(ax: plt.Axes, col_data: np.ndarray, marginal: dict | None) -> None
     ax.yaxis.set_major_locator(mticker.MaxNLocator(2, prune='both'))
     ax.tick_params(axis='both', labelsize=Config.TICK_SIZE,
                    pad=1.5, length=2.5, width=0.6)
-    ax.set_xlabel('')
-    ax.set_ylabel('')
-    ax.set_title('')
+    ax.set_xlabel('频率 (Hz)', fontproperties=CN_FONT, fontsize=FONT_SIZE - 2)
+    ax.set_ylabel('概率密度', fontproperties=CN_FONT, fontsize=FONT_SIZE - 2)
+    ax.grid(True, color='gray', alpha=0.25, linestyle='--')
+    ax.set_axisbelow(True)
     for spine in ax.spines.values():
         spine.set_linewidth(0.6)
 
 
-# ==================== 主图布局 ====================
-def plot_marginal_fits(
+# ==================== 单图布局 ====================
+def plot_f1_marginal(
     matrix: np.ndarray,
     var_names: list[str],
     marginals: dict,
+    var_name: str,
+    title: str,
 ) -> plt.Figure:
-    fig, axes = plt.subplots(
-        Config.N_ROWS, Config.N_COLS,
-        figsize=(Config.FIG_W, Config.FIG_H),
-    )
-    plt.subplots_adjust(
-        left=Config.L_MARGIN,   right=Config.R_MARGIN,
-        top=Config.T_MARGIN,    bottom=Config.B_MARGIN,
-        hspace=Config.HSPACE,   wspace=Config.WSPACE,
-    )
-
-    for j, name in enumerate(var_names):
-        row = j // Config.N_COLS
-        col = j % Config.N_COLS
-        _plot_one(axes[row, col], matrix[:, j], marginals.get(name))
-
-    # ── 行标签（左侧，旋转 90°）──────────────────────────────────
-    for r, label in enumerate(Config.ROW_LABELS):
-        pos      = axes[r, 0].get_position()
-        y_center = pos.y0 + pos.height / 2
-        fig.text(
-            Config.L_MARGIN * 0.48, y_center,
-            label,
-            ha='center', va='center', rotation=90,
-            fontproperties=CN_FONT, fontsize=FONT_SIZE - 4,
-        )
-
-    # ── 全局 y 轴标注（最左侧）────────────────────────────────────
-    fig.text(
-        Config.L_MARGIN * 0.08, 0.5,
-        '概率密度',
-        ha='center', va='center', rotation=90,
-        fontproperties=CN_FONT, fontsize=FONT_SIZE - 2,
-    )
-
-    # ── 全局 x 轴标注（底部居中）──────────────────────────────────
-    fig.text(
-        (Config.L_MARGIN + Config.R_MARGIN) / 2, Config.B_MARGIN * 0.28,
-        '取值',
-        ha='center', va='center',
-        fontproperties=CN_FONT, fontsize=FONT_SIZE - 2,
-    )
-
+    fig, ax = plt.subplots(figsize=Config.FIG_SIZE)
+    col_idx = var_names.index(var_name)
+    _plot_one(ax, matrix[:, col_idx], marginals.get(var_name))
+    ax.set_title(title, fontproperties=CN_FONT, fontsize=FONT_SIZE, pad=10)
+    fig.tight_layout()
     return fig
 
 
 # ==================== 主函数 ====================
 def main():
     print("=" * 80)
-    print("第三章 图3.14 随机振动前8阶主频/能量边缘分布拟合（4×8 网格）")
+    print("第三章 图3.14 随机振动 F1 边缘分布拟合（面内 / 面外）")
     print("=" * 80)
 
     print("\n[步骤 1/2] 加载原始数据与拟合结果...")
@@ -183,14 +137,23 @@ def main():
     n_fitted = sum(1 for v in marginals.values() if v is not None)
     print(f"  ✓ 数据矩阵：{matrix.shape}，有效拟合变量：{n_fitted} / {len(var_names)}")
 
-    print("\n[步骤 2/2] 绘制 4×8 子图...")
-    fig = plot_marginal_fits(matrix, var_names, marginals)
-    print("  ✓ 图像生成完成")
+    print("\n[步骤 2/2] 绘制 F1 面内/面外独立图...")
+    figures = [
+        (plot_f1_marginal(matrix, var_names, marginals, var_name, title), title)
+        for var_name, title in Config.TARGETS
+    ]
+    print(f"  ✓ 图像生成完成：{len(figures)} 张")
 
     print("=" * 80)
-    ploter = PlotLib()
-    ploter.figs.append(fig)
-    ploter.show()
+    for slot, (fig, title) in enumerate(figures):
+        web_push(
+            fig,
+            page="fig3_17 F1边缘分布",
+            slot=slot,
+            title=title,
+            page_cols=2 if slot == 0 else None,
+        )
+    print("✓ 已推送到 WebUI")
 
 
 if __name__ == "__main__":

@@ -310,7 +310,7 @@ def _plot_wind_timeseries(features: dict, cfg: dict) -> Optional[bytes]:
     ts = features.get("timestamp") or []
     if len(ts) < 3:
         return None
-    from src.chapter3_identifier.identifier.feature_analysis._wind import (
+    from src.chapter4_characteristics.feature_analysis._wind import (
         build_wind_lookup,
         load_wind_metadata,
     )

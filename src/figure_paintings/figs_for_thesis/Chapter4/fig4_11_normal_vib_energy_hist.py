@@ -1,0 +1,127 @@
+import json
+import sys
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+project_root = Path(__file__).parent.parent.parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+from src.chapter4_characteristics.feature_analysis.entry import ensure_enriched_for_figures
+from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import get_enriched_class_dir, iter_enriched_json_files
+from src.figure_paintings.figs_for_thesis.config import CN_FONT, FONT_SIZE, REC_FIG_SIZE, get_blue_color_map
+from src.visualize_tools.web_dashboard import push as web_push
+
+
+class Config:
+    FEATURE_BATCH_SIZE = 512
+    N_BINS = 80
+    ENERGY_X_PERCENTILE = 100.0
+
+    FIG_SIZE = REC_FIG_SIZE
+    GRID_COLOR = "gray"
+    GRID_ALPHA = 0.3
+    GRID_LINESTYLE = "--"
+
+    _palette = get_blue_color_map(style="discrete", start_map_index=1, end_map_index=5).colors
+    INPLANE_COLOR = _palette[2]
+    OUTPLANE_COLOR = _palette[3]
+    BAR_ALPHA = 0.72
+
+    ENRICHED_STATS_DIR = get_enriched_class_dir(0)
+
+
+def load_dominant_energy_data() -> dict:
+    ensure_enriched_for_figures(class_id=0, batch_size=Config.FEATURE_BATCH_SIZE)
+    stats_dir = Config.ENRICHED_STATS_DIR
+    if not stats_dir.exists():
+        raise FileNotFoundError(f"enriched_stats 目录不存在：{stats_dir}")
+
+    json_files = iter_enriched_json_files(stats_dir)
+    if not json_files:
+        raise FileNotFoundError(f"目录下无 JSON 文件：{stats_dir}")
+
+    dom_energy_in: list[float] = []
+    dom_energy_out: list[float] = []
+    for json_file in json_files:
+        print(f"  加载：{json_file.name}")
+        with open(json_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        for sample in data["samples"]:
+            spec_in = sample.get("spectral_inplane") or {}
+            spec_out = sample.get("spectral_outplane") or {}
+            energy_in = spec_in.get("dominant_mode_energy_ratio")
+            energy_out = spec_out.get("dominant_mode_energy_ratio")
+            if energy_in is not None:
+                dom_energy_in.append(float(energy_in))
+            if energy_out is not None:
+                dom_energy_out.append(float(energy_out))
+
+    return {
+        "dom_energy_in": np.asarray(dom_energy_in, dtype=np.float64),
+        "dom_energy_out": np.asarray(dom_energy_out, dtype=np.float64),
+    }
+
+
+def _apply_grid(ax) -> None:
+    ax.grid(True, color=Config.GRID_COLOR, alpha=Config.GRID_ALPHA, linestyle=Config.GRID_LINESTYLE)
+    ax.set_axisbelow(True)
+
+
+def _add_legend(ax) -> None:
+    leg = ax.legend(fontsize=FONT_SIZE - 2, framealpha=0.9, prop=CN_FONT)
+    for text in leg.get_texts():
+        text.set_fontproperties(CN_FONT)
+
+
+def plot_dominant_energy_histogram(data: dict) -> plt.Figure:
+    energy_in = data["dom_energy_in"]
+    energy_out = data["dom_energy_out"]
+    combined = np.concatenate([energy_in, energy_out])
+    x_max = float(np.percentile(combined, Config.ENERGY_X_PERCENTILE))
+    x_max = min(x_max, 1.0)
+
+    bins = np.linspace(0, x_max, Config.N_BINS + 1)
+    width = bins[1] - bins[0]
+    centers = (bins[:-1] + bins[1:]) / 2
+    counts_in, _ = np.histogram(energy_in[energy_in <= x_max], bins=bins)
+    counts_out, _ = np.histogram(energy_out[energy_out <= x_max], bins=bins)
+
+    fig, ax = plt.subplots(figsize=Config.FIG_SIZE)
+    half = width * 0.46
+    ax.bar(centers - half / 2, counts_in, width=half, color=Config.INPLANE_COLOR, alpha=Config.BAR_ALPHA, label="面内")
+    ax.bar(centers + half / 2, counts_out, width=half, color=Config.OUTPLANE_COLOR, alpha=Config.BAR_ALPHA, label="面外")
+
+    ax.set_xlim(0, x_max)
+    ax.set_xlabel("主频能量占比", labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
+    ax.set_ylabel("样本数（个）", labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
+    ax.tick_params(axis="both", which="major", labelsize=FONT_SIZE - 2)
+    _add_legend(ax)
+    _apply_grid(ax)
+    fig.subplots_adjust(left=0.10, right=0.98, bottom=0.14, top=0.96)
+    return fig
+
+
+def main() -> None:
+    print("=" * 80)
+    print("图4-11 随机振动主频能量占比分布直方图")
+    print("=" * 80)
+    print(f"\n[步骤1] 加载主频能量占比 enriched 数据（本地不存在则自动小 batch 生成）...")
+    print(f"  数据目录：{Config.ENRICHED_STATS_DIR}")
+    data = load_dominant_energy_data()
+    print(f"✓ 面内有效样本：{len(data['dom_energy_in'])}，面外有效样本：{len(data['dom_energy_out'])}")
+    print(f"  面内主频能量占比 median={float(np.median(data['dom_energy_in'])):.4f}")
+    print(f"  面外主频能量占比 median={float(np.median(data['dom_energy_out'])):.4f}")
+
+    print("\n[步骤2] 绘制图像...")
+    fig = plot_dominant_energy_histogram(data)
+    web_push(fig, page="fig4_11 能量占比直方图", slot=0, title="随机振动主频能量占比分布", page_cols=1)
+    plt.close(fig)
+    print("✓ 已推送到 WebUI：fig4_11 能量占比直方图")
+
+
+if __name__ == "__main__":
+    main()

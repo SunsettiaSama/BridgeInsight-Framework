@@ -9,7 +9,7 @@ if str(project_root) not in sys.path:
 
 from src.data_processer.io_unpacker import UNPACK
 from src.data_processer.signals.wavelets import denoise
-from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
 from src.chapter4_characteristics._bootstrap import ensure_paths
 
 ensure_paths()
@@ -190,10 +190,16 @@ def main():
     print(f"✓ 面内图：{len(inplane_figs)} 张  |  面外图：{len(outplane_figs)} 张")
     print("=" * 80)
 
-    ploter = PlotLib()
-    for fig in inplane_figs + outplane_figs:
-        ploter.figs.append(fig)
-    ploter.show()
+    page = "fig3_18 风雨振时程"
+    slot = 0
+    for fig in inplane_figs:
+        web_push(fig, page=page, slot=slot, title=f"面内时程 {slot + 1}",
+                 page_cols=2 if slot == 0 else None)
+        slot += 1
+    for fig in outplane_figs:
+        web_push(fig, page=page, slot=slot, title=f"面外时程 {slot - len(inplane_figs) + 1}")
+        slot += 1
+    print(f"✓ 已推送到 WebUI：{page}")
 
 
 if __name__ == "__main__":

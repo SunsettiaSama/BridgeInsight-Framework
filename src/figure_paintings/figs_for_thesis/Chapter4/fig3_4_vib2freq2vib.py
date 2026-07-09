@@ -9,7 +9,7 @@ if str(project_root) not in sys.path:
 
 from src.data_processer.io_unpacker import UNPACK
 from src.data_processer.signals.wavelets import denoise
-from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
 from src.chapter4_characteristics._bootstrap import ensure_paths
 
 ensure_paths()
@@ -230,10 +230,16 @@ def main():
     print(f"\n共生成 {len(figs)} 张独立图像（每样本 2 张）")
     print("=" * 80)
 
-    ploter = PlotLib()
-    for fig in figs:
-        ploter.figs.append(fig)
-    ploter.show()
+    page = "fig3_4 时域频域重建"
+    for slot, fig in enumerate(figs):
+        web_push(
+            fig,
+            page=page,
+            slot=slot,
+            title=f"样本{slot // 2 + 1} {'时域' if slot % 2 == 0 else '频域'}",
+            page_cols=2 if slot == 0 else None,
+        )
+    print(f"✓ 已推送到 WebUI：{page}")
 
 
 if __name__ == "__main__":

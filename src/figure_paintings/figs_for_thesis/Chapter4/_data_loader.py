@@ -18,8 +18,94 @@ ensure_paths()
 from src.figure_paintings.figs_for_thesis.Chapter4 import data_config
 
 
+def _load_chapter4_cfg() -> dict | None:
+    if data_config.DATA_SOURCE != "chapter4":
+        return None
+    from src.chapter4_characteristics.settings import load_config
+
+    runtime_path = data_config.CHAPTER4.get("runtime_config_path")
+    return load_config(str(runtime_path) if runtime_path else None)
+
+
 def _resolve(path_str: str) -> Path:
     return data_config.PROJECT_ROOT / path_str
+
+
+def get_dl_result_path() -> Path:
+    path = _resolve(data_config.CHAPTER4["predictions_enriched"])
+    if not path.exists():
+        raise FileNotFoundError(
+            f"DL 识别结果不存在：{path}\n"
+            "请先运行：python scripts/filter_chapter4_predictions.py"
+        )
+    return path
+
+
+def iter_enriched_json_files(class_dir: Path) -> list[Path]:
+    excluded = data_config.EXCLUDED_SENSOR_IDS
+    if not class_dir.exists():
+        return []
+
+    if data_config.DATA_SOURCE == "chapter4":
+        from src.chapter4_characteristics.feature_analysis._compactor import (
+            ensure_class_dir_compacted,
+            list_batch_json_files,
+            list_canonical_json_files,
+        )
+
+        cfg = _load_chapter4_cfg()
+        if cfg is not None and list_batch_json_files(class_dir):
+            ensure_class_dir_compacted(
+                class_dir,
+                cfg=cfg,
+                excluded_sensor_ids=excluded,
+            )
+        return list_canonical_json_files(class_dir, excluded_sensor_ids=excluded)
+
+    return sorted(jf for jf in class_dir.glob("*.json") if jf.stem not in excluded)
+
+
+def filter_sensor_groups(groups: dict[str, str]) -> dict[str, str]:
+    excluded = data_config.EXCLUDED_SENSOR_IDS
+    return {
+        name: fname
+        for name, fname in groups.items()
+        if fname.replace(".json", "") not in excluded
+    }
+
+
+def _is_excluded_meta(meta: dict) -> bool:
+    excluded = data_config.EXCLUDED_SENSOR_IDS
+    return (
+        meta.get("inplane_sensor_id") in excluded
+        or meta.get("outplane_sensor_id") in excluded
+    )
+
+
+def _filter_excluded_result(result: dict) -> dict:
+    """剔除第三章已排除的 C34-201/202 样本。"""
+    predictions = result.get("predictions", {})
+    sample_metadata = result.get("sample_metadata", {})
+    keep_keys = [
+        k for k in predictions
+        if not _is_excluded_meta(sample_metadata.get(str(k), {}))
+    ]
+    removed = len(predictions) - len(keep_keys)
+    if removed <= 0:
+        return result
+
+    result = dict(result)
+    result["predictions"] = {k: predictions[k] for k in keep_keys}
+    result["sample_metadata"] = {
+        k: sample_metadata[k] for k in keep_keys if k in sample_metadata
+    }
+    metadata = dict(result.get("metadata", {}))
+    metadata["num_samples"] = len(result["predictions"])
+    metadata["excluded_sensor_ids"] = sorted(data_config.EXCLUDED_SENSOR_IDS)
+    metadata["excluded_sample_count"] = removed
+    result["metadata"] = metadata
+    print(f"  已剔除 C34-201/202 样本：{removed} 个")
+    return result
 
 
 def _mecc_glob_path() -> Path:
@@ -63,6 +149,10 @@ def load_dl_result() -> dict:
         path = get_predictions_enriched_path(cfg)
     else:
         path = _resolve(data_config.CHAPTER4["predictions_enriched"])
+        if not path.exists() and data_config.CHAPTER4.get("predictions_enriched_raw"):
+            raw_path = _resolve(data_config.CHAPTER4["predictions_enriched_raw"])
+            if raw_path.exists():
+                path = raw_path
 
     if not path.exists():
         raise FileNotFoundError(
@@ -72,7 +162,7 @@ def load_dl_result() -> dict:
 
     print(f"  加载识别结果：{path.name}")
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        return _filter_excluded_result(json.load(f))
 
 
 def get_enriched_class_dir(class_id: int) -> Path:

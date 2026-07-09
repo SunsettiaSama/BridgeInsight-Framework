@@ -39,6 +39,9 @@ def _apply_runtime_defaults(cfg: dict) -> dict:
     cfg.setdefault("context_windows_after", 5)
     cfg.setdefault("copula_n_modes", 8)
     cfg.setdefault("copula_max_samples", 5000)
+    cfg.setdefault("compact_enriched_batches", True)
+    cfg.setdefault("auto_compact_on_read", True)
+    cfg.setdefault("compact_enriched_force", False)
 
     dataset_config = cfg.get("inference_dataset_config")
     if dataset_config and not cfg.get("wind_metadata_path"):

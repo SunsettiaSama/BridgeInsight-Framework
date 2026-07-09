@@ -147,6 +147,85 @@ def _worker_compute_features(args: Tuple) -> Optional[Dict]:
     return result
 
 
+def _iter_batches(items: List[Tuple], batch_size: int) -> List[Tuple]:
+    for start in range(0, len(items), batch_size):
+        yield items[start : start + batch_size]
+
+
+def _assemble_enriched_record(
+    idx: int,
+    pred_cls: int,
+    meta: Dict,
+    feats: Dict,
+    wind_stats_by_ts: Dict,
+    cfg: ProcessFullDataConfig,
+) -> Dict:
+    timestamp = meta.get("timestamp", [])
+    wind_stats = (
+        get_wind_stats_for_sample(timestamp, wind_stats_by_ts)
+        if cfg.enable_wind_stats else []
+    )
+
+    record: Dict = {
+        "sample_idx":         idx,
+        "predicted_class":    pred_cls,
+        "cable_pair":         meta.get("cable_pair"),
+        "timestamp":          timestamp,
+        "window_idx":         meta.get("window_idx"),
+        "inplane_sensor_id":  meta.get("inplane_sensor_id"),
+        "outplane_sensor_id": meta.get("outplane_sensor_id"),
+        "inplane_file_path":  meta.get("inplane_file_path"),
+        "outplane_file_path": meta.get("outplane_file_path"),
+        "missing_rate_in":    meta.get("missing_rate_in"),
+        "missing_rate_out":   meta.get("missing_rate_out"),
+        "has_wind":           meta.get("has_wind", False),
+    }
+
+    if cfg.enable_psd_modes:
+        record["psd_inplane"] = feats.get("psd_inplane")
+        record["psd_outplane"] = feats.get("psd_outplane")
+
+    if cfg.enable_spectral_features:
+        record["spectral_inplane"] = feats.get("spectral_inplane")
+        record["spectral_outplane"] = feats.get("spectral_outplane")
+
+    if cfg.enable_time_stats:
+        record["time_stats_inplane"] = feats.get("time_stats_inplane")
+        record["time_stats_outplane"] = feats.get("time_stats_outplane")
+
+    if cfg.enable_cross_coupling:
+        record["cross_coupling"] = feats.get("cross_coupling")
+
+    if cfg.enable_wind_stats:
+        record["wind_stats"] = wind_stats
+
+    if cfg.enable_reduced_velocity and cfg.cable_diameter_map:
+        inplane_sensor_id = meta.get("inplane_sensor_id", "")
+        cable_diameter = cfg.cable_diameter_map.get(inplane_sensor_id)
+        if cable_diameter is None:
+            logger.warning(
+                f"样本 {idx}：传感器 '{inplane_sensor_id}' 不在 cable_diameter_map 中，"
+                "跳过折减风速计算"
+            )
+            record["reduced_velocity"] = []
+        else:
+            vr_list = []
+            psd_in = record.get("psd_inplane") or {}
+            freqs = psd_in.get("frequencies", [])
+            f1 = freqs[0] if freqs else None
+            for ws in wind_stats:
+                U = ws.get("mean_wind_speed")
+                if f1 and U is not None:
+                    vr = compute_reduced_velocity(U, f1, cable_diameter)
+                    vr_list.append({
+                        "sensor_id": ws.get("sensor_id", ""),
+                        "reduced_velocity": vr,
+                    })
+            record["reduced_velocity"] = vr_list
+
+    return record
+
+
 # ---------------------------------------------------------------------------
 # 主流水线
 # ---------------------------------------------------------------------------
@@ -157,6 +236,8 @@ def run(
     output_dir: str,
     cfg: Optional[ProcessFullDataConfig] = None,
     config_yaml: Optional[str] = None,
+    limit: Optional[int] = None,
+    excluded_sensor_ids: Optional[set[str]] = None,
 ) -> None:
     if cfg is None:
         cfg = load_config(config_yaml)
@@ -180,6 +261,23 @@ def run(
 
     predictions: Dict[str, int]    = result.get("predictions", {})
     sample_metadata: Dict[str, Dict] = result.get("sample_metadata", {})
+    if excluded_sensor_ids:
+        keep_keys = [
+            key for key in predictions
+            if (
+                sample_metadata.get(str(key), {}).get("inplane_sensor_id") not in excluded_sensor_ids
+                and sample_metadata.get(str(key), {}).get("outplane_sensor_id") not in excluded_sensor_ids
+            )
+        ]
+        removed = len(predictions) - len(keep_keys)
+        predictions = {key: predictions[key] for key in keep_keys}
+        sample_metadata = {key: sample_metadata[key] for key in keep_keys if key in sample_metadata}
+        logger.info(f"已剔除传感器样本：{removed} 条")
+    if limit is not None and int(limit) > 0:
+        keys = sorted(predictions.keys(), key=lambda k: int(k))[: int(limit)]
+        predictions = {key: predictions[key] for key in keys}
+        sample_metadata = {key: sample_metadata[key] for key in keys if key in sample_metadata}
+        logger.info(f"应用 limit={limit}，保留 {len(predictions)} 条")
     logger.info(f"预测结果：{len(predictions)} 条  |  元数据：{len(sample_metadata)} 条")
 
     # ------------------------------------------------------------------
@@ -203,7 +301,7 @@ def run(
     # 步骤 3：并行计算振动特征
     # ------------------------------------------------------------------
     logger.info("=" * 72)
-    logger.info(f"步骤 3/5  并行计算振动特征（{cfg.n_workers} 进程）")
+    logger.info(f"步骤 3/5  并行计算振动特征（{cfg.n_workers} 进程，batch_size={cfg.batch_size}）")
     logger.info("=" * 72)
 
     worker_args: List[Tuple] = [
@@ -217,149 +315,97 @@ def run(
     ]
     logger.info(f"共 {len(worker_args)} 个样本待处理")
 
-    vib_features: Dict[int, Dict] = {}
     skipped = 0
+    processed = 0
+    batches = _iter_batches(worker_args, int(cfg.batch_size))
+    saved_paths: Dict[int, Path] = {}
+
+    def _save_batch(batch_idx: int, batch_features: Dict[int, Dict], batch_args: List[Tuple]) -> None:
+        batch_ids = {int(args[0]) for args in batch_args}
+        enriched_samples: List[Dict] = []
+        for idx_str, pred_cls in predictions.items():
+            idx = int(idx_str)
+            if idx not in batch_ids:
+                continue
+            meta = sample_metadata.get(idx_str)
+            if meta is None:
+                continue
+            record = _assemble_enriched_record(
+                idx=idx,
+                pred_cls=pred_cls,
+                meta=meta,
+                feats=batch_features.get(idx, {}),
+                wind_stats_by_ts=wind_stats_by_ts,
+                cfg=cfg,
+            )
+            enriched_samples.append(record)
+
+        if not enriched_samples:
+            logger.info(f"batch {batch_idx} 无可保存样本")
+            return
+
+        suffix = f"_batch_{batch_idx:05d}"
+        saved = save_class_results(
+            enriched_samples=enriched_samples,
+            output_dir=str(out_dir),
+            source_result_path=str(Path(result_path).resolve()),
+            wind_metadata_path=str(Path(wind_metadata_path).resolve()) if cfg.enable_wind_stats else "",
+            split_by_sensor=cfg.split_by_sensor,
+            file_suffix=suffix,
+        )
+        saved_paths.update(saved)
+        logger.info(f"batch {batch_idx} 保存完成：{len(enriched_samples)} 条，suffix={suffix}")
 
     if cfg.n_workers <= 0:
         _init_worker(cfg)
-        for args in tqdm(
-            worker_args,
-            total=len(worker_args),
-            desc="特征计算",
-            unit="样本",
-            dynamic_ncols=True,
-        ):
-            r = _worker_compute_features(args)
-            if r is None:
-                skipped += 1
-                continue
-            idx = r.pop("sample_idx")
-            vib_features[idx] = r
+        for batch_idx, batch in enumerate(batches, start=1):
+            logger.info(f"处理 batch {batch_idx}：{len(batch)} 条")
+            batch_features: Dict[int, Dict] = {}
+            for args in tqdm(
+                batch,
+                total=len(batch),
+                desc=f"特征计算 batch {batch_idx}",
+                unit="样本",
+                dynamic_ncols=True,
+            ):
+                r = _worker_compute_features(args)
+                processed += 1
+                if r is None:
+                    skipped += 1
+                    continue
+                idx = r.pop("sample_idx")
+                batch_features[idx] = r
+            _save_batch(batch_idx, batch_features, batch)
+            logger.info(f"batch {batch_idx} 完成：累计 {processed}/{len(worker_args)}")
     else:
         with Pool(
             processes=cfg.n_workers,
             initializer=_init_worker,
             initargs=(cfg,),
         ) as pool:
-            for r in tqdm(
-                pool.imap_unordered(_worker_compute_features, worker_args),
-                total=len(worker_args),
-                desc="特征计算",
-                unit="样本",
-                dynamic_ncols=True,
-            ):
-                if r is None:
-                    skipped += 1
-                    continue
-                idx = r.pop("sample_idx")
-                vib_features[idx] = r
+            for batch_idx, batch in enumerate(batches, start=1):
+                logger.info(f"处理 batch {batch_idx}：{len(batch)} 条")
+                batch_features: Dict[int, Dict] = {}
+                for r in tqdm(
+                    pool.imap_unordered(_worker_compute_features, batch),
+                    total=len(batch),
+                    desc=f"特征计算 batch {batch_idx}",
+                    unit="样本",
+                    dynamic_ncols=True,
+                ):
+                    processed += 1
+                    if r is None:
+                        skipped += 1
+                        continue
+                    idx = r.pop("sample_idx")
+                    batch_features[idx] = r
+                _save_batch(batch_idx, batch_features, batch)
+                logger.info(f"batch {batch_idx} 完成：累计 {processed}/{len(worker_args)}")
 
-    logger.info(f"特征计算完成：{len(vib_features)} 条成功，{skipped} 条越界跳过")
-
-    # ------------------------------------------------------------------
-    # 步骤 4：组装完整记录
-    # ------------------------------------------------------------------
-    logger.info("=" * 72)
-    logger.info("步骤 4/5  组装样本特征记录")
-    logger.info("=" * 72)
-
-    enriched_samples: List[Dict] = []
-
-    for idx_str, pred_cls in predictions.items():
-        idx  = int(idx_str)
-        meta = sample_metadata.get(idx_str)
-        if meta is None:
-            continue
-
-        feats     = vib_features.get(idx, {})
-        timestamp = meta.get("timestamp", [])
-        wind_stats = (
-            get_wind_stats_for_sample(timestamp, wind_stats_by_ts)
-            if cfg.enable_wind_stats else []
-        )
-
-        record: Dict = {
-            "sample_idx":         idx,
-            "predicted_class":    pred_cls,
-            # 基础元数据
-            "cable_pair":         meta.get("cable_pair"),
-            "timestamp":          timestamp,
-            "window_idx":         meta.get("window_idx"),
-            "inplane_sensor_id":  meta.get("inplane_sensor_id"),
-            "outplane_sensor_id": meta.get("outplane_sensor_id"),
-            "inplane_file_path":  meta.get("inplane_file_path"),
-            "outplane_file_path": meta.get("outplane_file_path"),
-            "missing_rate_in":    meta.get("missing_rate_in"),
-            "missing_rate_out":   meta.get("missing_rate_out"),
-            "has_wind":           meta.get("has_wind", False),
-        }
-
-        # 振动特征（仅开启时存在）
-        if cfg.enable_psd_modes:
-            record["psd_inplane"]  = feats.get("psd_inplane")
-            record["psd_outplane"] = feats.get("psd_outplane")
-
-        if cfg.enable_spectral_features:
-            record["spectral_inplane"]  = feats.get("spectral_inplane")
-            record["spectral_outplane"] = feats.get("spectral_outplane")
-
-        if cfg.enable_time_stats:
-            record["time_stats_inplane"]  = feats.get("time_stats_inplane")
-            record["time_stats_outplane"] = feats.get("time_stats_outplane")
-
-        if cfg.enable_cross_coupling:
-            record["cross_coupling"] = feats.get("cross_coupling")
-
-        # 风统计量
-        if cfg.enable_wind_stats:
-            record["wind_stats"] = wind_stats
-
-        # 折减风速（依赖 psd_inplane 的第一主频 + wind_stats 的均值风速 + 拉索外径映射）
-        if cfg.enable_reduced_velocity and cfg.cable_diameter_map:
-            inplane_sensor_id = meta.get("inplane_sensor_id", "")
-            cable_diameter = cfg.cable_diameter_map.get(inplane_sensor_id)
-            if cable_diameter is None:
-                logger.warning(
-                    f"样本 {idx}：传感器 '{inplane_sensor_id}' 不在 cable_diameter_map 中，"
-                    "跳过折减风速计算"
-                )
-                record["reduced_velocity"] = []
-            else:
-                vr_list = []
-                psd_in = record.get("psd_inplane") or {}
-                freqs  = psd_in.get("frequencies", [])
-                f1     = freqs[0] if freqs else None
-                for ws in wind_stats:
-                    U = ws.get("mean_wind_speed")
-                    if f1 and U is not None:
-                        vr = compute_reduced_velocity(U, f1, cable_diameter)
-                        vr_list.append({
-                            "sensor_id":        ws.get("sensor_id", ""),
-                            "reduced_velocity": vr,
-                        })
-                record["reduced_velocity"] = vr_list
-
-        enriched_samples.append(record)
-
-    logger.info(f"组装完成，共 {len(enriched_samples)} 条记录")
-
-    # ------------------------------------------------------------------
-    # 步骤 5：按类别分割保存
-    # ------------------------------------------------------------------
-    logger.info("=" * 72)
-    logger.info("步骤 5/5  按类别分割保存")
-    logger.info("=" * 72)
-
-    saved = save_class_results(
-        enriched_samples=enriched_samples,
-        output_dir=str(out_dir),
-        source_result_path=str(Path(result_path).resolve()),
-        wind_metadata_path=str(Path(wind_metadata_path).resolve()) if cfg.enable_wind_stats else "",
-        split_by_sensor=cfg.split_by_sensor,
-    )
+    logger.info(f"特征计算完成：{processed - skipped} 条成功，{skipped} 条越界跳过")
 
     logger.info("=" * 72)
-    logger.info(f"全部完成！共生成 {len(saved)} 个类别目录/文件")
+    logger.info(f"全部完成！共生成 {len(saved_paths)} 个类别目录/文件")
     logger.info(f"输出目录：{out_dir}")
     logger.info("=" * 72)
 

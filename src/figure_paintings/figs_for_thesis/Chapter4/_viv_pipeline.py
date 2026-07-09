@@ -24,8 +24,10 @@ from src.data_processer.io_unpacker import UNPACK
 from src.chapter4_characteristics._bootstrap import ensure_paths
 
 ensure_paths()
+from src.figure_paintings.figs_for_thesis.Chapter4 import data_config
 from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import (
     get_enriched_class_dir,
+    iter_enriched_json_files,
     load_dl_result,
     load_mecc_result,
 )
@@ -49,6 +51,15 @@ _FREQ_LIMIT  = 25.0
 _VIV_CLASS   = 1
 
 
+def _is_excluded_sensor_sample(sample: dict) -> bool:
+    excluded = data_config.EXCLUDED_SENSOR_IDS
+    return (
+        sample.get("inplane_sensor_id") in excluded
+        or sample.get("outplane_sensor_id") in excluded
+        or sample.get("sensor_id") in excluded
+    )
+
+
 # ==================== 结果路径（委托 data_config） ====================
 def default_enriched_dir(project_root: Path | None = None) -> Path:
     return get_enriched_class_dir(_VIV_CLASS)
@@ -65,6 +76,8 @@ def get_viv_samples(result: dict, max_n: int = 0, seed: int = 42) -> list:
             continue
         meta = sample_metadata.get(str(idx))
         if meta is None:
+            continue
+        if _is_excluded_sensor_sample(meta):
             continue
         in_path  = meta.get("inplane_file_path")
         out_path = meta.get("outplane_file_path")
@@ -200,7 +213,7 @@ def load_enriched_stats(enriched_dir: Path) -> dict:
     """
     if not enriched_dir.exists():
         raise FileNotFoundError(f"enriched_stats 目录不存在：{enriched_dir}")
-    json_files = sorted(enriched_dir.glob("*.json"))
+    json_files = iter_enriched_json_files(enriched_dir)
     if not json_files:
         raise FileNotFoundError(f"目录下无 JSON 文件：{enriched_dir}")
 
@@ -215,9 +228,13 @@ def load_enriched_stats(enriched_dir: Path) -> dict:
     cumsum_out = []
 
     for jf in json_files:
+        if jf.stem in data_config.EXCLUDED_SENSOR_IDS:
+            continue
         with open(jf, "r", encoding="utf-8") as f:
             data = json.load(f)
         for sample in data["samples"]:
+            if _is_excluded_sensor_sample(sample):
+                continue
             ts_in   = sample.get("time_stats_inplane")   or {}
             ts_out  = sample.get("time_stats_outplane")  or {}
             psd_in  = sample.get("psd_inplane")          or {}
@@ -289,11 +306,15 @@ def build_enriched_lookup(enriched_dir: Path) -> dict:
     用于为 MECC 样本匹配风数据（fig4_27/28）。
     """
     lookup: dict[tuple, dict] = {}
-    for jf in sorted(enriched_dir.glob("*.json")):
+    for jf in iter_enriched_json_files(enriched_dir):
         sensor_id = jf.stem
+        if sensor_id in data_config.EXCLUDED_SENSOR_IDS:
+            continue
         with open(jf, "r", encoding="utf-8") as f:
             data = json.load(f)
         for sample in data["samples"]:
+            if _is_excluded_sensor_sample(sample):
+                continue
             wi     = sample.get("window_idx")
             ws     = sample.get("wind_stats") or []
             ts_in  = sample.get("time_stats_inplane")  or {}

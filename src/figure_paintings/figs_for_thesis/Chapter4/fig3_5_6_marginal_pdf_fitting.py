@@ -10,7 +10,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from src.statistics.fitting import fit_distribution, fit_gmm
-from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
 from src.figure_paintings.figs_for_thesis.config import (
     CN_FONT, ENG_FONT,
     REC_FIG_SIZE, REC_FONT_SIZE,
@@ -195,10 +195,10 @@ def main():
     print("\n共生成 2 张长方形拟合图")
     print("=" * 70)
 
-    ploter = PlotLib()
-    ploter.figs.append(fig_a)
-    ploter.figs.append(fig_b)
-    ploter.show()
+    page = "fig3_5_6 边缘分布拟合"
+    web_push(fig_a, page=page, slot=0, title="单峰分布拟合", page_cols=2)
+    web_push(fig_b, page=page, slot=1, title="双峰分布拟合")
+    print(f"✓ 已推送到 WebUI：{page}")
 
 
 if __name__ == "__main__":

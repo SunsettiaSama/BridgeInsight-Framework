@@ -8,7 +8,8 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.visualize_tools.utils import PlotLib
+from src.visualize_tools.web_dashboard import push as web_push
+from src.figure_paintings.figs_for_thesis.Chapter4 import data_config
 from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import get_enriched_class_dir
 from src.figure_paintings.figs_for_thesis.config import (
     CN_FONT, ENG_FONT, FONT_SIZE, REC_FIG_SIZE,
@@ -32,10 +33,7 @@ class Config:
     ENRICHED_STATS_DIR = get_enriched_class_dir(0)
 
     # 每个位置对应的面内传感器 JSON 文件名（文件按面内传感器命名）
-    SENSOR_GROUPS = {
-        '边跨': 'ST-VIC-C34-101-01.json',
-        '跨中': 'ST-VIC-C34-201-01.json',
-    }
+    SENSOR_GROUPS = data_config.SENSOR_GROUPS_WIND
 
 
 # ==================== 数据加载 ====================
@@ -129,7 +127,8 @@ def main():
     print("=" * 80)
 
     stats_dir = Config.ENRICHED_STATS_DIR
-    ploter = PlotLib()
+    page = "fig3_15 风速-RMS"
+    slot = 0
 
     for location_name, filename in Config.SENSOR_GROUPS.items():
         json_file = stats_dir / filename
@@ -147,13 +146,15 @@ def main():
               f"max={data['rms_outplane'].max():.4f}")
 
         fig = plot_wind_vs_vibration(data, location_name=location_name)
-        ploter.figs.append(fig)
+        web_push(fig, page=page, slot=slot, title=location_name,
+                 page_cols=len(Config.SENSOR_GROUPS) if slot == 0 else None)
+        slot += 1
         print(f"  ✓ 图像生成完成")
 
     print("\n" + "=" * 80)
-    print(f"共生成 {len(ploter.figs)} 张图表")
+    print(f"共推送 {slot} 张图表")
     print("=" * 80)
-    ploter.show()
+    print(f"✓ 已推送到 WebUI：{page}")
 
 
 if __name__ == "__main__":

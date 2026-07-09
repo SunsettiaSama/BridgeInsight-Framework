@@ -8,8 +8,8 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.visualize_tools.utils import PlotLib
-from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import get_enriched_class_dir
+from src.visualize_tools.web_dashboard import push as web_push
+from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import get_enriched_class_dir, iter_enriched_json_files
 from src.figure_paintings.figs_for_thesis.config import (
     ENG_FONT, CN_FONT, FONT_SIZE, REC_FIG_SIZE,
     get_blue_color_map,
@@ -63,7 +63,7 @@ def load_rms_from_enriched_stats() -> dict:
     if not stats_dir.exists():
         raise FileNotFoundError(f"enriched_stats 目录不存在：{stats_dir}")
 
-    json_files = sorted(stats_dir.glob("*.json"))
+    json_files = iter_enriched_json_files(stats_dir)
     if not json_files:
         raise FileNotFoundError(f"目录下无 JSON 文件：{stats_dir}")
 
@@ -323,10 +323,15 @@ def main():
     print("✓ 四幅图像生成完成")
     print("=" * 80)
 
-    ploter = PlotLib()
-    for fig in [fig_body, fig_tail, fig_scatter, fig_zoom]:
-        ploter.figs.append(fig)
-    ploter.show()
+    page = "fig3_8_9 随机振动RMS"
+    for slot, (fig, title) in enumerate([
+        (fig_body, "RMS直方图"),
+        (fig_tail, "RMS尾部直方图"),
+        (fig_scatter, "面内外RMS散点"),
+        (fig_zoom, "RMS散点放大"),
+    ]):
+        web_push(fig, page=page, slot=slot, title=title, page_cols=2 if slot == 0 else None)
+    print(f"✓ 已推送到 WebUI：{page}")
 
 
 if __name__ == "__main__":
