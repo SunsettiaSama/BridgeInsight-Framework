@@ -1,10 +1,10 @@
 """
 识别结果可视化：全年四类振动窗口占比饼状图
 
-数据源：Chapter4 DL 识别结果（已排除 C34-201/202），推送到 WebUI。
+数据源：Chapter4 全量 DL 识别结果（任一面命中 1/2/3 即计入该类；已排除 C34-201/202/301），
+见 data_config.CHAPTER4["predictions_enriched_any_side"]。
 """
 
-import json
 import sys
 from pathlib import Path
 
@@ -22,13 +22,10 @@ from src.chapter4_characteristics._bootstrap import ensure_paths
 
 ensure_paths()
 from src.figure_paintings.figs_for_thesis.Chapter4 import data_config
-from src.chapter4_characteristics.settings import (
-    get_inference_path,
-    load_config as load_chapter4_config,
-)
+from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import load_predictions_result
 
+DL_RESULT_PATH = data_config.PROJECT_ROOT / data_config.CHAPTER4["predictions_enriched_any_side"]
 PAGE_NAME = "fig4_3 全量识别类别占比"
-SPECIAL_CLASSES = (1, 2, 3)
 
 # 从统一配置模块导入图像配置（字体、尺寸、配色）
 from src.figure_paintings.figs_for_thesis.config import (
@@ -65,60 +62,13 @@ MINOR_CLASS_COLORS = {
 }
 
 
-def _load_chapter4_cfg() -> dict:
-    runtime_path = data_config.CHAPTER4.get("runtime_config_path")
-    return load_chapter4_config(str(runtime_path) if runtime_path else None)
-
-
-def _is_excluded_record(record: Dict) -> bool:
-    excluded = data_config.EXCLUDED_SENSOR_IDS
-    return (
-        record.get("inplane_sensor_id") in excluded
-        or record.get("outplane_sensor_id") in excluded
-    )
-
-
-def _sensitive_prediction(record: Dict) -> int:
-    in_pred = int(record.get("inplane_prediction", record.get("prediction", 0)))
-    out_pred = int(record.get("outplane_prediction", record.get("prediction", 0)))
-    for cls_id in SPECIAL_CLASSES:
-        if in_pred == cls_id or out_pred == cls_id:
-            return cls_id
-    return 0
-
-
-def load_inference_records() -> list[Dict]:
-    cfg = _load_chapter4_cfg()
-    inference_path = get_inference_path(cfg)
-    if not inference_path.exists():
-        raise FileNotFoundError(
-            f"单侧推理结果不存在：{inference_path}\n"
-            "图4-3需要 inference.json 中的 inplane_prediction / outplane_prediction 字段，"
-            "请先运行：python -m src.chapter4_characteristics infer"
-        )
-
-    logger.info("加载单侧推理结果：%s", inference_path.name)
-    with open(inference_path, "r", encoding="utf-8") as f:
-        payload = json.load(f)
-    records = payload.get("records", [])
-    return [
-        record for record in records
-        if not _is_excluded_record(record)
-    ]
-
-
-def aggregate_total_counts(records: list[Dict]) -> Dict[int, int]:
-    """
-    对全年所有月份的预测结果求和，得到每类的总窗口数。
-
-    面内或面外任一方向命中 1/2/3 时，即将该窗口计入对应特殊振动类别；
-    两个方向均为随机振动时才计入 0。
-    """
+def aggregate_total_counts(result: Dict) -> Dict[int, int]:
+    """对 predictions 求和，得到每类的总窗口数。"""
     total: Dict[int, int] = {cls_id: 0 for cls_id in range(4)}
-    for record in records:
-        pred_label = _sensitive_prediction(record)
-        if pred_label in total:
-            total[pred_label] += 1
+    for pred_label in result["predictions"].values():
+        label = int(pred_label)
+        if label in total:
+            total[label] += 1
     return total
 
 
@@ -273,10 +223,17 @@ def plot_minor_class_comparison(
 
 def main():
     """主函数"""
-    records = load_inference_records()
-    logger.info("用于敏感统计的推理记录：%d 条", len(records))
+    if not DL_RESULT_PATH.exists():
+        raise FileNotFoundError(
+            f"DL 识别结果不存在：{DL_RESULT_PATH}\n"
+            "请先运行：python scripts/build_chapter4_any_side_predictions.py"
+        )
 
-    total_counts = aggregate_total_counts(records)
+    logger.info("加载 DL 识别结果（任一面特殊振动规则）：%s", DL_RESULT_PATH.name)
+    result = load_predictions_result("predictions_enriched_any_side")
+    logger.info("用于统计的窗口数：%d", len(result["predictions"]))
+
+    total_counts = aggregate_total_counts(result)
     fig_pie, _ = plot_class_distribution_pie(total_counts)
     fig_minor, _ = plot_minor_class_comparison(total_counts)
 

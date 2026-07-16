@@ -1,32 +1,54 @@
+"""
+图4-5 Copula 特征截断阶数：精度（ERR）与效率（T_norm）权衡
+
+分辨率与数据策略（重要）
+------------------------
+- 统一使用 Welch nfft=128（与 fig4_10/11 一致），总功率 = 全谱 PSD 线性求和。
+- enriched（历史 nperseg=2048）只作样本索引（路径 + window_idx），只读不写、不覆盖。
+- nfft=128 的计算结果追加到独立快照，不改动任何 2048 enriched JSON，
+  也不覆盖旧快照 fig4_5_copula_err_efficiency.json / nfft256 快照。
+
+快照路径（追加）：
+  results/chapter4_characteristics/figure_snapshots/
+    fig4_5_copula_err_efficiency_nfft128.json
+
+强制重算：
+  python .../fig4_5_copula_err_efficiency.py --refresh-cache
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
 import sys
 import time
-import json
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.signal import find_peaks
 from scipy import stats
+from scipy.signal import find_peaks, welch
 
 project_root = Path(__file__).parent.parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.data_processer.preprocess.get_data_vib import VICWindowExtractor
+from src.data_processer.io_unpacker import UNPACK
 from src.chapter4_characteristics.feature_analysis.entry import ensure_enriched_for_figures
 from src.chapter4_characteristics.statistics.copula import fit_copula, sample_from_copula
 from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import (
     get_enriched_class_dir,
     iter_enriched_json_files,
 )
+from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import _WINDOW_SIZE
 from src.figure_paintings.figs_for_thesis.config import (
-    ANNOTATION_COLOR,
     CN_FONT,
-    DEFAULT_COLOR,
     FONT_SIZE,
+    REC_FIG_SIZE,
     SQUARE_FIG_SIZE,
-    get_blue_color_map,
+    get_full_color_map,
 )
 from src.visualize_tools.web_dashboard import push as web_push
 
@@ -35,37 +57,47 @@ class Config:
     CLASS_ID = 0
     FEATURE_BATCH_SIZE = 512
     MAX_K = 10
-    MODEL_SAMPLE_SIZE = 100_000
+    MODEL_SAMPLE_SIZE = 20_000
     MONTE_CARLO_SAMPLES = 100_000
+
     FS = 50.0
-    WINDOW_SIZE = 3000
+    WINDOW_SIZE = _WINDOW_SIZE
+    FREQ_LIMIT_HZ = 25.0
+    NFFT = 128
     MIN_PEAK_DISTANCE_HZ = 0.1
-    PEAK_HALF_BAND_HZ = 0.05
+
     RANDOM_SEED = 42
     COPULA_TYPE = "gaussian"
+    ERR_THRESHOLD = 85.0
     DELTA_ERR_THRESHOLD = 2.0
-    FORCE_RECOMPUTE = False
-    ENERGY_REFERENCE = "raw_fft_full_spectrum_peak_band"
 
-    FIG_SIZE = SQUARE_FIG_SIZE
-    LINEWIDTH = 2.4
-    BAR_ALPHA = 0.35
-    GRID_COLOR = "gray"
-    GRID_ALPHA = 0.3
-    GRID_LINESTYLE = "--"
+    ENERGY_REFERENCE = "welch_nfft128_peak_linear_sum_relative_to_topk"
+
+    FIG_SIZE = REC_FIG_SIZE
+    TIME_FIG_SIZE = SQUARE_FIG_SIZE
+    LINEWIDTH = 2.6
+    MARKER_SIZE = 8
+    BAR_WIDTH = 0.62
+    BAR_ALPHA = 0.78
+    GRID_COLOR = "#d0d0d0"
+    GRID_ALPHA = 0.55
+    GRID_LINESTYLE = "-"
 
     ENRICHED_STATS_DIR = get_enriched_class_dir(CLASS_ID)
-    SNAPSHOT_PATH = (
+    SNAPSHOT_DIR = (
         project_root
         / "results"
         / "chapter4_characteristics"
         / "figure_snapshots"
-        / "fig4_5_copula_err_efficiency.json"
     )
-    _palette = get_blue_color_map(style="discrete", start_map_index=1, end_map_index=5).colors
-    ERR_COLOR = _palette[3]
-    DELTA_COLOR = _palette[1]
-    TIME_COLOR = DEFAULT_COLOR
+    # 追加 nfft128 快照；旧文件 / nfft256 快照保持不动
+    SNAPSHOT_PATH = SNAPSHOT_DIR / "fig4_5_copula_err_efficiency_nfft128.json"
+
+    _full = get_full_color_map(style="discrete").colors
+    ERR_COLOR = _full[0]
+    DELTA_COLOR = _full[7]
+    TIME_COLOR = _full[9]
+    GUIDE_COLOR = "#555555"
 
 
 def _snapshot_config() -> dict:
@@ -76,18 +108,21 @@ def _snapshot_config() -> dict:
         "monte_carlo_samples": Config.MONTE_CARLO_SAMPLES,
         "fs": Config.FS,
         "window_size": Config.WINDOW_SIZE,
+        "freq_limit_hz": Config.FREQ_LIMIT_HZ,
+        "nfft": Config.NFFT,
         "min_peak_distance_hz": Config.MIN_PEAK_DISTANCE_HZ,
-        "peak_half_band_hz": Config.PEAK_HALF_BAND_HZ,
         "random_seed": Config.RANDOM_SEED,
         "copula_type": Config.COPULA_TYPE,
+        "err_threshold": Config.ERR_THRESHOLD,
         "delta_err_threshold": Config.DELTA_ERR_THRESHOLD,
         "energy_reference": Config.ENERGY_REFERENCE,
+        "data_source": "raw_vic_indexed_by_enriched",
         "enriched_stats_dir": str(Config.ENRICHED_STATS_DIR),
     }
 
 
-def load_snapshot() -> dict | None:
-    if Config.FORCE_RECOMPUTE or not Config.SNAPSHOT_PATH.exists():
+def load_snapshot(force_refresh: bool) -> dict | None:
+    if force_refresh or not Config.SNAPSHOT_PATH.exists():
         return None
 
     with open(Config.SNAPSHOT_PATH, "r", encoding="utf-8") as f:
@@ -97,28 +132,41 @@ def load_snapshot() -> dict | None:
         print(f"  快照参数不匹配，将重新计算：{Config.SNAPSHOT_PATH}")
         return None
 
-    print(f"  读取结果快照：{Config.SNAPSHOT_PATH}")
+    print(f"  读取 nfft={Config.NFFT} 快照：{Config.SNAPSHOT_PATH}")
     return payload
 
 
-def save_snapshot(err: np.ndarray, delta_err: np.ndarray, timings: np.ndarray, n_model: int) -> None:
-    Config.SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+def save_snapshot(
+    err: np.ndarray,
+    delta_err: np.ndarray,
+    timings: np.ndarray,
+    n_model: int,
+    abs_err_at_maxk: float,
+) -> None:
+    """追加写入 nfft128 快照；不触碰 enriched，也不覆盖旧 2048 / nfft256 相关快照。"""
+    Config.SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "config": _snapshot_config(),
         "n_model": int(n_model),
-        "k_star": int(select_k_star(delta_err)),
+        "k_star": int(select_k_star(err, delta_err)),
+        "abs_err_at_maxk_pct": float(abs_err_at_maxk),
         "err": err.tolist(),
         "delta_err": delta_err.tolist(),
         "timings_sec": timings.tolist(),
         "t_norm": (timings / timings[0]).tolist(),
+        "note": (
+            f"nfft={Config.NFFT}；ERR=相对前 MAX_K 阶保有率；"
+            "enriched(2048) 仅作索引，本文件为追加结果"
+        ),
     }
     with open(Config.SNAPSHOT_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-    print(f"  写出结果快照：{Config.SNAPSHOT_PATH}")
+    print(f"  追加写出快照：{Config.SNAPSHOT_PATH}")
 
 
-def _load_samples() -> list[dict]:
+def _load_index_samples() -> list[dict]:
+    """只读 enriched 索引，绝不写回。"""
     ensure_enriched_for_figures(class_id=Config.CLASS_ID, batch_size=Config.FEATURE_BATCH_SIZE)
     json_files = iter_enriched_json_files(Config.ENRICHED_STATS_DIR)
     if not json_files:
@@ -126,129 +174,141 @@ def _load_samples() -> list[dict]:
 
     samples: list[dict] = []
     for json_file in json_files:
-        print(f"  加载：{json_file.name}")
+        print(f"  索引：{json_file.name}")
         with open(json_file, "r", encoding="utf-8") as f:
             payload = json.load(f)
         samples.extend(payload.get("samples", []))
     return samples
 
 
-def _valid_records(samples: list[dict]) -> list[dict]:
-    return [
-        sample
-        for sample in samples
-        if sample.get("inplane_file_path") and sample.get("window_idx") is not None
-    ]
+def _sample_jobs(samples: list[dict]) -> list[tuple[str, int]]:
+    jobs: list[tuple[str, int]] = []
+    for sample in samples:
+        path = sample.get("inplane_file_path")
+        window_idx = sample.get("window_idx")
+        if path is None or window_idx is None:
+            continue
+        jobs.append((str(path), int(window_idx)))
 
-
-def _sample_records(samples: list[dict]) -> list[dict]:
-    records = _valid_records(samples)
-    n = len(records)
+    n = len(jobs)
     if n <= Config.MODEL_SAMPLE_SIZE:
-        return records
+        return jobs
 
     rng = np.random.default_rng(Config.RANDOM_SEED)
-    idx = rng.choice(n, size=Config.MODEL_SAMPLE_SIZE, replace=False)
-    return [records[i] for i in idx]
+    chosen = rng.choice(n, size=Config.MODEL_SAMPLE_SIZE, replace=False)
+    chosen.sort()
+    print(f"  全量索引 {n}，随机抽样 {Config.MODEL_SAMPLE_SIZE}")
+    return [jobs[i] for i in chosen.tolist()]
 
 
-def _extract_fft_modes(window: np.ndarray, max_k: int) -> tuple[np.ndarray, np.ndarray] | None:
-    signal = np.asarray(window, dtype=np.float64).ravel()
-    if signal.size < 2:
+def _slice_window(raw: np.ndarray, window_idx: int) -> np.ndarray | None:
+    start = window_idx * Config.WINDOW_SIZE
+    end = start + Config.WINDOW_SIZE
+    if end > len(raw):
+        return None
+    return raw[start:end]
+
+
+def _extract_welch_modes(signal: np.ndarray, max_k: int) -> tuple[np.ndarray, np.ndarray] | None:
+    """Welch nfft=128：峰顶功率 / 全谱线性总功率，按峰高取前 max_k 阶。"""
+    sig = np.asarray(signal, dtype=np.float64).ravel()
+    if sig.size < Config.NFFT:
         return None
 
-    signal = signal - float(np.mean(signal))
-    coeff = np.fft.rfft(signal)
-    energy = np.abs(coeff) ** 2
-    if energy.size > 2:
-        energy[1:-1] *= 2.0
-
-    freqs = np.fft.rfftfreq(signal.size, d=1.0 / Config.FS)
-    freqs = freqs[1:]
-    energy = energy[1:]
-    total_energy = float(np.sum(energy))
-    if total_energy <= 0 or not np.isfinite(total_energy):
+    f, psd = welch(
+        sig,
+        fs=Config.FS,
+        nperseg=Config.NFFT // 2,
+        noverlap=Config.NFFT // 4,
+        nfft=Config.NFFT,
+        scaling="density",
+    )
+    mask = f <= Config.FREQ_LIMIT_HZ
+    f = f[mask]
+    psd = psd[mask]
+    if len(psd) < max_k + 2:
         return None
 
-    freq_res = freqs[1] - freqs[0] if len(freqs) > 1 else Config.FS / signal.size
+    total_power = float(np.sum(psd))
+    if total_power <= 0:
+        return None
+
+    freq_res = float(f[1] - f[0]) if len(f) > 1 else Config.FS / Config.NFFT
     min_distance = max(1, int(Config.MIN_PEAK_DISTANCE_HZ / freq_res))
-    peaks, _ = find_peaks(energy, distance=min_distance)
+    peaks, _ = find_peaks(psd, distance=min_distance)
     if len(peaks) < max_k:
         return None
 
-    peak_order = peaks[np.argsort(energy[peaks])[::-1][:max_k]]
-    f_modes = freqs[peak_order]
-    e_modes = np.empty(max_k, dtype=np.float64)
-    used = np.zeros_like(energy, dtype=bool)
-    for i, peak_idx in enumerate(peak_order):
-        band = np.abs(freqs - freqs[peak_idx]) <= Config.PEAK_HALF_BAND_HZ
-        band = band & ~used
-        e_modes[i] = float(np.sum(energy[band]) / total_energy)
-        used |= band
+    peak_order = peaks[np.argsort(psd[peaks])[::-1][:max_k]]
+    f_modes = f[peak_order]
+    e_modes = psd[peak_order] / total_power
 
-    if not np.all(np.isfinite(f_modes)) or not np.all(np.isfinite(e_modes)):
-        return None
     if np.any(f_modes <= 0) or np.any(e_modes <= 0):
+        return None
+    if not np.all(np.isfinite(f_modes)) or not np.all(np.isfinite(e_modes)):
         return None
     return f_modes, e_modes
 
 
 def build_mode_arrays(samples: list[dict]) -> tuple[np.ndarray, np.ndarray]:
-    records = _sample_records(samples)
-    print(f"  抽样原始窗口记录：{len(records)}")
+    """
+    enriched 仅提供 (path, window_idx)；按文件分组解包 VIC，用 nfft=128 现算模态。
+    """
+    jobs = _sample_jobs(samples)
+    print(f"  待处理窗口：{len(jobs)}（nfft={Config.NFFT}）")
 
-    freq_rows: list[np.ndarray] = []
-    energy_rows: list[np.ndarray] = []
+    by_path: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    for i, (path, window_idx) in enumerate(jobs):
+        by_path[path].append((window_idx, i))
 
-    grouped: dict[str, list[dict]] = {}
-    for sample in records:
-        grouped.setdefault(str(sample["inplane_file_path"]), []).append(sample)
+    freq_rows: list[np.ndarray | None] = [None] * len(jobs)
+    energy_rows: list[np.ndarray | None] = [None] * len(jobs)
+    unpacker = UNPACK(init_path=False)
+    n_files = len(by_path)
 
-    extractor = VICWindowExtractor(enable_denoise=False)
-    for file_idx, (file_path, file_samples) in enumerate(grouped.items(), start=1):
-        print(f"  [{file_idx}/{len(grouped)}] 读取原始文件：{Path(file_path).name}，窗口数={len(file_samples)}")
-        vic_data = extractor.load_file(file_path)
-        for sample in file_samples:
-            window = extractor.extract_window_from_data(
-                vic_data,
-                int(sample["window_idx"]),
-                Config.WINDOW_SIZE,
-                metadata=None,
-                file_path=file_path,
-            )
-            if window is None:
+    for file_i, (path, items) in enumerate(by_path.items(), start=1):
+        if not Path(path).exists():
+            continue
+        raw = np.asarray(unpacker.VIC_DATA_Unpack(str(path)), dtype=np.float64)
+        for window_idx, job_i in items:
+            sig = _slice_window(raw, window_idx)
+            if sig is None:
                 continue
-            extracted = _extract_fft_modes(window, Config.MAX_K)
+            extracted = _extract_welch_modes(sig, Config.MAX_K)
             if extracted is None:
                 continue
             freqs, energies = extracted
-            freq_rows.append(freqs)
-            energy_rows.append(energies)
-        del vic_data
+            freq_rows[job_i] = freqs
+            energy_rows[job_i] = energies
 
-    if not freq_rows:
-        raise ValueError("未提取到有效面内 FFT 模态样本")
+        if file_i % 200 == 0 or file_i == n_files:
+            print(f"    已解包文件 {file_i}/{n_files}")
 
-    freq_matrix = np.asarray(freq_rows, dtype=np.float64)
-    energy_matrix = np.asarray(energy_rows, dtype=np.float64)
-    return freq_matrix, energy_matrix
+    freq_ok = [r for r in freq_rows if r is not None]
+    energy_ok = [r for r in energy_rows if r is not None]
+    if not freq_ok:
+        raise ValueError("未提取到有效面内 Welch(nfft=128) 模态样本")
+
+    print(f"  有效模态样本：{len(freq_ok)}")
+    return np.asarray(freq_ok, dtype=np.float64), np.asarray(energy_ok, dtype=np.float64)
 
 
-def _feature_matrix(freq_matrix: np.ndarray, energy_matrix: np.ndarray, k: int) -> tuple[np.ndarray, list[str]]:
+def _feature_matrix(freq_matrix: np.ndarray, energy_matrix: np.ndarray, k: int) -> np.ndarray:
     columns: list[np.ndarray] = []
-    var_names: list[str] = []
     for i in range(k):
         columns.append(freq_matrix[:, i])
         columns.append(energy_matrix[:, i])
-        var_names.extend([f"freq_{i + 1}", f"energy_{i + 1}"])
-    return np.column_stack(columns), var_names
+    return np.column_stack(columns)
 
 
-def compute_err_curve(energy_matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def compute_err_curve(energy_matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
     cumulative = np.cumsum(energy_matrix, axis=1)
-    err = np.mean(cumulative, axis=0) * 100.0
+    topk_total = cumulative[:, -1:]
+    relative = cumulative / np.clip(topk_total, 1e-30, None)
+    err = np.mean(relative, axis=0) * 100.0
     delta = np.diff(np.insert(err, 0, 0.0))
-    return err, delta
+    abs_err_at_maxk = float(np.mean(topk_total) * 100.0)
+    return err, delta, abs_err_at_maxk
 
 
 def _empirical_pit(matrix: np.ndarray) -> np.ndarray:
@@ -279,8 +339,7 @@ def run_copula_timing(freq_matrix: np.ndarray, energy_matrix: np.ndarray) -> np.
     rng = np.random.default_rng(Config.RANDOM_SEED)
 
     for k in range(1, Config.MAX_K + 1):
-        matrix, var_names = _feature_matrix(freq_matrix, energy_matrix, k)
-
+        matrix = _feature_matrix(freq_matrix, energy_matrix, k)
         print(f"  K={k:02d}  d={matrix.shape[1]:02d}  Gaussian Copula 拟合 + {Config.MONTE_CARLO_SAMPLES:,} 次抽样...")
         t0 = time.perf_counter()
         _fit_and_sample_copula(matrix, rng)
@@ -291,7 +350,11 @@ def run_copula_timing(freq_matrix: np.ndarray, energy_matrix: np.ndarray) -> np.
     return np.asarray(timings, dtype=np.float64)
 
 
-def select_k_star(delta_err: np.ndarray) -> int:
+def select_k_star(err: np.ndarray, delta_err: np.ndarray) -> int:
+    hit = np.flatnonzero(err >= Config.ERR_THRESHOLD) + 1
+    if len(hit):
+        return int(hit[0])
+
     candidates = np.flatnonzero(delta_err < Config.DELTA_ERR_THRESHOLD) + 1
     candidates = candidates[candidates > 1]
     if len(candidates):
@@ -300,132 +363,185 @@ def select_k_star(delta_err: np.ndarray) -> int:
 
 
 def _apply_grid(ax) -> None:
-    ax.grid(True, color=Config.GRID_COLOR, alpha=Config.GRID_ALPHA, linestyle=Config.GRID_LINESTYLE)
+    ax.grid(True, axis="y", color=Config.GRID_COLOR, alpha=Config.GRID_ALPHA, linestyle=Config.GRID_LINESTYLE)
     ax.set_axisbelow(True)
 
 
-def plot_err_figure(err: np.ndarray, delta_err: np.ndarray) -> plt.Figure:
+def plot_tradeoff_figure(err: np.ndarray, delta_err: np.ndarray, timings: np.ndarray) -> plt.Figure:
     k_values = np.arange(1, Config.MAX_K + 1)
-    k_star = select_k_star(delta_err)
+    t_norm = timings / timings[0]
+    k_star = select_k_star(err, delta_err)
 
     fig, ax_err = plt.subplots(1, 1, figsize=Config.FIG_SIZE)
+    ax_time = ax_err.twinx()
 
-    ax_delta = ax_err.twinx()
-    bars = ax_delta.bar(
+    bars = ax_err.bar(
         k_values,
         delta_err,
+        width=Config.BAR_WIDTH,
         color=Config.DELTA_COLOR,
         alpha=Config.BAR_ALPHA,
-        label=r"$\Delta$ERR",
+        edgecolor="white",
+        linewidth=0.6,
+        label=r"$\Delta$ERR（边际精度）",
+        zorder=2,
     )
     err_line, = ax_err.plot(
-        k_values,
-        err,
-        marker="o",
-        color=Config.ERR_COLOR,
-        linewidth=Config.LINEWIDTH,
-        label="ERR",
+        k_values, err, marker="o", markersize=Config.MARKER_SIZE,
+        color=Config.ERR_COLOR, linewidth=Config.LINEWIDTH,
+        label="ERR（累积精度）", zorder=4,
     )
-    ax_err.axhline(85.0, color=ANNOTATION_COLOR, linewidth=1.4, linestyle="--", label="85% 阈值")
-    ax_delta.axhline(Config.DELTA_ERR_THRESHOLD, color=Config.TIME_COLOR, linewidth=1.2, linestyle=":", label="2% 边际阈值")
-    ax_err.axvline(k_star, color=ANNOTATION_COLOR, linewidth=1.4, linestyle="-.")
+    time_line, = ax_time.plot(
+        k_values, t_norm, marker="s", markersize=Config.MARKER_SIZE - 1,
+        color=Config.TIME_COLOR, linewidth=Config.LINEWIDTH, linestyle="--",
+        label=r"$T_{\mathrm{norm}}$（计算代价）", zorder=4,
+    )
+
+    ax_err.axhline(Config.ERR_THRESHOLD, color=Config.GUIDE_COLOR, linewidth=1.3, linestyle="--", zorder=3)
+    ax_err.axvline(k_star, color=Config.GUIDE_COLOR, linewidth=1.5, linestyle="-.", zorder=3)
+    # K* 标注放在曲线右侧空白区，避开图例与柱顶
     ax_err.annotate(
         rf"$K^*={k_star}$",
         xy=(k_star, err[k_star - 1]),
-        xytext=(k_star + 0.25, min(98.0, err[k_star - 1] + 6.0)),
-        arrowprops={"arrowstyle": "->", "color": ANNOTATION_COLOR, "linewidth": 1.0},
-        color=ANNOTATION_COLOR,
-        fontsize=FONT_SIZE - 3,
+        xytext=(k_star + 1.15, min(98.0, err[k_star - 1] + 8.0)),
+        arrowprops={
+            "arrowstyle": "->",
+            "color": Config.GUIDE_COLOR,
+            "lw": 1.2,
+            "connectionstyle": "arc3,rad=-0.15",
+        },
+        color=Config.GUIDE_COLOR,
+        fontsize=FONT_SIZE - 4,
+        fontproperties=CN_FONT,
+        ha="left",
+        va="bottom",
+        zorder=5,
+        bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": Config.GUIDE_COLOR, "alpha": 0.92},
     )
 
     ax_err.set_xlabel("截断阶数 K", labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
     ax_err.set_ylabel("能量保有率 ERR (%)", labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    ax_delta.set_ylabel(r"边际增益 $\Delta$ERR (%)", labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
+    ax_time.set_ylabel(r"归一化耗时 $T_{\mathrm{norm}}$", labelpad=12, fontproperties=CN_FONT, fontsize=FONT_SIZE)
     ax_err.set_xticks(k_values)
-    ax_err.set_ylim(0, 105)
-    ax_delta.set_ylim(0, max(float(np.max(delta_err)) * 1.15, Config.DELTA_ERR_THRESHOLD * 2.0))
+    ax_err.set_xlim(0.4, Config.MAX_K + 0.6)
+    ax_err.set_ylim(0, 108)
+    ax_time.set_ylim(0, max(float(np.max(t_norm)) * 1.18, 1.3))
     _apply_grid(ax_err)
 
-    handles = [err_line, bars, *ax_err.lines[1:2], *ax_delta.lines]
-    labels = [h.get_label() for h in handles]
-    legend = ax_err.legend(handles, labels, loc="center right", framealpha=0.9, prop=CN_FONT)
+    # 图例置于图外上方横排，避免遮挡左侧高柱与上升段
+    handles = [err_line, time_line, bars]
+    legend = ax_err.legend(
+        handles,
+        [h.get_label() for h in handles],
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.02),
+        ncol=3,
+        framealpha=0.95,
+        prop=CN_FONT,
+        fontsize=FONT_SIZE - 5,
+        borderpad=0.35,
+        columnspacing=1.2,
+        handlelength=1.8,
+    )
     for text in legend.get_texts():
         text.set_fontproperties(CN_FONT)
 
-    for ax in (ax_err, ax_delta):
-        ax.tick_params(axis="both", which="major", labelsize=FONT_SIZE - 3)
+    for ax in (ax_err, ax_time):
+        ax.tick_params(axis="both", which="major", labelsize=FONT_SIZE - 4)
+        ax.spines["top"].set_visible(False)
 
-    fig.subplots_adjust(left=0.15, right=0.86, bottom=0.14, top=0.96)
+    fig.subplots_adjust(left=0.10, right=0.90, bottom=0.14, top=0.86)
     return fig
 
 
-def plot_time_figure(timings: np.ndarray, delta_err: np.ndarray) -> plt.Figure:
+def plot_time_figure(timings: np.ndarray, err: np.ndarray, delta_err: np.ndarray) -> plt.Figure:
     k_values = np.arange(1, Config.MAX_K + 1)
     t_norm = timings / timings[0]
-    k_star = select_k_star(delta_err)
+    k_star = select_k_star(err, delta_err)
 
-    fig, ax_time = plt.subplots(1, 1, figsize=Config.FIG_SIZE)
-    ax_time.plot(
-        k_values,
-        t_norm,
-        marker="s",
-        color=Config.TIME_COLOR,
-        linewidth=Config.LINEWIDTH,
-        label=r"$T_{\mathrm{norm}}$",
+    fig, ax = plt.subplots(1, 1, figsize=Config.TIME_FIG_SIZE)
+    ax.plot(
+        k_values, t_norm, marker="s", markersize=Config.MARKER_SIZE,
+        color=Config.TIME_COLOR, linewidth=Config.LINEWIDTH, label=r"$T_{\mathrm{norm}}$",
     )
-    ax_time.axvline(k_star, color=ANNOTATION_COLOR, linewidth=1.4, linestyle="-.")
-    ax_time.set_xlabel("截断阶数 K", labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    ax_time.set_ylabel(r"归一化计算耗时 $T_{\mathrm{norm}}$", labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    ax_time.set_xticks(k_values)
-    ax_time.set_ylim(0, max(float(np.max(t_norm)) * 1.15, 1.2))
-    _apply_grid(ax_time)
-
-    legend = ax_time.legend(loc="upper left", framealpha=0.9, prop=CN_FONT)
+    ax.axvline(k_star, color=Config.GUIDE_COLOR, linewidth=1.5, linestyle="-.")
+    ax.annotate(
+        rf"$K^*={k_star}$",
+        xy=(k_star, t_norm[k_star - 1]),
+        xytext=(k_star - 2.2 if k_star > 3 else k_star + 0.4, t_norm[k_star - 1] * 0.72),
+        arrowprops={"arrowstyle": "->", "color": Config.GUIDE_COLOR, "lw": 1.1},
+        color=Config.GUIDE_COLOR,
+        fontsize=FONT_SIZE - 4,
+        fontproperties=CN_FONT,
+        bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "edgecolor": Config.GUIDE_COLOR, "alpha": 0.9},
+    )
+    ax.set_xlabel("截断阶数 K", labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
+    ax.set_ylabel(r"归一化计算耗时 $T_{\mathrm{norm}}$", labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
+    ax.set_xticks(k_values)
+    ax.set_ylim(0, max(float(np.max(t_norm)) * 1.15, 1.2))
+    _apply_grid(ax)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    legend = ax.legend(loc="upper left", framealpha=0.95, prop=CN_FONT)
     for text in legend.get_texts():
         text.set_fontproperties(CN_FONT)
-    ax_time.tick_params(axis="both", which="major", labelsize=FONT_SIZE - 3)
-
-    fig.subplots_adjust(left=0.17, right=0.96, bottom=0.14, top=0.96)
+    ax.tick_params(axis="both", which="major", labelsize=FONT_SIZE - 4)
+    fig.subplots_adjust(left=0.16, right=0.96, bottom=0.14, top=0.95)
     return fig
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="图4-5 Copula 截断阶数精度–效率权衡（nfft=128）")
+    parser.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help="忽略 nfft128 快照并重算（不改 enriched / 不改旧快照）",
+    )
+    args = parser.parse_args()
+
     print("=" * 80)
-    print("图4-5 Copula 特征截断阶数性能对比（ERR + 计算效率）")
+    print("图4-5 Copula 特征截断阶数性能对比（nfft=128）")
     print("=" * 80)
-    print("\n[步骤1] 检查结果快照...")
-    snapshot = load_snapshot()
+    print(f"  能量定义：{Config.ENERGY_REFERENCE}")
+    print(f"  nfft={Config.NFFT}；enriched(2048) 只读索引，结果追加到独立快照")
+    print(f"  快照：{Config.SNAPSHOT_PATH}")
+
+    print("\n[步骤1] 检查 nfft=128 快照...")
+    snapshot = load_snapshot(force_refresh=args.refresh_cache)
     if snapshot is not None:
         err = np.asarray(snapshot["err"], dtype=np.float64)
         delta_err = np.asarray(snapshot["delta_err"], dtype=np.float64)
         timings = np.asarray(snapshot["timings_sec"], dtype=np.float64)
         n_model = int(snapshot["n_model"])
-        print(f"  使用快照数据：n={n_model}，K*={snapshot.get('k_star')}")
+        abs_err = float(snapshot.get("abs_err_at_maxk_pct", float("nan")))
+        print(f"  使用快照：n={n_model}，K*={snapshot.get('k_star')}，绝对保有率@MAX_K≈{abs_err:.1f}%")
     else:
-        print("\n[步骤2] 加载随机振动 enriched 原始样本...")
-        samples = _load_samples()
-        print(f"  原始样本记录：{len(samples)}")
+        print("\n[步骤2] 读取 enriched 索引（不修改 2048 结果）...")
+        samples = _load_index_samples()
+        print(f"  索引样本：{len(samples)}")
 
-        print("\n[步骤3] 提取前 K 阶主频/能量特征...")
+        print(f"\n[步骤3] 从原始 VIC 按 nfft={Config.NFFT} 提取前 K 阶...")
         freq_matrix, energy_matrix = build_mode_arrays(samples)
         n_model = int(freq_matrix.shape[0])
-        print(f"  有效建模样本：{n_model}，最大阶数：{Config.MAX_K}")
+        print(f"  有效建模样本：{n_model}")
 
-        print("\n[步骤4] 计算 ERR 与边际增益...")
-        err, delta_err = compute_err_curve(energy_matrix)
-        print(f"  ERR(K={Config.MAX_K})={err[-1]:.2f}%")
+        print("\n[步骤4] 计算相对 ERR 与边际增益...")
+        err, delta_err, abs_err = compute_err_curve(energy_matrix)
+        print(f"  相对 ERR(K={Config.MAX_K})={err[-1]:.2f}%")
+        print(f"  绝对保有率(K={Config.MAX_K} vs 全谱)={abs_err:.2f}%")
+        print(f"  K*={select_k_star(err, delta_err)}")
 
-        print("\n[步骤5] Copula 拟合与 10^5 次抽样计时...")
+        print("\n[步骤5] Copula 拟合与抽样计时...")
         timings = run_copula_timing(freq_matrix, energy_matrix)
         print(f"  T_norm(K={Config.MAX_K})={timings[-1] / timings[0]:.2f}")
-        save_snapshot(err, delta_err, timings, n_model)
+        save_snapshot(err, delta_err, timings, n_model, abs_err)
 
     print("\n[步骤6] 绘制并推送图像...")
-    fig_err = plot_err_figure(err, delta_err)
-    fig_time = plot_time_figure(timings, delta_err)
-    web_push(fig_err, page="fig4_5 Copula性能对比", slot=0, title="ERR 与边际增益", page_cols=2)
-    web_push(fig_time, page="fig4_5 Copula性能对比", slot=1, title="归一化计算耗时")
-    plt.close(fig_err)
+    fig_trade = plot_tradeoff_figure(err, delta_err, timings)
+    fig_time = plot_time_figure(timings, err, delta_err)
+    web_push(fig_trade, page="fig4_5 Copula性能对比", slot=0, title="精度–效率权衡 nfft=128", page_cols=2)
+    web_push(fig_time, page="fig4_5 Copula性能对比", slot=1, title="归一化计算耗时 nfft=128")
+    plt.close(fig_trade)
     plt.close(fig_time)
     print("OK 已推送到 WebUI：fig4_5 Copula性能对比")
 

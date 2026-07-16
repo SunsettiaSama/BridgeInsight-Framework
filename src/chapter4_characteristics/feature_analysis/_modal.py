@@ -13,12 +13,13 @@ def compute_psd_top_modes(
     PSD 前 N 阶主导模态（频率 + 功率），按频率升序返回。
     """
     f, psd = _compute_psd(signal, fs, nperseg)
+    total_power = float(np.sum(psd))
     freq_res = f[1] - f[0] if len(f) > 1 else 1.0
     min_distance = max(1, int(min_peak_distance_hz / freq_res))
 
     peaks, _ = find_peaks(psd, distance=min_distance)
     if len(peaks) == 0:
-        return {"frequencies": [], "powers": []}
+        return {"frequencies": [], "powers": [], "total_power": total_power}
 
     top_idx   = np.argsort(psd[peaks])[::-1][:n_modes]
     top_peaks = peaks[top_idx]
@@ -27,6 +28,7 @@ def compute_psd_top_modes(
     return {
         "frequencies": f[top_peaks].tolist(),
         "powers":      psd[top_peaks].tolist(),
+        "total_power": total_power,
     }
 
 

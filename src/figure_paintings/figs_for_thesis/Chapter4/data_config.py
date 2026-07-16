@@ -16,6 +16,10 @@ LEGACY = {
 CHAPTER4 = {
     "runtime_config_path": None,
     "predictions_enriched": "results/chapter4_characteristics/inference/predictions_enriched_exclude_c34_201_202_301.json",
+    "predictions_enriched_any_side": (
+        "results/chapter4_characteristics/inference/"
+        "predictions_enriched_any_side_special_exclude_c34_201_202_301.json"
+    ),
     "predictions_enriched_raw": "results/chapter4_characteristics/inference/predictions_enriched.json",
     "enriched_root": "results/chapter4_characteristics/enriched",
     "mecc_result_glob": "results/identification_result_mecc_viv/mecc_viv_only_*.json",

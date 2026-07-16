@@ -1,8 +1,8 @@
 """
 识别结果可视化：2023年各月份各类振动占比分布
 
-数据源：Chapter4 全量 DL 识别结果（已排除 C34-201/202），
-见 data_config.CHAPTER4["predictions_enriched"]。
+数据源：Chapter4 全量 DL 识别结果（任一面命中 1/2/3 即计入该类；已排除 C34-201/202/301），
+见 data_config.CHAPTER4["predictions_enriched_any_side"]。
 
 主要功能：
 - 加载识别结果 JSON
@@ -32,10 +32,10 @@ from src.chapter4_characteristics._bootstrap import ensure_paths
 
 ensure_paths()
 from src.figure_paintings.figs_for_thesis.Chapter4 import data_config
-from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import load_dl_result
+from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import load_predictions_result
 
-# 已排除 C34-201/202 的 DL 全量识别结果
-DL_RESULT_PATH = data_config.PROJECT_ROOT / data_config.CHAPTER4["predictions_enriched"]
+# 任一面命中 1/2/3 即计入该类的 enriched 识别结果
+DL_RESULT_PATH = data_config.PROJECT_ROOT / data_config.CHAPTER4["predictions_enriched_any_side"]
 PAGE_NAME = "fig3_1 月份分布"
 
 # 从统一配置模块导入图像配置（字体、尺寸、配色）
@@ -358,11 +358,11 @@ def main():
     if not DL_RESULT_PATH.exists():
         raise FileNotFoundError(
             f"DL 识别结果不存在：{DL_RESULT_PATH}\n"
-            "请先运行：python scripts/filter_chapter4_predictions.py"
+            "请先运行：python scripts/build_chapter4_any_side_predictions.py"
         )
 
-    logger.info("加载 DL 识别结果（已排除 C34-201/202）：%s", DL_RESULT_PATH.name)
-    result = load_dl_result()
+    logger.info("加载 DL 识别结果（任一面特殊振动规则）：%s", DL_RESULT_PATH.name)
+    result = load_predictions_result("predictions_enriched_any_side")
     
     # 按月份聚合
     monthly_counts = aggregate_by_month(result)

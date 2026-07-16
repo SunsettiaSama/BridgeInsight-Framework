@@ -128,18 +128,24 @@ def _load_latest_glob(full_glob: Path) -> dict:
     return FullDatasetRunner.load_result(str(files[-1]))
 
 
-def load_dl_result() -> dict:
-    """加载 DL 全量识别结果，统一返回含 predictions / sample_metadata 的字典。"""
+def load_predictions_result(config_key: str = "predictions_enriched") -> dict:
+    """加载指定 config_key 对应的 enriched 识别结果。"""
     source = data_config.DATA_SOURCE
     if source == "legacy":
+        if config_key != "predictions_enriched":
+            raise ValueError(f"legacy 数据源不支持 config_key={config_key!r}")
         glob_path = _resolve(data_config.LEGACY["dl_result_glob"])
         return _load_latest_glob(glob_path)
 
     if source != "chapter4":
         raise ValueError(f"未知 DATA_SOURCE：{source!r}，应为 'legacy' 或 'chapter4'")
 
+    path_value = data_config.CHAPTER4.get(config_key)
+    if not path_value:
+        raise KeyError(f"data_config.CHAPTER4 缺少 {config_key!r}")
+
     runtime_path = data_config.CHAPTER4.get("runtime_config_path")
-    if runtime_path:
+    if config_key == "predictions_enriched" and runtime_path:
         from src.chapter4_characteristics.settings import (
             get_predictions_enriched_path,
             load_config,
@@ -148,8 +154,12 @@ def load_dl_result() -> dict:
         cfg = load_config(str(runtime_path))
         path = get_predictions_enriched_path(cfg)
     else:
-        path = _resolve(data_config.CHAPTER4["predictions_enriched"])
-        if not path.exists() and data_config.CHAPTER4.get("predictions_enriched_raw"):
+        path = _resolve(path_value)
+        if (
+            config_key == "predictions_enriched"
+            and not path.exists()
+            and data_config.CHAPTER4.get("predictions_enriched_raw")
+        ):
             raw_path = _resolve(data_config.CHAPTER4["predictions_enriched_raw"])
             if raw_path.exists():
                 path = raw_path
@@ -162,7 +172,15 @@ def load_dl_result() -> dict:
 
     print(f"  加载识别结果：{path.name}")
     with open(path, "r", encoding="utf-8") as f:
-        return _filter_excluded_result(json.load(f))
+        payload = json.load(f)
+    if config_key == "predictions_enriched_any_side":
+        return payload
+    return _filter_excluded_result(payload)
+
+
+def load_dl_result() -> dict:
+    """加载 DL 全量识别结果，统一返回含 predictions / sample_metadata 的字典。"""
+    return load_predictions_result("predictions_enriched")
 
 
 def get_enriched_class_dir(class_id: int) -> Path:

@@ -131,13 +131,44 @@ def _welch_stats(sig: np.ndarray):
     half_w   = 3
     lo       = max(0, dom_idx - half_w)
     hi       = min(len(psd_lim) - 1, dom_idx + half_w)
-    dom_energy = float(psd_lim[lo:hi + 1].sum() / psd_lim.sum())
+    total_power = float(psd_lim.sum())
+    dom_energy = float(psd_lim[lo:hi + 1].sum() / total_power)
 
     arr_sorted = np.sort(psd_lim)[::-1]
-    total      = arr_sorted.sum()
-    cumsum     = np.cumsum(arr_sorted) / total if total > 0 else None
+    cumsum     = np.cumsum(arr_sorted) / total_power if total_power > 0 else None
 
     return dom_freq, dom_energy, cumsum
+
+
+def psd_ranked_energy_cumsum(
+    sig: np.ndarray,
+    n_modes: int = 50,
+    fs: float = _FS,
+    freq_limit: float = _FREQ_LIMIT,
+    nfft: int = _NFFT,
+) -> np.ndarray | None:
+    """
+    将全谱各频点 PSD 按幅值从大到小排序：
+    第1阶=能量最大频率，第2阶=能量第二大频率，依此类推。
+    总功率 = 全谱 PSD 线性相加；累积占比 = 前 k 阶 PSD 之和 / 总功率。
+    """
+    f, psd = scipy_signal.welch(
+        sig, fs=fs,
+        nperseg=nfft // 2, noverlap=nfft // 4, nfft=nfft,
+        scaling="density",
+    )
+    mask = f <= freq_limit
+    psd_lim = psd[mask]
+    if len(psd_lim) == 0:
+        return None
+
+    total_power = float(psd_lim.sum())
+    if total_power <= 0:
+        return None
+
+    ranked = np.sort(psd_lim)[::-1]
+    n = min(n_modes, len(ranked))
+    return np.cumsum(ranked[:n]) / total_power
 
 
 def compute_signal_stats(samples: list, source: str = "") -> dict:
