@@ -171,7 +171,7 @@ def main():
     print("✓ 图像生成完成")
 
     print("\n[步骤4] 推送到 WebUI...")
-    web_push(fig, page='fig4_23 VIV峭度 DL vs MECC', slot=0,
+    web_push(fig, page='fig4_x VIV峭度 DL vs MECC', slot=0,
              title='峭度分布对比', page_cols=1)
     print("✓ 推送完成")
     print("=" * 80)

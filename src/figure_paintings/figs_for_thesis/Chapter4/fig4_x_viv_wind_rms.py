@@ -18,12 +18,18 @@ from src.figure_paintings.figs_for_thesis.Chapter4._data_loader import (
     filter_sensor_groups,
     get_enriched_class_dir,
 )
-from src.figure_paintings.figs_for_thesis.config import CN_FONT, FONT_SIZE, REC_FIG_SIZE, get_blue_color_map
+from src.figure_paintings.figs_for_thesis.config import (
+    CN_FONT,
+    FONT_SIZE,
+    REC_FIG_SIZE,
+    VIV_INPLANE_COLOR,
+    VIV_OUTPLANE_COLOR,
+)
 from src.visualize_tools.web_dashboard import push as web_push
 
 
 class Config:
-    NORMAL_VIB_CLASS_ID = 0
+    VIV_CLASS_ID = 1
     FEATURE_BATCH_SIZE = 512
 
     FIG_SIZE = REC_FIG_SIZE
@@ -35,31 +41,31 @@ class Config:
     GRID_ALPHA = 0.3
     GRID_LINESTYLE = "--"
 
-    _palette = get_blue_color_map(style="discrete", start_map_index=1, end_map_index=5).colors
-    INPLANE_COLOR = _palette[2]
-    OUTPLANE_COLOR = _palette[3]
+    INPLANE_COLOR = VIV_INPLANE_COLOR
+    OUTPLANE_COLOR = VIV_OUTPLANE_COLOR
     SHADE_ALPHA = 0.18
     LINE_WIDTH = 2.3
     MARKER_SIZE = 4
 
     WIND_BIN_WIDTH = 0.5
-    MIN_BIN_SAMPLES = 80
+    # VIV 样本量远小于随机振动，分箱门槛相应放宽
+    MIN_BIN_SAMPLES = 20
     WIND_X_PERCENTILE = 99.5
     RMS_Y_PERCENTILE = 99.5
     AXIS_PAD = 1.05
 
-    ENRICHED_STATS_DIR = get_enriched_class_dir(NORMAL_VIB_CLASS_ID)
+    ENRICHED_STATS_DIR = get_enriched_class_dir(VIV_CLASS_ID)
     SENSOR_GROUPS = filter_sensor_groups(data_config.SENSOR_GROUPS_WIND)
     WEB_DASHBOARD_PORT = 15678
     SNAPSHOT_DIR = project_root / "results" / "chapter4_characteristics" / "figure_snapshots"
-    SNAPSHOT_PATH = SNAPSHOT_DIR / "fig4_13_normal_vib_wind_rms.npz"
+    SNAPSHOT_PATH = SNAPSHOT_DIR / "fig4_26_viv_wind_rms.npz"
 
 
 def _snapshot_config() -> dict:
     return {
-        "figure": "fig4_13_normal_vib_wind_rms",
+        "figure": "fig4_26_viv_wind_rms",
         "version": "pooled_no_location_split",
-        "class_id": Config.NORMAL_VIB_CLASS_ID,
+        "class_id": Config.VIV_CLASS_ID,
         "sensor_groups": Config.SENSOR_GROUPS,
         "enriched_stats_dir": str(Config.ENRICHED_STATS_DIR),
         "data_source": data_config.DATA_SOURCE,
@@ -111,7 +117,7 @@ def load_wind_rms_data(json_file: Path) -> dict:
 
 def load_pooled_wind_rms() -> dict:
     """合并所有拉索测点，暂不按位置区分。"""
-    ensure_enriched_for_figures(class_id=Config.NORMAL_VIB_CLASS_ID, batch_size=Config.FEATURE_BATCH_SIZE)
+    ensure_enriched_for_figures(class_id=Config.VIV_CLASS_ID, batch_size=Config.FEATURE_BATCH_SIZE)
 
     wind_parts: list[np.ndarray] = []
     rms_in_parts: list[np.ndarray] = []
@@ -130,7 +136,7 @@ def load_pooled_wind_rms() -> dict:
         rms_out_parts.append(data["rms_outplane"])
 
     if not wind_parts:
-        raise ValueError("无可绘制的随机振动风速-RMS 数据")
+        raise ValueError("无可绘制的涡激共振风速-RMS 数据")
 
     return {
         "wind_speeds": np.concatenate(wind_parts),
@@ -276,6 +282,11 @@ def plot_wind_rms_trend(data: dict) -> plt.Figure:
 
     stats_in = _bin_stats(wind, rms_in, bins)
     stats_out = _bin_stats(wind, rms_out, bins)
+    if len(stats_in["centers"]) == 0 and len(stats_out["centers"]) == 0:
+        raise ValueError(
+            f"分箱后无有效点（MIN_BIN_SAMPLES={Config.MIN_BIN_SAMPLES}），"
+            "请降低门槛或检查风速-RMS 样本"
+        )
 
     fig, ax = plt.subplots(figsize=Config.FIG_SIZE)
     _plot_side_band(ax, stats_in, Config.INPLANE_COLOR, "面内")
@@ -300,20 +311,20 @@ def push_figure(fig: plt.Figure) -> None:
         )
         return
 
-    page = "fig4_13 随机振动风速-RMS"
-    web_push(fig, page=page, slot=0, title="随机振动风速-RMS关系", page_cols=1)
+    page = "fig4_26 涡激共振风速-RMS"
+    web_push(fig, page=page, slot=0, title="涡激共振风速-RMS关系", page_cols=1)
     print(f"[OK] 已推送到 WebUI：{page}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="图4-13 随机振动风速-RMS 分箱趋势图（支持快照）")
+    parser = argparse.ArgumentParser(description="图4-26 涡激共振风速-RMS 分箱趋势图（支持快照）")
     parser.add_argument("--refresh-cache", action="store_true", help="忽略已有快照，强制从 enriched JSON 重建")
     args = parser.parse_args()
 
     print("=" * 80)
-    print("图4-13 随机振动风速-RMS关系分箱趋势图（合并全部拉索）")
+    print("图4-26 涡激共振风速-RMS关系分箱趋势图（合并全部拉索）")
     print("=" * 80)
-    print(f"\n[步骤1] 加载随机振动风速-RMS 数据...")
+    print(f"\n[步骤1] 加载涡激共振风速-RMS 数据...")
     print(f"  数据目录：{Config.ENRICHED_STATS_DIR}")
     print(f"  快照文件：{Config.SNAPSHOT_PATH}")
     if args.refresh_cache:

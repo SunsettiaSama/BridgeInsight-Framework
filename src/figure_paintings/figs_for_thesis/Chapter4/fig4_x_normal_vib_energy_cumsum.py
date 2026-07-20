@@ -1,5 +1,5 @@
 """
-图4-10 随机振动前50阶主频累积能量分布
+图4-x 随机振动前50阶主频累积能量分布
 
 计算说明
 --------
@@ -15,10 +15,10 @@
 
 快照路径：
   results/chapter4_characteristics/figure_snapshots/
-    fig4_10_normal_vib_energy_cumsum_nfft128.npz
+    fig4_x_normal_vib_energy_cumsum_nfft128.npz
 
 强制重算：
-  python .../fig4_10_normal_vib_energy_cumsum.py --refresh-cache
+  python .../fig4_x_normal_vib_energy_cumsum.py --refresh-cache
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ class Config:
 
     FEATURE_BATCH_SIZE = 512
     ENRICHED_STATS_DIR = get_enriched_class_dir(0)
-    WEB_PAGE = "fig4_10 累积能量"
+    WEB_PAGE = "fig4_x 累积能量"
 
     # 快照根目录：按 nfft 分文件，避免两组分辨率互相覆盖
     SNAPSHOT_DIR = (
@@ -83,13 +83,13 @@ class Config:
 
 
 def _snapshot_path(nfft: int) -> Path:
-    return Config.SNAPSHOT_DIR / f"fig4_10_normal_vib_energy_cumsum_nfft{nfft}.npz"
+    return Config.SNAPSHOT_DIR / f"fig4_x_normal_vib_energy_cumsum_nfft{nfft}.npz"
 
 
 def _snapshot_config(nfft: int) -> dict:
     """写入快照的配置指纹；任一字段变化则判定快照失效并重算。"""
     return {
-        "figure": "fig4_10_normal_vib_energy_cumsum",
+        "figure": "fig4_x_normal_vib_energy_cumsum",
         "nfft": int(nfft),
         "n_modes": Config.N_MODES,
         "max_samples": Config.MAX_SAMPLES,
@@ -328,7 +328,7 @@ def plot_energy_cumsum(data: dict) -> plt.Figure:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="图4-10 前50阶累积能量（支持快照）")
+    parser = argparse.ArgumentParser(description="图4-x 前50阶累积能量（支持快照）")
     parser.add_argument(
         "--refresh-cache",
         action="store_true",
@@ -337,7 +337,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 80)
-    print("图4-10 随机振动前50阶主频累积能量分布（nfft=128）")
+    print("图4-x 随机振动前50阶主频累积能量分布（nfft=128）")
     print("=" * 80)
     print(f"  样本索引目录：{Config.ENRICHED_STATS_DIR}")
     print(f"  分辨率：{Config.NFFT_LIST}（enriched 2048 只读索引，结果追加快照）")

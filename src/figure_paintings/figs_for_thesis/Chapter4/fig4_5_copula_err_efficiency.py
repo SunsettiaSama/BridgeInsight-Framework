@@ -3,7 +3,7 @@
 
 分辨率与数据策略（重要）
 ------------------------
-- 统一使用 Welch nfft=128（与 fig4_10/11 一致），总功率 = 全谱 PSD 线性求和。
+- 统一使用 Welch nfft=128（与 fig4_12 累积能量一致），总功率 = 全谱 PSD 线性求和。
 - enriched（历史 nperseg=2048）只作样本索引（路径 + window_idx），只读不写、不覆盖。
 - nfft=128 的计算结果追加到独立快照，不改动任何 2048 enriched JSON，
   也不覆盖旧快照 fig4_5_copula_err_efficiency.json / nfft256 快照。

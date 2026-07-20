@@ -46,7 +46,7 @@ class Config:
 
     ENRICHED_STATS_DIR = get_enriched_class_dir(0)
     WEB_DASHBOARD_PORT = 15678
-    WEB_PAGE = "fig4_10 随机振动特征"
+    WEB_PAGE = "fig4_x 主频频数分布"
 
 
 def extract_rank_frequency(freqs, powers, rank: int) -> float | None:
@@ -179,7 +179,7 @@ def push_figure(fig: plt.Figure, slot: int) -> None:
 
 def main() -> None:
     print("=" * 80)
-    print("图4-10 随机振动前三阶主频频数分布")
+    print("图4-x 随机振动前三阶主频频数分布")
     print("=" * 80)
     print("\n[步骤1] 加载 enriched PSD 数据（本地不存在则自动小 batch 生成）...")
     print(f"  数据目录：{Config.ENRICHED_STATS_DIR}")

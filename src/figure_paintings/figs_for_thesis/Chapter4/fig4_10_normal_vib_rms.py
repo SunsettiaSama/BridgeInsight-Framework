@@ -173,7 +173,7 @@ def push_figures(figures: list[tuple[plt.Figure, str]]) -> None:
         )
         return
 
-    page = "fig4_10 随机振动特征"
+    page = "fig4_10 面内外RMS"
     for slot, (fig, title) in enumerate(figures):
         web_push(fig, page=page, slot=slot, title=title, page_cols=2 if slot == 0 else None)
     print(f"[OK] 已推送到 WebUI：{page}")
