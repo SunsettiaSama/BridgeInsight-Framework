@@ -1,6 +1,6 @@
-"""图4-27：风雨振频谱图 20 样本总览。
+"""图4-31：风雨振频谱图 20 样本总览。
 
-样式对齐 VIV 探索脚本频谱图。样本池与 fig4_25 共用（同 seed / 同数据源开关）。
+样式对齐 VIV 探索脚本频谱图。样本池与 fig4_29 共用（同 seed / 同数据源开关）。
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from src.figure_paintings.figs_for_thesis.Chapter4._rwiv_pipeline import (
     load_rwiv_samples_for_figures,
     resolve_use_merged,
 )
-from src.figure_paintings.figs_for_thesis.Chapter4.fig4_25_rwiv_timeseries import (
+from src.figure_paintings.figs_for_thesis.Chapter4.fig4_29_rwiv_timeseries import (
     Config as SharedConfig,
     _format_title,
     _load_window,
@@ -65,7 +65,7 @@ class Config:
     GRID_LINESTYLE = "--"
     GRID_LINEWIDTH = 0.5
 
-    WEB_PAGE = "fig4_27 风雨振频谱"
+    WEB_PAGE = "fig4_31 风雨振频谱"
 
 
 def load_sample_pair(sample: dict, unpacker: UNPACK) -> tuple[np.ndarray, np.ndarray]:
@@ -176,7 +176,7 @@ def plot_spectrum_grid(samples: list, unpacker: UNPACK) -> plt.Figure:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="图4-27 风雨振频谱图")
+    parser = argparse.ArgumentParser(description="图4-31 风雨振频谱图")
     add_dataset_switch_args(parser)
     args = parser.parse_args()
     use_merged = resolve_use_merged(args.use_merged)
@@ -195,7 +195,7 @@ def main() -> None:
     )
     print(f"✓ 风雨振配对样本：{len(all_samples)} 个")
 
-    print("\n[步骤2] 随机抽取样本（与 fig4_25 同 seed）...")
+    print("\n[步骤2] 随机抽取样本（与 fig4_29 同 seed）...")
     samples = random_sample(all_samples)
 
     print(f"\n[步骤3] 绘制频谱图（{len(samples)} 个样本）...")

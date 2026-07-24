@@ -1,7 +1,7 @@
-"""图4-29：风雨振主频分布直方图。
+"""图4-33：风雨振主频分布直方图。
 
-样式对齐 fig4_19。样本池与 fig4_25 共用（合并副本或仅 DL）；
-主频取 Welch PSD（与 fig4_27 同参）峰值频率。
+样式对齐 fig4_19。样本池与 fig4_29 共用（合并副本或仅 DL）；
+主频取 Welch PSD（与 fig4_31 同参）峰值频率。
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from src.figure_paintings.figs_for_thesis.Chapter4._rwiv_pipeline import (
     load_rwiv_samples_for_figures,
     resolve_use_merged,
 )
-from src.figure_paintings.figs_for_thesis.Chapter4.fig4_25_rwiv_timeseries import (
+from src.figure_paintings.figs_for_thesis.Chapter4.fig4_29_rwiv_timeseries import (
     Config as SharedConfig,
 )
 from src.figure_paintings.figs_for_thesis.config import (
@@ -48,7 +48,7 @@ class Config:
     FS = SharedConfig.FS
     WINDOW_SIZE = SharedConfig.WINDOW_SIZE
 
-    # 与 fig4_27 频谱图一致
+    # 与 fig4_31 频谱图一致
     NFFT = 2048
     FREQ_LIMIT = 25.0
 
@@ -65,13 +65,13 @@ class Config:
     BAR_ALPHA = 0.72
 
     SNAPSHOT_DIR = project_root / "results" / "chapter4_characteristics" / "figure_snapshots"
-    SNAPSHOT_PATH = SNAPSHOT_DIR / "fig4_29_rwiv_freq_hist.npz"
-    WEB_PAGE = "fig4_29 风雨振主频分布"
+    SNAPSHOT_PATH = SNAPSHOT_DIR / "fig4_33_rwiv_freq_hist.npz"
+    WEB_PAGE = "fig4_33 风雨振主频分布"
 
 
 def _snapshot_config(use_merged: bool) -> dict:
     return {
-        "figure": "fig4_29_rwiv_freq_hist",
+        "figure": "fig4_33_rwiv_freq_hist",
         "use_merged": bool(use_merged),
         "window_size": int(Config.WINDOW_SIZE),
         "fs": float(Config.FS),
@@ -251,7 +251,7 @@ def plot_dominant_freq_histogram(data: dict) -> plt.Figure:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="图4-29 风雨振主频分布")
+    parser = argparse.ArgumentParser(description="图4-33 风雨振主频分布")
     add_dataset_switch_args(parser)
     parser.add_argument(
         "--refresh-snapshot",
@@ -262,12 +262,12 @@ def main() -> None:
     use_merged = resolve_use_merged(args.use_merged)
 
     print("=" * 80)
-    print("图4-29 风雨振主频分布直方图")
+    print("图4-33 风雨振主频分布直方图")
     print(f"  默认开关 USE_MERGED_DATASET={USE_MERGED_DATASET}  → 本次 use_merged={use_merged}")
     print("=" * 80)
 
     print("\n[步骤1] 加载风雨振主频 ...")
-    print(f"  Welch：nfft={Config.NFFT}，freq≤{Config.FREQ_LIMIT:g} Hz（与 fig4_27 一致）")
+    print(f"  Welch：nfft={Config.NFFT}，freq≤{Config.FREQ_LIMIT:g} Hz（与 fig4_31 一致）")
     data = load_dominant_freq_data(
         use_merged=use_merged,
         force_refresh=args.refresh_snapshot,

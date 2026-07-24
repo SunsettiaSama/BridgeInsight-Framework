@@ -2,7 +2,6 @@
 
 import io
 import json
-from pathlib import Path
 from typing import List, Optional
 
 import matplotlib
@@ -12,8 +11,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
 
-from src.chapter4_characteristics.analysis.copula_service import load_mode_matrix
-from src.chapter4_characteristics.analysis.data_loader import load_class_samples
 from src.chapter4_characteristics.settings import get_copula_dir
 
 

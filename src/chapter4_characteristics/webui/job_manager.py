@@ -183,7 +183,11 @@ class JobManager:
         return self._launch("enrich", config_path, extra)
 
     def start_copula(self, class_id: int, config_path: Optional[str] = None) -> dict:
-        return self._launch("copula", config_path, ["--class-id", str(class_id)])
+        return self._launch(
+            "copula",
+            config_path,
+            ["run", "--class-id", str(class_id)],
+        )
 
     def _process_exit_code(self, pid: int) -> Optional[int]:
         proc = self._processes.get(int(pid))

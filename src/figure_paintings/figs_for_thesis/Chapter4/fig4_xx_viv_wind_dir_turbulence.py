@@ -240,7 +240,7 @@ def main():
     bins   = np.arange(0, 360 + step, step)
 
     print("\n[步骤4] 生成独立图像并推送 WebUI...")
-    PAGE = 'fig4_28 风向极坐标 DL vs MECC'
+    PAGE = 'fig4_32 风向极坐标 DL vs MECC'
     slot = 0
 
     for label, dl_d in dl_sensor_data.items():

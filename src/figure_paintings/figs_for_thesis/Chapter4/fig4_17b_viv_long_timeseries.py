@@ -1,8 +1,8 @@
 """图4-17（续）：涡激共振长时程波形（1500 s）。
 
-取 fig4_16 同 seed 抽样结果的前 8 个样本，从源 VIC 文件（约 3600 s）
+取 fig4_x_viv_timeseries 同 seed 抽样结果的前 8 个样本，从源 VIC 文件（约 3600 s）
 以识别窗口为中心截取 1500 s 连续段。
-图幅与 fig4_16 一致 (18, 11)，布局 4 行 × 2 列（每行 2 张）。
+图幅与 fig4_x_viv_timeseries 一致 (18, 11)，布局 4 行 × 2 列（每行 2 张）。
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import (
     get_viv_samples as _pipeline_get_viv_samples,
     load_dl_result,
 )
-from src.figure_paintings.figs_for_thesis.Chapter4.fig4_16_viv_timeseries import (
+from src.figure_paintings.figs_for_thesis.Chapter4.fig4_x_viv_timeseries import (
     Config as SharedConfig,
     _format_title,
     _wavelet_denoise,
@@ -118,7 +118,7 @@ def take_first_n_from_fig416(all_samples: list) -> list:
 
     selected = sampled20[: Config.NUM_SAMPLES_TO_PLOT]
     print(
-        f"  取 fig4_16 同批前 {len(selected)} 个样本（seed={Config.RANDOM_SEED}）"
+        f"  取 fig4_x_viv_timeseries 同批前 {len(selected)} 个样本（seed={Config.RANDOM_SEED}）"
     )
     return selected
 
@@ -219,7 +219,7 @@ def plot_long_timeseries_grid(samples: list, unpacker: UNPACK) -> plt.Figure:
     fig.text(
         0.99,
         0.01,
-        f"取自 fig4_16 前 {Config.NUM_SAMPLES_TO_PLOT} 样本；"
+        f"取自 fig4_x_viv_timeseries 前 {Config.NUM_SAMPLES_TO_PLOT} 样本；"
         f"源文件截取 {Config.LONG_SECONDS:g} s（锚定识别窗）；"
         f"seed={Config.RANDOM_SEED}",
         ha="right",
@@ -236,7 +236,7 @@ def main() -> None:
     print("=" * 80)
     print(
         f"图4-17 涡激共振长时程波形"
-        f"（fig4_16 前 {Config.NUM_SAMPLES_TO_PLOT} 样本，源文件 {Config.LONG_SECONDS:g} s）"
+        f"（fig4_x_viv_timeseries 前 {Config.NUM_SAMPLES_TO_PLOT} 样本，源文件 {Config.LONG_SECONDS:g} s）"
     )
     print("=" * 80)
 
@@ -245,7 +245,7 @@ def main() -> None:
     all_samples = _pipeline_get_viv_samples(dl_result)
     print(f"[OK] DL VIV 样本：{len(all_samples)} 个")
 
-    print("\n[步骤2] 复现 fig4_16 抽样并取前 8 个...")
+    print("\n[步骤2] 复现 fig4_x_viv_timeseries 抽样并取前 8 个...")
     samples = take_first_n_from_fig416(all_samples)
 
     print(

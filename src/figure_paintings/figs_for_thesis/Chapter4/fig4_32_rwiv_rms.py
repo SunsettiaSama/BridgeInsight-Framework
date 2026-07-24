@@ -1,6 +1,6 @@
-"""图4-28：风雨振 RMS 分布（直方图 + 面内–面外散点）。
+"""图4-32：风雨振 RMS 分布（直方图 + 面内–面外散点）。
 
-样式对齐 fig4_10 / fig4_18。样本池与 fig4_25 共用（合并副本或仅 DL）。
+样式对齐 fig4_10 / fig4_18。样本池与 fig4_29 共用（合并副本或仅 DL）。
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from src.figure_paintings.figs_for_thesis.Chapter4._rwiv_pipeline import (
     load_rwiv_samples_for_figures,
     resolve_use_merged,
 )
-from src.figure_paintings.figs_for_thesis.Chapter4.fig4_25_rwiv_timeseries import (
+from src.figure_paintings.figs_for_thesis.Chapter4.fig4_29_rwiv_timeseries import (
     Config as SharedConfig,
 )
 from src.figure_paintings.figs_for_thesis.config import (
@@ -77,14 +77,14 @@ class Config:
     TAIL_LINESTYLE = "-."
 
     SNAPSHOT_DIR = project_root / "results" / "chapter4_characteristics" / "figure_snapshots"
-    SNAPSHOT_PATH = SNAPSHOT_DIR / "fig4_28_rwiv_rms.npz"
-    WEB_PAGE = "fig4_28 风雨振 RMS"
+    SNAPSHOT_PATH = SNAPSHOT_DIR / "fig4_32_rwiv_rms.npz"
+    WEB_PAGE = "fig4_32 风雨振 RMS"
     WEB_DASHBOARD_PORT = 15678
 
 
 def _snapshot_config(use_merged: bool) -> dict:
     return {
-        "figure": "fig4_28_rwiv_rms",
+        "figure": "fig4_32_rwiv_rms",
         "use_merged": bool(use_merged),
         "window_size": int(Config.WINDOW_SIZE),
         "sample_copy": str(RWIV_SAMPLE_COPY_PATH) if use_merged else "dl_only",
@@ -334,7 +334,7 @@ def push_figures(figures: list[tuple[plt.Figure, str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="图4-28 风雨振 RMS 分布")
+    parser = argparse.ArgumentParser(description="图4-32 风雨振 RMS 分布")
     add_dataset_switch_args(parser)
     parser.add_argument(
         "--refresh-snapshot",
@@ -345,7 +345,7 @@ def main() -> None:
     use_merged = resolve_use_merged(args.use_merged)
 
     print("=" * 80)
-    print("图4-28 风雨振 RMS 分布")
+    print("图4-32 风雨振 RMS 分布")
     print(f"  默认开关 USE_MERGED_DATASET={USE_MERGED_DATASET}  → 本次 use_merged={use_merged}")
     print("=" * 80)
 

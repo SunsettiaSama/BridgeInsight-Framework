@@ -1,6 +1,6 @@
-"""图4-30：风雨振前50阶主频累积能量收敛。
+"""图4-34：风雨振前50阶主频累积能量收敛。
 
-样式对齐 fig4_12 / fig4_20。样本池与 fig4_25 共用（合并副本或仅 DL）；
+样式对齐 fig4_12 / fig4_20。样本池与 fig4_29 共用（合并副本或仅 DL）；
 能量定义与 VIV 一致：全谱 PSD 按幅值排序后的累积占比。
 y=85% 水平线；三类收敛阶数以图例标注（涡激 / 风雨振 / 随机）。
 """
@@ -32,7 +32,7 @@ from src.figure_paintings.figs_for_thesis.Chapter4._rwiv_pipeline import (
     load_rwiv_samples_for_figures,
     resolve_use_merged,
 )
-from src.figure_paintings.figs_for_thesis.Chapter4.fig4_25_rwiv_timeseries import (
+from src.figure_paintings.figs_for_thesis.Chapter4.fig4_29_rwiv_timeseries import (
     Config as SharedConfig,
 )
 from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import (
@@ -84,16 +84,16 @@ class Config:
     # 与 fig4_12 / fig4_20 对应的累积能量快照（文件名沿用生成时编号）
     NORMAL_CUMSUM_SNAPSHOT = SNAPSHOT_DIR / "fig4_11_normal_vib_energy_cumsum_nfft128.npz"
     VIV_CUMSUM_SNAPSHOT = SNAPSHOT_DIR / "fig4_22_viv_energy_cumsum_nfft128.npz"
-    WEB_PAGE = "fig4_30 风雨振累积能量"
+    WEB_PAGE = "fig4_34 风雨振累积能量"
 
 
 def _snapshot_path(nfft: int) -> Path:
-    return Config.SNAPSHOT_DIR / f"fig4_30_rwiv_energy_cumsum_nfft{nfft}.npz"
+    return Config.SNAPSHOT_DIR / f"fig4_34_rwiv_energy_cumsum_nfft{nfft}.npz"
 
 
 def _snapshot_config(nfft: int, use_merged: bool) -> dict:
     return {
-        "figure": "fig4_30_rwiv_energy_cumsum",
+        "figure": "fig4_34_rwiv_energy_cumsum",
         "nfft": int(nfft),
         "n_modes": Config.N_MODES,
         "window_size": int(Config.WINDOW_SIZE),
@@ -444,7 +444,7 @@ def plot_energy_cumsum(data: dict, stairs: list[dict]) -> plt.Figure:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="图4-30 风雨振前50阶累积能量（支持快照）")
+    parser = argparse.ArgumentParser(description="图4-34 风雨振前50阶累积能量（支持快照）")
     add_dataset_switch_args(parser)
     parser.add_argument(
         "--refresh-cache",
@@ -455,7 +455,7 @@ def main() -> None:
     use_merged = resolve_use_merged(args.use_merged)
 
     print("=" * 80)
-    print("图4-30 风雨振前50阶主频累积能量分布（nfft=128）")
+    print("图4-34 风雨振前50阶主频累积能量分布（nfft=128）")
     print(f"  默认开关 USE_MERGED_DATASET={USE_MERGED_DATASET}  → 本次 use_merged={use_merged}")
     print(f"  分辨率：{Config.NFFT_LIST}")
     print(f"  快照目录：{Config.SNAPSHOT_DIR}")

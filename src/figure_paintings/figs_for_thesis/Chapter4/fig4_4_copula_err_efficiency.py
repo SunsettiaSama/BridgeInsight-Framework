@@ -1,19 +1,24 @@
 """
-图4-5 Copula 特征截断阶数：精度（ERR）与效率（T_norm）权衡
+图4-4 Copula 特征截断阶数：精度（ERR）与效率（T_norm）权衡
 
 分辨率与数据策略（重要）
 ------------------------
-- 统一使用 Welch nfft=128（与 fig4_12 累积能量一致），总功率 = 全谱 PSD 线性求和。
+- 统一使用 Welch nfft=128（与 fig4_12 累积能量一致）。
+- 阶定义：全谱频点按 PSD 幅值降序；能量 = 频点 PSD / 全谱线性总功率。
+- ERR(K) = 前 K 阶能量累积均值（相对全谱，不再相对 top-K 归一）。
 - enriched（历史 nperseg=2048）只作样本索引（路径 + window_idx），只读不写、不覆盖。
-- nfft=128 的计算结果追加到独立快照，不改动任何 2048 enriched JSON，
-  也不覆盖旧快照 fig4_5_copula_err_efficiency.json / nfft256 快照。
 
-快照路径（追加）：
+快照 / 缓存：
   results/chapter4_characteristics/figure_snapshots/
-    fig4_5_copula_err_efficiency_nfft128.json
+    fig4_4_copula_err_efficiency_nfft128.json
+    fig4_4_copula_modes_nfft128.npz
 
-强制重算：
-  python .../fig4_5_copula_err_efficiency.py --refresh-cache
+计时：warmup 后对每个 K 重复取中位数，避免 K=1 冷启动伪影。
+抽样：按 VIC 文件集中取窗，减少解包文件数。
+
+  python .../fig4_4_copula_err_efficiency.py
+  python .../fig4_4_copula_err_efficiency.py --refresh-timing
+  python .../fig4_4_copula_err_efficiency.py --refresh-cache
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
-from scipy.signal import find_peaks, welch
+from scipy.signal import welch
 
 project_root = Path(__file__).parent.parent.parent.parent.parent
 if str(project_root) not in sys.path:
@@ -56,7 +61,8 @@ from src.visualize_tools.web_dashboard import push as web_push
 class Config:
     CLASS_ID = 0
     FEATURE_BATCH_SIZE = 512
-    MAX_K = 10
+    MAX_K = 50
+    XTICK_STEP = 5
     MODEL_SAMPLE_SIZE = 20_000
     MONTE_CARLO_SAMPLES = 100_000
 
@@ -64,14 +70,18 @@ class Config:
     WINDOW_SIZE = _WINDOW_SIZE
     FREQ_LIMIT_HZ = 25.0
     NFFT = 128
-    MIN_PEAK_DISTANCE_HZ = 0.1
 
     RANDOM_SEED = 42
     COPULA_TYPE = "gaussian"
     ERR_THRESHOLD = 85.0
     DELTA_ERR_THRESHOLD = 2.0
 
-    ENERGY_REFERENCE = "welch_nfft128_peak_linear_sum_relative_to_topk"
+    # 计时：先 warmup 再重复取中位数，避免 K=1 吞掉冷启动开销
+    TIMING_WARMUP = 1
+    TIMING_REPEATS = 3
+    TIMING_PROTOCOL = "warmup1_median3"
+
+    ENERGY_REFERENCE = "welch_nfft128_ranked_bin_linear_sum_relative_to_full_spectrum"
 
     FIG_SIZE = REC_FIG_SIZE
     TIME_FIG_SIZE = SQUARE_FIG_SIZE
@@ -90,8 +100,8 @@ class Config:
         / "chapter4_characteristics"
         / "figure_snapshots"
     )
-    # 追加 nfft128 快照；旧文件 / nfft256 快照保持不动
-    SNAPSHOT_PATH = SNAPSHOT_DIR / "fig4_5_copula_err_efficiency_nfft128.json"
+    SNAPSHOT_PATH = SNAPSHOT_DIR / "fig4_4_copula_err_efficiency_nfft128.json"
+    MODES_PATH = SNAPSHOT_DIR / "fig4_4_copula_modes_nfft128.npz"
 
     _full = get_full_color_map(style="discrete").colors
     ERR_COLOR = _full[0]
@@ -110,14 +120,32 @@ def _snapshot_config() -> dict:
         "window_size": Config.WINDOW_SIZE,
         "freq_limit_hz": Config.FREQ_LIMIT_HZ,
         "nfft": Config.NFFT,
-        "min_peak_distance_hz": Config.MIN_PEAK_DISTANCE_HZ,
         "random_seed": Config.RANDOM_SEED,
         "copula_type": Config.COPULA_TYPE,
         "err_threshold": Config.ERR_THRESHOLD,
         "delta_err_threshold": Config.DELTA_ERR_THRESHOLD,
         "energy_reference": Config.ENERGY_REFERENCE,
+        "timing_protocol": Config.TIMING_PROTOCOL,
+        "timing_warmup": Config.TIMING_WARMUP,
+        "timing_repeats": Config.TIMING_REPEATS,
+        "sample_strategy": "file_concentrated",
         "data_source": "raw_vic_indexed_by_enriched",
         "enriched_stats_dir": str(Config.ENRICHED_STATS_DIR),
+    }
+
+
+def _modes_config() -> dict:
+    cfg = _snapshot_config()
+    return {
+        "max_k": cfg["max_k"],
+        "model_sample_size": cfg["model_sample_size"],
+        "nfft": cfg["nfft"],
+        "random_seed": cfg["random_seed"],
+        "energy_reference": cfg["energy_reference"],
+        "sample_strategy": cfg["sample_strategy"],
+        "freq_limit_hz": cfg["freq_limit_hz"],
+        "window_size": cfg["window_size"],
+        "fs": cfg["fs"],
     }
 
 
@@ -143,7 +171,7 @@ def save_snapshot(
     n_model: int,
     abs_err_at_maxk: float,
 ) -> None:
-    """追加写入 nfft128 快照；不触碰 enriched，也不覆盖旧 2048 / nfft256 相关快照。"""
+    """写出 nfft128 全谱 ERR 快照；不触碰 enriched。"""
     Config.SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -156,13 +184,38 @@ def save_snapshot(
         "timings_sec": timings.tolist(),
         "t_norm": (timings / timings[0]).tolist(),
         "note": (
-            f"nfft={Config.NFFT}；ERR=相对前 MAX_K 阶保有率；"
-            "enriched(2048) 仅作索引，本文件为追加结果"
+            f"nfft={Config.NFFT}；ERR=前K阶排序频点能量/全谱总功率；"
+            f"计时={Config.TIMING_PROTOCOL}；enriched(2048) 仅作索引"
         ),
     }
     with open(Config.SNAPSHOT_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-    print(f"  追加写出快照：{Config.SNAPSHOT_PATH}")
+    print(f"  写出快照：{Config.SNAPSHOT_PATH}")
+
+
+def save_modes(freq_matrix: np.ndarray, energy_matrix: np.ndarray) -> None:
+    Config.SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        Config.MODES_PATH,
+        config_json=np.asarray(json.dumps(_modes_config(), ensure_ascii=False)),
+        freq_matrix=np.asarray(freq_matrix, dtype=np.float64),
+        energy_matrix=np.asarray(energy_matrix, dtype=np.float64),
+    )
+    print(f"  写出模态缓存：{Config.MODES_PATH}")
+
+
+def load_modes() -> tuple[np.ndarray, np.ndarray] | None:
+    if not Config.MODES_PATH.exists():
+        return None
+    data = np.load(Config.MODES_PATH, allow_pickle=False)
+    saved = json.loads(str(data["config_json"]))
+    if saved != _modes_config():
+        print(f"  模态缓存参数不匹配，忽略：{Config.MODES_PATH}")
+        return None
+    freq_matrix = np.asarray(data["freq_matrix"], dtype=np.float64)
+    energy_matrix = np.asarray(data["energy_matrix"], dtype=np.float64)
+    print(f"  读取模态缓存：{Config.MODES_PATH}（n={freq_matrix.shape[0]}）")
+    return freq_matrix, energy_matrix
 
 
 def _load_index_samples() -> list[dict]:
@@ -182,23 +235,37 @@ def _load_index_samples() -> list[dict]:
 
 
 def _sample_jobs(samples: list[dict]) -> list[tuple[str, int]]:
-    jobs: list[tuple[str, int]] = []
+    """按文件集中抽样：优先抽满同一 VIC，减少解包文件数。"""
+    by_path: dict[str, list[int]] = defaultdict(list)
     for sample in samples:
         path = sample.get("inplane_file_path")
         window_idx = sample.get("window_idx")
         if path is None or window_idx is None:
             continue
-        jobs.append((str(path), int(window_idx)))
+        by_path[str(path)].append(int(window_idx))
 
-    n = len(jobs)
-    if n <= Config.MODEL_SAMPLE_SIZE:
-        return jobs
+    n_total = sum(len(v) for v in by_path.values())
+    if n_total == 0:
+        return []
+    if n_total <= Config.MODEL_SAMPLE_SIZE:
+        return [(path, w) for path, windows in by_path.items() for w in windows]
 
     rng = np.random.default_rng(Config.RANDOM_SEED)
-    chosen = rng.choice(n, size=Config.MODEL_SAMPLE_SIZE, replace=False)
-    chosen.sort()
-    print(f"  全量索引 {n}，随机抽样 {Config.MODEL_SAMPLE_SIZE}")
-    return [jobs[i] for i in chosen.tolist()]
+    paths = list(by_path.keys())
+    rng.shuffle(paths)
+    jobs: list[tuple[str, int]] = []
+    for path in paths:
+        windows = list(by_path[path])
+        rng.shuffle(windows)
+        for window_idx in windows:
+            jobs.append((path, window_idx))
+            if len(jobs) >= Config.MODEL_SAMPLE_SIZE:
+                print(
+                    f"  全量索引 {n_total}，按文件集中抽样 {Config.MODEL_SAMPLE_SIZE}"
+                    f"（涉及 {len({p for p, _ in jobs})} 个 VIC）"
+                )
+                return jobs
+    return jobs
 
 
 def _slice_window(raw: np.ndarray, window_idx: int) -> np.ndarray | None:
@@ -210,7 +277,7 @@ def _slice_window(raw: np.ndarray, window_idx: int) -> np.ndarray | None:
 
 
 def _extract_welch_modes(signal: np.ndarray, max_k: int) -> tuple[np.ndarray, np.ndarray] | None:
-    """Welch nfft=128：峰顶功率 / 全谱线性总功率，按峰高取前 max_k 阶。"""
+    """Welch nfft=128：全谱频点按 PSD 降序，能量 / 全谱线性总功率。"""
     sig = np.asarray(signal, dtype=np.float64).ravel()
     if sig.size < Config.NFFT:
         return None
@@ -226,36 +293,40 @@ def _extract_welch_modes(signal: np.ndarray, max_k: int) -> tuple[np.ndarray, np
     mask = f <= Config.FREQ_LIMIT_HZ
     f = f[mask]
     psd = psd[mask]
-    if len(psd) < max_k + 2:
+    if len(psd) < max_k:
         return None
 
     total_power = float(np.sum(psd))
     if total_power <= 0:
         return None
 
-    freq_res = float(f[1] - f[0]) if len(f) > 1 else Config.FS / Config.NFFT
-    min_distance = max(1, int(Config.MIN_PEAK_DISTANCE_HZ / freq_res))
-    peaks, _ = find_peaks(psd, distance=min_distance)
-    if len(peaks) < max_k:
-        return None
+    # 与累积能量图一致：按全谱 bin 能量排序；Copula 特征跳过 f=0
+    order = np.argsort(psd)[::-1]
+    f_modes: list[float] = []
+    e_modes: list[float] = []
+    for idx in order:
+        freq = float(f[idx])
+        energy = float(psd[idx] / total_power)
+        if freq <= 0.0 or energy <= 0.0:
+            continue
+        if not np.isfinite(freq) or not np.isfinite(energy):
+            continue
+        f_modes.append(freq)
+        e_modes.append(energy)
+        if len(f_modes) >= max_k:
+            break
 
-    peak_order = peaks[np.argsort(psd[peaks])[::-1][:max_k]]
-    f_modes = f[peak_order]
-    e_modes = psd[peak_order] / total_power
-
-    if np.any(f_modes <= 0) or np.any(e_modes <= 0):
+    if len(f_modes) < max_k:
         return None
-    if not np.all(np.isfinite(f_modes)) or not np.all(np.isfinite(e_modes)):
-        return None
-    return f_modes, e_modes
+    return np.asarray(f_modes, dtype=np.float64), np.asarray(e_modes, dtype=np.float64)
 
 
 def build_mode_arrays(samples: list[dict]) -> tuple[np.ndarray, np.ndarray]:
     """
-    enriched 仅提供 (path, window_idx)；按文件分组解包 VIC，用 nfft=128 现算模态。
+    enriched 仅提供 (path, window_idx)；按文件分组解包 VIC，用 nfft=128 现算全谱排序模态。
     """
     jobs = _sample_jobs(samples)
-    print(f"  待处理窗口：{len(jobs)}（nfft={Config.NFFT}）")
+    print(f"  待处理窗口：{len(jobs)}（nfft={Config.NFFT}，全谱排序频点）")
 
     by_path: dict[str, list[tuple[int, int]]] = defaultdict(list)
     for i, (path, window_idx) in enumerate(jobs):
@@ -287,7 +358,7 @@ def build_mode_arrays(samples: list[dict]) -> tuple[np.ndarray, np.ndarray]:
     freq_ok = [r for r in freq_rows if r is not None]
     energy_ok = [r for r in energy_rows if r is not None]
     if not freq_ok:
-        raise ValueError("未提取到有效面内 Welch(nfft=128) 模态样本")
+        raise ValueError("未提取到有效面内 Welch(nfft=128) 全谱排序模态样本")
 
     print(f"  有效模态样本：{len(freq_ok)}")
     return np.asarray(freq_ok, dtype=np.float64), np.asarray(energy_ok, dtype=np.float64)
@@ -302,12 +373,11 @@ def _feature_matrix(freq_matrix: np.ndarray, energy_matrix: np.ndarray, k: int) 
 
 
 def compute_err_curve(energy_matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+    """ERR(K)=前K阶排序频点能量累积 / 全谱；energy_matrix 已是相对全谱占比。"""
     cumulative = np.cumsum(energy_matrix, axis=1)
-    topk_total = cumulative[:, -1:]
-    relative = cumulative / np.clip(topk_total, 1e-30, None)
-    err = np.mean(relative, axis=0) * 100.0
+    err = np.mean(cumulative, axis=0) * 100.0
     delta = np.diff(np.insert(err, 0, 0.0))
-    abs_err_at_maxk = float(np.mean(topk_total) * 100.0)
+    abs_err_at_maxk = float(err[-1])
     return err, delta, abs_err_at_maxk
 
 
@@ -335,17 +405,38 @@ def _fit_and_sample_copula(matrix: np.ndarray, rng: np.random.Generator) -> None
 
 
 def run_copula_timing(freq_matrix: np.ndarray, energy_matrix: np.ndarray) -> np.ndarray:
+    """
+    对每个 K：先 warmup 丢弃冷启动，再重复计时取中位数。
+    T_norm 仍相对 K=1 的中位耗时归一。
+    """
     timings: list[float] = []
-    rng = np.random.default_rng(Config.RANDOM_SEED)
+    warmup_rng = np.random.default_rng(Config.RANDOM_SEED)
+    warm_matrix = _feature_matrix(freq_matrix, energy_matrix, 1)
+    print(
+        f"  计时协议：{Config.TIMING_PROTOCOL}"
+        f"（warmup={Config.TIMING_WARMUP}, repeats={Config.TIMING_REPEATS}）"
+    )
+    for _ in range(Config.TIMING_WARMUP):
+        _fit_and_sample_copula(warm_matrix, warmup_rng)
 
     for k in range(1, Config.MAX_K + 1):
         matrix = _feature_matrix(freq_matrix, energy_matrix, k)
-        print(f"  K={k:02d}  d={matrix.shape[1]:02d}  Gaussian Copula 拟合 + {Config.MONTE_CARLO_SAMPLES:,} 次抽样...")
-        t0 = time.perf_counter()
-        _fit_and_sample_copula(matrix, rng)
-        elapsed = time.perf_counter() - t0
+        print(
+            f"  K={k:02d}  d={matrix.shape[1]:02d}  Gaussian Copula 拟合 + "
+            f"{Config.MONTE_CARLO_SAMPLES:,} 次抽样 ×{Config.TIMING_REPEATS}..."
+        )
+        elapsed_runs: list[float] = []
+        for rep in range(Config.TIMING_REPEATS):
+            rng = np.random.default_rng(Config.RANDOM_SEED + 10_000 * k + rep)
+            t0 = time.perf_counter()
+            _fit_and_sample_copula(matrix, rng)
+            elapsed_runs.append(time.perf_counter() - t0)
+        elapsed = float(np.median(elapsed_runs))
         timings.append(elapsed)
-        print(f"    T_calc={elapsed:.3f} s")
+        print(
+            f"    T_calc={elapsed:.3f} s"
+            f"（runs={[round(t, 3) for t in elapsed_runs]}）"
+        )
 
     return np.asarray(timings, dtype=np.float64)
 
@@ -419,10 +510,10 @@ def plot_tradeoff_figure(err: np.ndarray, delta_err: np.ndarray, timings: np.nda
         bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": Config.GUIDE_COLOR, "alpha": 0.92},
     )
 
-    ax_err.set_xlabel("截断阶数 K", labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
+    ax_err.set_xlabel("截断阶数", labelpad=8, fontproperties=CN_FONT, fontsize=FONT_SIZE)
     ax_err.set_ylabel("能量保有率 ERR (%)", labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
     ax_time.set_ylabel(r"归一化耗时 $T_{\mathrm{norm}}$", labelpad=12, fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    ax_err.set_xticks(k_values)
+    ax_err.set_xticks(np.arange(0, Config.MAX_K + 1, Config.XTICK_STEP))
     ax_err.set_xlim(0.4, Config.MAX_K + 0.6)
     ax_err.set_ylim(0, 108)
     ax_time.set_ylim(0, max(float(np.max(t_norm)) * 1.18, 1.3))
@@ -475,9 +566,10 @@ def plot_time_figure(timings: np.ndarray, err: np.ndarray, delta_err: np.ndarray
         fontproperties=CN_FONT,
         bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "edgecolor": Config.GUIDE_COLOR, "alpha": 0.9},
     )
-    ax.set_xlabel("截断阶数 K", labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
+    ax.set_xlabel("截断阶数", labelpad=8, fontproperties=CN_FONT, fontsize=FONT_SIZE)
     ax.set_ylabel(r"归一化计算耗时 $T_{\mathrm{norm}}$", labelpad=10, fontproperties=CN_FONT, fontsize=FONT_SIZE)
-    ax.set_xticks(k_values)
+    ax.set_xticks(np.arange(0, Config.MAX_K + 1, Config.XTICK_STEP))
+    ax.set_xlim(0.4, Config.MAX_K + 0.6)
     ax.set_ylim(0, max(float(np.max(t_norm)) * 1.15, 1.2))
     _apply_grid(ax)
     ax.spines["top"].set_visible(False)
@@ -490,60 +582,87 @@ def plot_time_figure(timings: np.ndarray, err: np.ndarray, delta_err: np.ndarray
     return fig
 
 
+def _compute_from_modes(
+    freq_matrix: np.ndarray,
+    energy_matrix: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, float]:
+    n_model = int(freq_matrix.shape[0])
+    print("\n[步骤4] 计算全谱 ERR 与边际增益...")
+    err, delta_err, abs_err = compute_err_curve(energy_matrix)
+    print(f"  ERR(K={Config.MAX_K} vs 全谱)={err[-1]:.2f}%")
+    print(f"  K*={select_k_star(err, delta_err)}")
+
+    print("\n[步骤5] Copula 拟合与抽样计时...")
+    timings = run_copula_timing(freq_matrix, energy_matrix)
+    print(f"  T_norm(K={Config.MAX_K})={timings[-1] / timings[0]:.2f}")
+    save_snapshot(err, delta_err, timings, n_model, abs_err)
+    return err, delta_err, timings, n_model, abs_err
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="图4-5 Copula 截断阶数精度–效率权衡（nfft=128）")
+    parser = argparse.ArgumentParser(description="图4-4 Copula 截断阶数精度–效率权衡（nfft=128，全谱）")
     parser.add_argument(
         "--refresh-cache",
         action="store_true",
-        help="忽略 nfft128 快照并重算（不改 enriched / 不改旧快照）",
+        help="忽略快照与模态缓存并重算（不改 enriched）",
+    )
+    parser.add_argument(
+        "--refresh-timing",
+        action="store_true",
+        help="保留模态缓存，仅按新计时协议重测 T_norm 并出图",
     )
     args = parser.parse_args()
 
     print("=" * 80)
-    print("图4-5 Copula 特征截断阶数性能对比（nfft=128）")
+    print("图4-4 Copula 特征截断阶数性能对比（nfft=128，全谱）")
     print("=" * 80)
     print(f"  能量定义：{Config.ENERGY_REFERENCE}")
-    print(f"  nfft={Config.NFFT}；enriched(2048) 只读索引，结果追加到独立快照")
+    print(f"  计时协议：{Config.TIMING_PROTOCOL}")
+    print(f"  nfft={Config.NFFT}；enriched(2048) 只读索引")
     print(f"  快照：{Config.SNAPSHOT_PATH}")
 
     print("\n[步骤1] 检查 nfft=128 快照...")
-    snapshot = load_snapshot(force_refresh=args.refresh_cache)
+    snapshot = None
+    if not args.refresh_cache and not args.refresh_timing:
+        snapshot = load_snapshot(force_refresh=False)
+
     if snapshot is not None:
         err = np.asarray(snapshot["err"], dtype=np.float64)
         delta_err = np.asarray(snapshot["delta_err"], dtype=np.float64)
         timings = np.asarray(snapshot["timings_sec"], dtype=np.float64)
         n_model = int(snapshot["n_model"])
         abs_err = float(snapshot.get("abs_err_at_maxk_pct", float("nan")))
-        print(f"  使用快照：n={n_model}，K*={snapshot.get('k_star')}，绝对保有率@MAX_K≈{abs_err:.1f}%")
+        print(f"  使用快照：n={n_model}，K*={snapshot.get('k_star')}，ERR@MAX_K≈{abs_err:.1f}%")
     else:
-        print("\n[步骤2] 读取 enriched 索引（不修改 2048 结果）...")
-        samples = _load_index_samples()
-        print(f"  索引样本：{len(samples)}")
+        modes = None
+        if not args.refresh_cache:
+            print("\n[步骤2] 检查模态缓存...")
+            modes = load_modes()
 
-        print(f"\n[步骤3] 从原始 VIC 按 nfft={Config.NFFT} 提取前 K 阶...")
-        freq_matrix, energy_matrix = build_mode_arrays(samples)
-        n_model = int(freq_matrix.shape[0])
-        print(f"  有效建模样本：{n_model}")
+        if modes is None:
+            print("\n[步骤2] 读取 enriched 索引（不修改 2048 结果）...")
+            samples = _load_index_samples()
+            print(f"  索引样本：{len(samples)}")
 
-        print("\n[步骤4] 计算相对 ERR 与边际增益...")
-        err, delta_err, abs_err = compute_err_curve(energy_matrix)
-        print(f"  相对 ERR(K={Config.MAX_K})={err[-1]:.2f}%")
-        print(f"  绝对保有率(K={Config.MAX_K} vs 全谱)={abs_err:.2f}%")
-        print(f"  K*={select_k_star(err, delta_err)}")
+            print(f"\n[步骤3] 从原始 VIC 按 nfft={Config.NFFT} 提取全谱排序前 K 阶...")
+            freq_matrix, energy_matrix = build_mode_arrays(samples)
+            save_modes(freq_matrix, energy_matrix)
+        else:
+            freq_matrix, energy_matrix = modes
 
-        print("\n[步骤5] Copula 拟合与抽样计时...")
-        timings = run_copula_timing(freq_matrix, energy_matrix)
-        print(f"  T_norm(K={Config.MAX_K})={timings[-1] / timings[0]:.2f}")
-        save_snapshot(err, delta_err, timings, n_model, abs_err)
+        err, delta_err, timings, n_model, abs_err = _compute_from_modes(
+            freq_matrix, energy_matrix
+        )
+        print(f"  有效建模样本：{n_model}，ERR@MAX_K≈{abs_err:.1f}%")
 
     print("\n[步骤6] 绘制并推送图像...")
     fig_trade = plot_tradeoff_figure(err, delta_err, timings)
     fig_time = plot_time_figure(timings, err, delta_err)
-    web_push(fig_trade, page="fig4_5 Copula性能对比", slot=0, title="精度–效率权衡 nfft=128", page_cols=2)
-    web_push(fig_time, page="fig4_5 Copula性能对比", slot=1, title="归一化计算耗时 nfft=128")
+    web_push(fig_trade, page="fig4_4 Copula性能对比", slot=0, title="精度–效率权衡 全谱", page_cols=2)
+    web_push(fig_time, page="fig4_4 Copula性能对比", slot=1, title="归一化计算耗时 全谱")
     plt.close(fig_trade)
     plt.close(fig_time)
-    print("OK 已推送到 WebUI：fig4_5 Copula性能对比")
+    print("OK 已推送到 WebUI：fig4_4 Copula性能对比")
 
 
 if __name__ == "__main__":

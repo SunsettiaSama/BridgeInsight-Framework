@@ -5,7 +5,6 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 from scipy import optimize, stats
-from sklearn.mixture import GaussianMixture
 
 
 # ---------------------------------------------------------------------------
@@ -253,8 +252,54 @@ def fit(
 
 
 # ---------------------------------------------------------------------------
-# 高斯混合模型拟合
+# 一维高斯混合模型（纯 numpy EM，避免 sklearn/threadpoolctl 在部分环境崩溃）
 # ---------------------------------------------------------------------------
+
+def _gmm_em_1d(
+    x: np.ndarray,
+    n_components: int,
+    rng: np.random.Generator,
+    max_iter: int = 200,
+    tol: float = 1e-6,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    n = x.size
+    # 分位数初始化均值，覆盖多峰
+    qs = np.linspace(0.1, 0.9, n_components)
+    means = np.quantile(x, qs)
+    variances = np.full(n_components, max(float(np.var(x)), 1e-8))
+    weights = np.full(n_components, 1.0 / n_components)
+    # 轻微扰动
+    means = means + rng.normal(0.0, 1e-3 * (np.std(x) + 1e-8), size=n_components)
+
+    prev_ll = -np.inf
+    log_l = -np.inf
+    for _ in range(max_iter):
+        # E-step
+        log_resp = np.empty((n, n_components), dtype=np.float64)
+        for k in range(n_components):
+            scale = np.sqrt(max(variances[k], 1e-12))
+            log_resp[:, k] = np.log(max(weights[k], 1e-300)) + stats.norm.logpdf(
+                x, loc=means[k], scale=scale
+            )
+        log_norm = np.logaddexp.reduce(log_resp, axis=1)
+        resp = np.exp(log_resp - log_norm[:, None])
+        log_l = float(np.sum(log_norm))
+
+        # M-step
+        nk = resp.sum(axis=0) + 1e-12
+        weights = nk / n
+        means = (resp.T @ x) / nk
+        for k in range(n_components):
+            diff = x - means[k]
+            variances[k] = float(np.maximum(resp[:, k] @ (diff * diff) / nk[k], 1e-12))
+
+        if abs(log_l - prev_ll) < tol * (1.0 + abs(log_l)):
+            break
+        prev_ll = log_l
+
+    order = np.argsort(means)
+    return weights[order], means[order], variances[order], log_l
+
 
 def fit_gmm(
     data: Sequence[float],
@@ -270,21 +315,17 @@ def fit_gmm(
             f"样本数（{len(data)}）不足以拟合 {n_components} 分量 GMM"
         )
 
-    X = data.reshape(-1, 1)
-    gm = GaussianMixture(
-        n_components=n_components,
-        covariance_type="full",
-        n_init=n_init,
-        random_state=random_state,
-    )
-    gm.fit(X)
+    rng = np.random.default_rng(random_state)
+    best: tuple[np.ndarray, np.ndarray, np.ndarray, float] | None = None
+    for init_i in range(n_init):
+        child = np.random.default_rng(rng.integers(0, 2**31 - 1))
+        cand = _gmm_em_1d(data, n_components, child)
+        if best is None or cand[3] > best[3]:
+            best = cand
 
-    weights   = gm.weights_.tolist()
-    means     = gm.means_.flatten().tolist()
-    variances = [float(c[0, 0]) for c in gm.covariances_]
+    assert best is not None
+    weights, means, variances, log_l = best
 
-    log_l = float(gm.score(X) * len(data))
-    # 自由度：(n_components-1) 权重 + n_components 均值 + n_components 方差
     k_params = (n_components - 1) + n_components + n_components
     n = len(data)
     aic = 2 * k_params - 2 * log_l
@@ -292,9 +333,9 @@ def fit_gmm(
 
     params: Dict[str, Any] = {
         "n_components": n_components,
-        "weights":      weights,
-        "means":        means,
-        "variances":    variances,
+        "weights": weights.tolist(),
+        "means": means.tolist(),
+        "variances": variances.tolist(),
     }
 
     return FitResult(

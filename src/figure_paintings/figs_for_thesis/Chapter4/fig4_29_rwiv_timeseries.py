@@ -1,4 +1,4 @@
-"""图4-25：风雨振时域波形 20 样本总览（面内 & 面外）。
+"""图4-29：风雨振时域波形 20 样本总览（面内 & 面外）。
 
 样式对齐 fig4_7 / fig4_16：4×5 子图网格，面内/面外同轴叠加。
 数据源开关：合并副本（2024-09 train+val）或仅 DL 识别。
@@ -66,7 +66,7 @@ class Config:
     THRESHOLD_TYPE = "soft"
     THRESHOLD_METHOD = "sqtwolog"
 
-    WEB_PAGE = "fig4_25 风雨振"
+    WEB_PAGE = "fig4_29 风雨振"
 
 
 def random_sample(samples: list) -> list:
@@ -212,7 +212,7 @@ def plot_rwiv_timeseries_grid(samples: list, unpacker: UNPACK) -> plt.Figure:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="图4-25 风雨振时程")
+    parser = argparse.ArgumentParser(description="图4-29 风雨振时程")
     add_dataset_switch_args(parser)
     args = parser.parse_args()
     use_merged = resolve_use_merged(args.use_merged)

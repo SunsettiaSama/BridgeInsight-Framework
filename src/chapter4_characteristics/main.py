@@ -19,7 +19,6 @@ def main(argv: list[str] | None = None) -> None:
 
     ensure_paths()
     argv = list(argv) if argv is not None else list(sys.argv[1:])
-    # 统一入口：无参数或仅传 webui 参数时，默认进入 webui 子命令。
     if not argv:
         argv = ["webui"]
     elif argv[0].startswith("-"):
@@ -51,9 +50,47 @@ def main(argv: list[str] | None = None) -> None:
     p_enrich.add_argument("--compact-only", action="store_true", help="仅整理已有 batch，不重新计算特征")
     p_enrich.add_argument("--compact-force", action="store_true", help="强制重建 canonical JSON")
 
-    p_copula = sub.add_parser("copula", help="Copula 拟合")
-    p_copula.add_argument("--class-id", dest="class_id", type=int, default=0)
+    p_copula = sub.add_parser("copula", help="Copula：extract / marginals / joint / run")
+    p_copula.add_argument(
+        "stage",
+        nargs="?",
+        default="run",
+        choices=["extract", "marginals", "joint", "run"],
+        help="流水线阶段（默认 run=extract→marginals→joint）",
+    )
+    p_copula.add_argument(
+        "--class-id",
+        dest="class_id",
+        type=str,
+        default="all",
+        help="类别 id（0-3）或 all",
+    )
     p_copula.add_argument("--config", type=str, default=None)
+    p_copula.add_argument("--refresh", action="store_true", help="强制重算模态缓存")
+    p_copula.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        help="模态提取最大样本数（仅 extract/run 有效）",
+    )
+
+    p_td = sub.add_parser(
+        "td_copula",
+        help="窗间时序 Copula：sequence / fit / sample / run / intra(口子)",
+    )
+    p_td.add_argument(
+        "stage",
+        nargs="?",
+        default="run",
+        choices=["sequence", "fit", "sample", "run", "intra"],
+        help="默认 run=sequence→fit→sample；intra 为雨流口子（未实现）",
+    )
+    p_td.add_argument("--class-id", dest="class_id", type=str, default="all")
+    p_td.add_argument("--config", type=str, default=None)
+    p_td.add_argument("--refresh", action="store_true", help="强制重算 td 序列缓存")
+    p_td.add_argument("--max-samples", type=int, default=None)
+    p_td.add_argument("--n-paths", type=int, default=None, help="MC 轨迹条数")
+    p_td.add_argument("--n-steps", type=int, default=None, help="每条轨迹窗步数")
 
     p_check = sub.add_parser("check-env", help="检查 python/torch 环境")
     p_check.add_argument("--config", type=str, default=None)
@@ -101,7 +138,27 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "copula":
         from src.chapter4_characteristics.analysis.copula_service import run_copula_job
 
-        run_copula_job(class_id=args.class_id, config_path=args.config)
+        result = run_copula_job(
+            class_id=args.class_id,
+            config_path=args.config,
+            stage=args.stage,
+            refresh=args.refresh,
+            max_samples=args.max_samples,
+        )
+        print(result)
+    elif args.command == "td_copula":
+        from src.chapter4_characteristics.statistics.td_copula import run_td_copula_job
+
+        result = run_td_copula_job(
+            class_id=args.class_id,
+            config_path=args.config,
+            stage=args.stage,
+            refresh=args.refresh,
+            max_samples=args.max_samples,
+            n_paths=args.n_paths,
+            n_steps=args.n_steps,
+        )
+        print(result)
     elif args.command == "check-env":
         from src.chapter4_characteristics.settings import load_config, resolve_python_executable
 

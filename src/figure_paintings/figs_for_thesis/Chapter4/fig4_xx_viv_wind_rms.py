@@ -148,7 +148,7 @@ def main():
     print(f"  MECC 匹配传感器：{list(mecc_by_sensor.keys())}")
 
     print("\n[步骤2] 按传感器生成图像并推送 WebUI...")
-    PAGE = 'fig4_27 风速-RMS DL vs MECC'
+    PAGE = 'fig4_31 风速-RMS DL vs MECC'
     slot = 0
     stats_dir = Config.ENRICHED_STATS_DIR
 

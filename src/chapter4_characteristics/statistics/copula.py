@@ -106,13 +106,28 @@ def _gauss_logpdf(u: np.ndarray, R: np.ndarray) -> np.ndarray:
     return -0.5 * logdet - 0.5 * quad
 
 
+def _stabilize_corr(R: np.ndarray, shrink: float = 0.05) -> np.ndarray:
+    """高维/小样本时收缩相关矩阵，避免近奇异导致 logpdf 爆炸。"""
+    d = R.shape[0]
+    R = (1.0 - shrink) * R + shrink * np.eye(d)
+    np.fill_diagonal(R, 1.0)
+    if not _is_pd(R):
+        R = _nearest_pd(R)
+    return R
+
+
 def fit_gaussian_copula(u: np.ndarray) -> CopulaResult:
     u = _clip(np.asarray(u, dtype=float))
     n, d = u.shape
     R = _spearman_to_gauss_corr(_spearman_matrix(u))
     np.fill_diagonal(R, 1.0)
-    if not _is_pd(R):
-        R = _nearest_pd(R)
+    if n < 2 * d:
+        shrink = 0.25
+    elif n < 5 * d:
+        shrink = 0.05
+    else:
+        shrink = 1e-6
+    R = _stabilize_corr(R, shrink=shrink)
     ll = float(np.sum(_gauss_logpdf(u, R)))
     k = d * (d - 1) // 2
     aic, bic = _aic_bic(ll, k, n)
@@ -163,10 +178,21 @@ def _fit_nu(u: np.ndarray, R: np.ndarray) -> float:
 def fit_t_copula(u: np.ndarray) -> CopulaResult:
     u = _clip(np.asarray(u, dtype=float))
     n, d = u.shape
-    R = _kendall_to_t_corr(_kendall_matrix(u))
+    # d 较大时逐对 Kendall 过慢：用 Spearman→近似 τ（高斯族恒等式）再转 t 相关
+    if d > 16:
+        rho_s = np.clip(_spearman_matrix(u), -1.0 + 1e-12, 1.0 - 1e-12)
+        tau = (2.0 / np.pi) * np.arcsin(rho_s)
+        R = _kendall_to_t_corr(tau)
+    else:
+        R = _kendall_to_t_corr(_kendall_matrix(u))
     np.fill_diagonal(R, 1.0)
-    if not _is_pd(R):
-        R = _nearest_pd(R)
+    if n < 2 * d:
+        shrink = 0.25
+    elif n < 5 * d:
+        shrink = 0.05
+    else:
+        shrink = 1e-6
+    R = _stabilize_corr(R, shrink=shrink)
     nu = _fit_nu(u, R)
     ll = float(np.sum(_t_logpdf(u, R, nu)))
     k = d * (d - 1) // 2 + 1

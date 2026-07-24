@@ -58,12 +58,12 @@ class Config:
     SENSOR_GROUPS = filter_sensor_groups(data_config.SENSOR_GROUPS_WIND)
     WEB_DASHBOARD_PORT = 15678
     SNAPSHOT_DIR = project_root / "results" / "chapter4_characteristics" / "figure_snapshots"
-    SNAPSHOT_PATH = SNAPSHOT_DIR / "fig4_26_viv_wind_rms.npz"
+    SNAPSHOT_PATH = SNAPSHOT_DIR / "fig4_30_viv_wind_rms.npz"
 
 
 def _snapshot_config() -> dict:
     return {
-        "figure": "fig4_26_viv_wind_rms",
+        "figure": "fig4_30_viv_wind_rms",
         "version": "pooled_no_location_split",
         "class_id": Config.VIV_CLASS_ID,
         "sensor_groups": Config.SENSOR_GROUPS,
@@ -311,18 +311,18 @@ def push_figure(fig: plt.Figure) -> None:
         )
         return
 
-    page = "fig4_26 涡激共振风速-RMS"
+    page = "fig4_30 涡激共振风速-RMS"
     web_push(fig, page=page, slot=0, title="涡激共振风速-RMS关系", page_cols=1)
     print(f"[OK] 已推送到 WebUI：{page}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="图4-26 涡激共振风速-RMS 分箱趋势图（支持快照）")
+    parser = argparse.ArgumentParser(description="图4-30 涡激共振风速-RMS 分箱趋势图（支持快照）")
     parser.add_argument("--refresh-cache", action="store_true", help="忽略已有快照，强制从 enriched JSON 重建")
     args = parser.parse_args()
 
     print("=" * 80)
-    print("图4-26 涡激共振风速-RMS关系分箱趋势图（合并全部拉索）")
+    print("图4-30 涡激共振风速-RMS关系分箱趋势图（合并全部拉索）")
     print("=" * 80)
     print(f"\n[步骤1] 加载涡激共振风速-RMS 数据...")
     print(f"  数据目录：{Config.ENRICHED_STATS_DIR}")

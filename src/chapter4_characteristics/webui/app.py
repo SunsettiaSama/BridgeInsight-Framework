@@ -210,9 +210,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
     @app.get("/api/copula/{class_id}/marginals.png")
     def copula_marginals(class_id: int, use_demo: bool = False):
         cfg, _, _ = runtime(use_demo)
-        from src.chapter4_characteristics.analysis.copula_service import load_mode_matrix
-        samples = load_class_samples(class_id, cfg)
-        matrix, names = load_mode_matrix(samples, int(cfg.get("copula_n_modes", 8)), int(cfg.get("copula_max_samples", 5000)))
+        from src.chapter4_characteristics.analysis.copula_service import load_mode_matrix_from_cache
+        matrix, names = load_mode_matrix_from_cache(cfg, class_id)
         png = copula_viz.plot_marginal_grid(matrix, names)
         return Response(content=png, media_type="image/png")
 

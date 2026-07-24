@@ -37,8 +37,25 @@ def _apply_runtime_defaults(cfg: dict) -> dict:
     cfg.setdefault("others_neighbor_topk", 3)
     cfg.setdefault("context_windows_before", 5)
     cfg.setdefault("context_windows_after", 5)
-    cfg.setdefault("copula_n_modes", 8)
-    cfg.setdefault("copula_max_samples", 5000)
+    cfg.setdefault("copula_n_modes", 24)
+    cfg.setdefault("copula_nfft", 128)
+    cfg.setdefault("copula_max_samples", 20000)
+    cfg.setdefault("copula_joint_max_samples", 5000)
+    cfg.setdefault("copula_rng_seed", 42)
+    # 窗间时序 Copula（并行流水线；不覆盖静态 copula 结果）
+    td_defaults = {
+        "energy_top_k": 4,
+        "max_samples": 8000,
+        "joint_max_pairs": 5000,
+        "n_paths": 100,
+        "n_steps": 60,
+        "rng_seed": 42,
+        "nfft": 128,
+    }
+    td_cfg = dict(td_defaults)
+    td_cfg.update(cfg.get("td_copula") or {})
+    cfg["td_copula"] = td_cfg
+    cfg.setdefault("window_size", 3000)
     cfg.setdefault("compact_enriched_batches", True)
     cfg.setdefault("auto_compact_on_read", True)
     cfg.setdefault("compact_enriched_force", False)
@@ -120,6 +137,10 @@ def get_others_index_path(cfg: dict) -> Path:
 
 def get_copula_dir(cfg: dict) -> Path:
     return get_chapter4_root(cfg) / "copula"
+
+
+def get_td_copula_dir(cfg: dict) -> Path:
+    return get_copula_dir(cfg) / "td"
 
 
 def get_exports_dir(cfg: dict) -> Path:

@@ -1,6 +1,6 @@
 """风雨振图共用样本池。
 
-- use_merged=True：只读 augment 2024-09 训练+验证 RWIV，写成 chapter4 新副本后使用
+- use_merged=True：2024-09 train+val 副本；默认再并入 DL 全年 RWIV 并混洗
 - use_merged=False：仅用 chapter4 DL 识别结果中的 RWIV
 不修改 results/augment 下任何原始文件。
 """
@@ -11,6 +11,8 @@ import json
 import os
 from pathlib import Path
 
+import numpy as np
+
 from src.chapter3_identifier.augment.annotation.gold_index import annotation_key
 from src.figure_paintings.figs_for_thesis.Chapter4 import data_config
 from src.figure_paintings.figs_for_thesis.Chapter4._viv_pipeline import load_dl_result
@@ -20,6 +22,9 @@ project_root = Path(__file__).resolve().parent.parent.parent.parent.parent
 RWIV_CLASS_ID = 2
 # 默认是否使用 2024-09 train+val 合并副本；各图可用 CLI 覆盖
 USE_MERGED_DATASET = True
+# True：在 2024-09 基础上并入 DL 全年 RWIV，去重后混洗
+USE_COMBINED_WITH_DL = True
+COMBINE_SHUFFLE_SEED = 42
 
 AUGMENT_MERGED_PATH = project_root / "results" / "augment" / "annotations" / "merged_for_training.json"
 AUGMENT_SPLIT_PATH = project_root / "results" / "augment" / "split_indices.json"
@@ -225,7 +230,7 @@ def build_rwiv_202409_copy(force_refresh: bool = False) -> list[dict]:
         "version": "rwiv_202409_train_val_pairs_v1",
         "source_merged": str(AUGMENT_MERGED_PATH),
         "source_split": str(AUGMENT_SPLIT_PATH),
-        "note": "只读自 augment，不修改原始标注；供 fig4_25/26/27 使用",
+        "note": "只读自 augment，不修改原始标注；供 fig4_29/30/31 使用",
         "n_single_channel_train": n_train,
         "n_single_channel_val": n_val,
         "n_pairs": len(samples),
@@ -238,19 +243,70 @@ def build_rwiv_202409_copy(force_refresh: bool = False) -> list[dict]:
     return samples
 
 
+def _sample_dedupe_key(sample: dict) -> tuple[str, str, int]:
+    return (
+        os.path.normcase(str(sample["inplane_file_path"])),
+        os.path.normcase(str(sample["outplane_file_path"])),
+        int(sample["window_idx"]),
+    )
+
+
+def merge_and_shuffle_rwiv_samples(
+    primary: list[dict],
+    secondary: list[dict],
+    seed: int = COMBINE_SHUFFLE_SEED,
+) -> list[dict]:
+    """合并两路 RWIV 配对样本：按文件+窗去重，再固定种子混洗。"""
+    merged: dict[tuple[str, str, int], dict] = {}
+    for sample in primary:
+        key = _sample_dedupe_key(sample)
+        merged[key] = dict(sample)
+    n_primary = len(merged)
+
+    n_overlap = 0
+    for sample in secondary:
+        key = _sample_dedupe_key(sample)
+        if key in merged:
+            n_overlap += 1
+            prev = merged[key]
+            src_a = str(prev.get("source", ""))
+            src_b = str(sample.get("source", ""))
+            if src_b and src_b not in src_a:
+                prev["source"] = f"{src_a}+{src_b}" if src_a else src_b
+            continue
+        merged[key] = dict(sample)
+
+    samples = list(merged.values())
+    rng = np.random.default_rng(int(seed))
+    order = rng.permutation(len(samples))
+    samples = [samples[i] for i in order.tolist()]
+    print(
+        f"  合并混洗：primary={n_primary}  secondary={len(secondary)}  "
+        f"overlap={n_overlap}  → unique={len(samples)}  seed={seed}"
+    )
+    return samples
+
+
 def load_rwiv_samples_for_figures(
     use_merged: bool | None = None,
     force_refresh: bool = False,
+    combine_with_dl: bool | None = None,
 ) -> list[dict]:
     """按开关加载风雨振样本。
 
-    use_merged=True  → 2024-09 train+val 副本
+    use_merged=True  → 2024-09 train+val 副本；默认再并入 DL 全年并混洗
     use_merged=False → 仅 DL 识别结果
     """
     merged = USE_MERGED_DATASET if use_merged is None else bool(use_merged)
+    combine = USE_COMBINED_WITH_DL if combine_with_dl is None else bool(combine_with_dl)
     if merged:
         print("  数据源开关：USE_MERGED_DATASET=True（2024-09 train+val 副本）")
-        return build_rwiv_202409_copy(force_refresh=force_refresh)
+        samples_09 = build_rwiv_202409_copy(force_refresh=force_refresh)
+        if not combine:
+            return samples_09
+        print("  并入 DL 全年 RWIV 并混洗 ...")
+        samples_dl = load_dl_rwiv_samples()
+        return merge_and_shuffle_rwiv_samples(samples_09, samples_dl)
     print("  数据源开关：USE_MERGED_DATASET=False（仅 DL 识别）")
     return load_dl_rwiv_samples()
 
@@ -262,7 +318,7 @@ def add_dataset_switch_args(parser) -> None:
         "--use-merged",
         dest="use_merged",
         action="store_true",
-        help="使用 2024-09 train+val 合并副本",
+        help="使用 2024-09 train+val 合并副本（默认再并入 DL 全年）",
     )
     group.add_argument(
         "--no-merged",
@@ -276,7 +332,25 @@ def add_dataset_switch_args(parser) -> None:
         action="store_true",
         help="重新从 augment 只读生成样本副本（不修改原始标注）",
     )
+    comb = parser.add_mutually_exclusive_group()
+    comb.add_argument(
+        "--combine-dl",
+        dest="combine_with_dl",
+        action="store_true",
+        help="2024-09 与 DL 全年合并混洗（默认开启）",
+    )
+    comb.add_argument(
+        "--no-combine-dl",
+        dest="combine_with_dl",
+        action="store_false",
+        help="仅用 2024-09，不并入 DL",
+    )
+    parser.set_defaults(combine_with_dl=None)
 
 
 def resolve_use_merged(cli_value: bool | None) -> bool:
     return USE_MERGED_DATASET if cli_value is None else bool(cli_value)
+
+
+def resolve_combine_with_dl(cli_value: bool | None) -> bool:
+    return USE_COMBINED_WITH_DL if cli_value is None else bool(cli_value)

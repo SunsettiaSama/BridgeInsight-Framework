@@ -34,7 +34,11 @@ Chapter4 启用示例 — 复制下方命令，或在项目根目录直接运行
   python -m src.chapter4_characteristics check-preflight
   python -m src.chapter4_characteristics infer                # 全量识别
   python -m src.chapter4_characteristics enrich               # 特征归档
-  python -m src.chapter4_characteristics copula --class-id 2   # 可选：Copula
+  python -m src.chapter4_characteristics copula extract --class-id all
+  python -m src.chapter4_characteristics copula marginals --class-id all
+  python -m src.chapter4_characteristics copula joint --class-id all
+  # 或一键：python -m src.chapter4_characteristics copula run --class-id all
+  # 探索图：fig4_x_copula_marginals_grid.py / fig4_x_copula_joint_explore.py
   python -m src.chapter4_characteristics webui                      # 特性分析 WebUI
 
   # 指定端口（Windows 上若 8766 不可用，可换端口）

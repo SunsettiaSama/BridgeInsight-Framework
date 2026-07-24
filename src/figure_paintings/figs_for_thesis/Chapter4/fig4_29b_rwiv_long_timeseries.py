@@ -1,6 +1,6 @@
-"""图4-25b：风雨振大振幅样本长时程（1500 s）。
+"""图4-29b：风雨振大振幅样本长时程（1500 s）。
 
-复现 fig4_25 同 seed 的 20 样本抽样顺序，筛出识别窗内振幅 > 5 m/s² 者，
+复现 fig4_29 同 seed 的 20 样本抽样顺序，筛出识别窗内振幅 > 5 m/s² 者，
 从源 VIC 以识别窗为中心截取 1500 s 绘制。序号不打乱。
 """
 
@@ -29,7 +29,7 @@ from src.figure_paintings.figs_for_thesis.Chapter4._rwiv_pipeline import (
     load_rwiv_samples_for_figures,
     resolve_use_merged,
 )
-from src.figure_paintings.figs_for_thesis.Chapter4.fig4_25_rwiv_timeseries import (
+from src.figure_paintings.figs_for_thesis.Chapter4.fig4_29_rwiv_timeseries import (
     Config as SharedConfig,
     _format_title,
     _load_window,
@@ -68,7 +68,7 @@ class Config:
     WINDOW_SHADE_ALPHA = 0.28
 
     APPLY_DENOISE = SharedConfig.APPLY_DENOISE
-    WEB_PAGE = "fig4_25b 风雨振长时程"
+    WEB_PAGE = "fig4_29b 风雨振长时程"
 
 
 def _load_raw(file_path: str, unpacker: UNPACK) -> np.ndarray:
@@ -124,13 +124,13 @@ def filter_high_amp_keep_order(
     samples_fig425: list,
     unpacker: UNPACK,
 ) -> list[tuple[int, dict, float]]:
-    """按 fig4_25 抽样顺序筛振幅 > 阈值，保留原序号。
+    """按 fig4_29 抽样顺序筛振幅 > 阈值，保留原序号。
 
     返回 [(原序号1-based, sample, peak_amp), ...]
     """
     kept: list[tuple[int, dict, float]] = []
     print(
-        f"\n[筛选] 在 fig4_25 的 {len(samples_fig425)} 个样本中，"
+        f"\n[筛选] 在 fig4_29 的 {len(samples_fig425)} 个样本中，"
         f"识别窗峰值振幅 > {Config.AMP_THRESHOLD:g} m/s²："
     )
     for i, sample in enumerate(samples_fig425):
@@ -147,7 +147,7 @@ def filter_high_amp_keep_order(
         if keep:
             kept.append((i + 1, sample, peak))
 
-    print(f"\n[筛选结果] 振幅条件命中 {len(kept)} 个（顺序与 fig4_25 一致）：")
+    print(f"\n[筛选结果] 振幅条件命中 {len(kept)} 个（顺序与 fig4_29 一致）：")
     for ord_idx, sample, peak in kept:
         print(
             f"  -> 原序号={ord_idx:02d}  peak={peak:.3f} m/s²  "
@@ -180,7 +180,7 @@ def plot_long_timeseries_grid(
     n = len(kept)
     if n == 0:
         raise ValueError(
-            f"fig4_25 抽样中无识别窗振幅 > {Config.AMP_THRESHOLD:g} m/s² 的样本"
+            f"fig4_29 抽样中无识别窗振幅 > {Config.AMP_THRESHOLD:g} m/s² 的样本"
         )
 
     n_cols = Config.N_COLS
@@ -239,7 +239,7 @@ def plot_long_timeseries_grid(
             zorder=2,
         )
 
-        # 标题保留 fig4_25 原序号
+        # 标题保留 fig4_29 原序号
         base_title = _format_title(sample, ord_idx - 1)
         # _format_title 以 sample_idx+1 开头，这里已是原序号；再标注峰值
         title = f"{base_title}  |A|max={peak:.2f}"
@@ -275,7 +275,7 @@ def plot_long_timeseries_grid(
     fig.text(
         0.99,
         0.01,
-        f"源自 fig4_25（seed={Config.RANDOM_SEED}）；"
+        f"源自 fig4_29（seed={Config.RANDOM_SEED}）；"
         f"识别窗 |A|>{Config.AMP_THRESHOLD:g} m/s²；"
         f"源文件截取 {Config.LONG_SECONDS:g} s；"
         f"显示上限 {Config.MAX_DISPLAY}；n={n}",
@@ -290,20 +290,20 @@ def plot_long_timeseries_grid(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="图4-25b 风雨振大振幅长时程")
+    parser = argparse.ArgumentParser(description="图4-29b 风雨振大振幅长时程")
     add_dataset_switch_args(parser)
     args = parser.parse_args()
     use_merged = resolve_use_merged(args.use_merged)
 
     print("=" * 80)
     print(
-        f"图4-25b 风雨振长时程"
-        f"（fig4_25 同批中 |A|>{Config.AMP_THRESHOLD:g} m/s²，源文件 {Config.LONG_SECONDS:g} s）"
+        f"图4-29b 风雨振长时程"
+        f"（fig4_29 同批中 |A|>{Config.AMP_THRESHOLD:g} m/s²，源文件 {Config.LONG_SECONDS:g} s）"
     )
     print(f"  默认开关 USE_MERGED_DATASET={USE_MERGED_DATASET}  → 本次 use_merged={use_merged}")
     print("=" * 80)
 
-    print("\n[步骤1] 加载风雨振样本（与 fig4_25 一致）...")
+    print("\n[步骤1] 加载风雨振样本（与 fig4_29 一致）...")
     if use_merged:
         print(f"  副本路径：{RWIV_SAMPLE_COPY_PATH}")
     all_samples = load_rwiv_samples_for_figures(
@@ -312,7 +312,7 @@ def main() -> None:
     )
     print(f"[OK] 风雨振配对样本：{len(all_samples)} 个")
 
-    print("\n[步骤2] 复现 fig4_25 抽样（保持顺序）...")
+    print("\n[步骤2] 复现 fig4_29 抽样（保持顺序）...")
     prev_n = SharedConfig.NUM_SAMPLES_TO_PLOT
     SharedConfig.NUM_SAMPLES_TO_PLOT = Config.NUM_SAMPLES_SOURCE
     samples_fig425 = random_sample(all_samples)

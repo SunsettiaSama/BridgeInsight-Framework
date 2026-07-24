@@ -1,7 +1,7 @@
-"""图4-33：风雨振 风向–RMS–风速 极坐标散点图。
+"""图4-35：风雨振 风向–RMS–风速 极坐标散点图。
 
 与图4-24 / 图4-14 散点图样式对齐：角向=风向，径向=RMS，颜色=平均风速。
-样本池与 fig4_25 共用（合并副本或仅 DL）；风场按时间戳匹配，RMS 由识别窗计算。
+样本池与 fig4_29 共用（合并副本或仅 DL）；风场按时间戳匹配，RMS 由识别窗计算。
 """
 
 from __future__ import annotations
@@ -33,12 +33,14 @@ from src.chapter4_characteristics.feature_analysis._wind import (
 from src.chapter4_characteristics.settings import load_config
 from src.figure_paintings.figs_for_thesis.Chapter4._rwiv_pipeline import (
     RWIV_SAMPLE_COPY_PATH,
+    USE_COMBINED_WITH_DL,
     USE_MERGED_DATASET,
     add_dataset_switch_args,
     load_rwiv_samples_for_figures,
+    resolve_combine_with_dl,
     resolve_use_merged,
 )
-from src.figure_paintings.figs_for_thesis.Chapter4.fig4_25_rwiv_timeseries import (
+from src.figure_paintings.figs_for_thesis.Chapter4.fig4_29_rwiv_timeseries import (
     Config as SharedConfig,
 )
 from matplotlib.colors import LinearSegmentedColormap
@@ -85,19 +87,26 @@ class Config:
         / "chapter4_characteristics"
         / "figure_snapshots"
     )
-    SNAPSHOT_PATH = SNAPSHOT_DIR / "fig4_33_rwiv_wind_dir_rms.npz"
-    WEB_PAGE = "fig4_33 风向-RMS散点"
+    SNAPSHOT_PATH = SNAPSHOT_DIR / "fig4_35_rwiv_wind_dir_rms.npz"
+    WEB_PAGE = "fig4_35 风向-RMS散点"
     WEB_DASHBOARD_PORT = 15678
 
 
-def _snapshot_config(use_merged: bool) -> dict:
+def _snapshot_config(use_merged: bool, combine_with_dl: bool) -> dict:
+    if use_merged and combine_with_dl:
+        sample_tag = f"dl+{RWIV_SAMPLE_COPY_PATH.name}"
+    elif use_merged:
+        sample_tag = str(RWIV_SAMPLE_COPY_PATH)
+    else:
+        sample_tag = "dl_only"
     return {
-        "figure": "fig4_33_rwiv_wind_dir_rms",
-        "version": "polar_scatter_speed_color",
+        "figure": "fig4_35_rwiv_wind_dir_rms",
+        "version": "polar_scatter_speed_color_combined_v1",
         "use_merged": bool(use_merged),
+        "combine_with_dl": bool(combine_with_dl),
         "window_size": int(Config.WINDOW_SIZE),
         "dir_correction": "360_minus_mean",
-        "sample_copy": str(RWIV_SAMPLE_COPY_PATH) if use_merged else "dl_only",
+        "sample_copy": sample_tag,
     }
 
 
@@ -219,14 +228,18 @@ def compute_scatter_arrays(samples: list[dict]) -> dict:
     }
 
 
-def load_snapshot(use_merged: bool, force_refresh: bool) -> dict | None:
+def load_snapshot(
+    use_merged: bool,
+    combine_with_dl: bool,
+    force_refresh: bool,
+) -> dict | None:
     path = Config.SNAPSHOT_PATH
     if force_refresh or not path.exists():
         return None
 
     payload = np.load(path, allow_pickle=True)
     saved_cfg = json.loads(str(payload["config_json"]))
-    if saved_cfg != _snapshot_config(use_merged):
+    if saved_cfg != _snapshot_config(use_merged, combine_with_dl):
         print(f"  快照参数不匹配，将重新计算：{path}")
         return None
 
@@ -241,13 +254,15 @@ def load_snapshot(use_merged: bool, force_refresh: bool) -> dict | None:
     return {key: np.asarray(payload[key], dtype=np.float64) for key in required}
 
 
-def save_snapshot(data: dict, use_merged: bool) -> None:
+def save_snapshot(data: dict, use_merged: bool, combine_with_dl: bool) -> None:
     path = Config.SNAPSHOT_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         path,
         created_at=np.asarray(datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        config_json=np.asarray(json.dumps(_snapshot_config(use_merged), ensure_ascii=False)),
+        config_json=np.asarray(
+            json.dumps(_snapshot_config(use_merged, combine_with_dl), ensure_ascii=False)
+        ),
         wind_dirs=np.asarray(data["wind_dirs"], dtype=np.float64),
         wind_speeds=np.asarray(data["wind_speeds"], dtype=np.float64),
         rms_in=np.asarray(data["rms_in"], dtype=np.float64),
@@ -258,23 +273,30 @@ def save_snapshot(data: dict, use_merged: bool) -> None:
 
 def load_or_compute(
     use_merged: bool,
+    combine_with_dl: bool,
     force_refresh: bool,
     refresh_sample_copy: bool,
 ) -> dict:
-    cached = load_snapshot(use_merged=use_merged, force_refresh=force_refresh)
+    cached = load_snapshot(
+        use_merged=use_merged,
+        combine_with_dl=combine_with_dl,
+        force_refresh=force_refresh,
+    )
     if cached is not None:
         return cached
 
     print("  未命中快照，加载风雨振样本并组装风向-RMS-风速 ...")
     if use_merged:
         print(f"  副本路径：{RWIV_SAMPLE_COPY_PATH}")
+        print(f"  并入 DL：{combine_with_dl}")
     samples = load_rwiv_samples_for_figures(
         use_merged=use_merged,
         force_refresh=refresh_sample_copy,
+        combine_with_dl=combine_with_dl,
     )
     print(f"  配对样本：{len(samples)}")
     data = compute_scatter_arrays(samples)
-    save_snapshot(data, use_merged=use_merged)
+    save_snapshot(data, use_merged=use_merged, combine_with_dl=combine_with_dl)
     return data
 
 
@@ -444,7 +466,7 @@ def push_figures(figures: list[tuple[plt.Figure, str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="图4-33 风雨振风向-RMS-风速 极坐标散点图")
+    parser = argparse.ArgumentParser(description="图4-35 风雨振风向-RMS-风速 极坐标散点图")
     add_dataset_switch_args(parser)
     parser.add_argument(
         "--refresh-snapshot",
@@ -453,15 +475,18 @@ def main() -> None:
     )
     args = parser.parse_args()
     use_merged = resolve_use_merged(args.use_merged)
+    combine_with_dl = resolve_combine_with_dl(args.combine_with_dl)
 
     print("=" * 80)
-    print("图4-33 风雨振风向–RMS–风速极坐标散点图")
-    print(f"  默认开关 USE_MERGED_DATASET={USE_MERGED_DATASET}  → 本次 use_merged={use_merged}")
+    print("图4-35 风雨振风向–RMS–风速极坐标散点图")
+    print(f"  USE_MERGED_DATASET={USE_MERGED_DATASET}  → use_merged={use_merged}")
+    print(f"  USE_COMBINED_WITH_DL={USE_COMBINED_WITH_DL}  → combine_with_dl={combine_with_dl}")
     print("=" * 80)
 
     print("\n[步骤1] 加载风向-RMS-风速 ...")
     data = load_or_compute(
         use_merged=use_merged,
+        combine_with_dl=combine_with_dl,
         force_refresh=args.refresh_snapshot,
         refresh_sample_copy=args.refresh_sample_copy,
     )
